@@ -1,0 +1,32 @@
+{
+  "name": "auth-service",
+  "version": "1.0.0",
+  "description": "",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "NODE_ENV=production nodemon src/server.js",
+    "dev": "NODE_ENV=local nodemon src/server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@hapi/joi": "^17.1.1",
+    "amqplib": "^0.10.8",
+    "axios": "^1.12.2",
+    "bcrypt": "^6.0.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.2",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.1",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "kafkajs": "^2.2.4",
+    "nodemon": "^3.1.10",
+    "pg": "^8.16.3",
+    "pino": "^9.9.0",
+    "pino-http": "^10.5.0",
+    "pino-pretty": "^13.1.1"
+  }
+}
