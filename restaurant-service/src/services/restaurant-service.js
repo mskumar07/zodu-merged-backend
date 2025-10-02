@@ -189,6 +189,9 @@ async function getCategoryData(branch_id) {
 
 async function get_menuItem_data(branch_id) {
   try {
+
+    
+
     const allMenuItemData = await repository.get_menuItem_data(branch_id);
     return {
       success: true,

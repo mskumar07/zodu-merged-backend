@@ -133,6 +133,7 @@ async function get_category_data(branch_id) {
 // }
 
 async function get_menuItem_data(branch_id) {
+  console.log("branchid",branch_id)
   return await conn.query(
     `SELECT 
         c.name,
@@ -155,20 +156,20 @@ async function get_menuItem_data(branch_id) {
                 'menu_type', m.menu_type,
                 'menu_unit', m.menu_unit,
                 'favorites', m.favorites,
-                'menu_id',m.menu_id
+                'menu_id', m.menu_id
             )
           ) FILTER (WHERE m.id IS NOT NULL), '[]'
         ) AS items
     FROM tbl_category c
     LEFT JOIN tbl_menu_item m 
       ON c.id = m.menu_category_id 
-     AND m.active = true
      AND m.branch_id = $1
     WHERE c.branch_id = $1
     GROUP BY c.name`,
     [branch_id]
   );
 }
+
 
 
 
