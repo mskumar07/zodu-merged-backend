@@ -187,24 +187,67 @@ async function getCategoryData(branch_id) {
   }
 }
 
+// async function get_menuItem_data(branch_id) {
+//   try {
+//     const allMenuItemData = await repository.get_menuItem_data(branch_id);
+//     console.log(allMenuItemData.rows)
+//     return {
+//       success: true,
+//       data: allMenuItemData.rows,
+//     };
+//   } catch (error) {
+//     console.error("Menu Item Data getting Error", error);
+//     return {
+//       success: false,
+//       message: error.message
+//     };
+//   }
+// }
+
 async function get_menuItem_data(branch_id) {
   try {
-
-    
-
     const allMenuItemData = await repository.get_menuItem_data(branch_id);
+
+    // ✅ Ensure structure is categories with items
+    const categories = (allMenuItemData.rows || []).map((category) => {
+      const items = (category.items || []).map((item) => {
+        let variants = item.variants;
+
+        try {
+          if (typeof variants === "string") {
+            variants = JSON.parse(variants);
+          }
+        } catch (err) {
+          console.warn(`Invalid JSON in variants for menu_id ${item.menu_id}`, err);
+          variants = []; // fallback
+        }
+
+        return {
+          ...item,
+          variants,
+        };
+      });
+
+      return {
+        ...category,
+        items,
+      };
+    });
+
     return {
       success: true,
-      data: allMenuItemData.rows,
+      data: categories,
     };
   } catch (error) {
     console.error("Menu Item Data getting Error", error);
     return {
       success: false,
-      message: error.message
+      message: error.message,
     };
   }
 }
+
+
 
 async function createBranch(branchData) {
   try {

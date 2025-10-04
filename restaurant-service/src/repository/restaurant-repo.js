@@ -156,7 +156,8 @@ async function get_menuItem_data(branch_id) {
                 'menu_type', m.menu_type,
                 'menu_unit', m.menu_unit,
                 'favorites', m.favorites,
-                'menu_id', m.menu_id
+                'menu_id', m.menu_id,
+                'category', c.name
             )
           ) FILTER (WHERE m.id IS NOT NULL), '[]'
         ) AS items
