@@ -8,4 +8,5 @@ app.use('/auth', createProxyMiddleware({ target: 'http://auth-service:3000', cha
 // Route /service2 → localhost:3001
 app.use('/restaurant', createProxyMiddleware({ target: 'http://restaurant-service:3001', changeOrigin: true }));
 
-app.listen(8080, () => console.log('API Gateway running on http://localhost:8080'));
+app.listen(5000, () => console.log('API Gateway running on http://localhost:5000'));
+ 

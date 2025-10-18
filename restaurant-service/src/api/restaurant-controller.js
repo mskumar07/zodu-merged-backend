@@ -9,6 +9,7 @@ const Minio = require("minio");
 const multer = require("multer")
 const sharp = require("sharp")
 const upload = multer(); // memory storage
+const mime = require("mime-types");
 const { DB_HOSTNAME, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY } = require("../config");
 
 
@@ -17,10 +18,10 @@ const router = express.Router();
 
 // MinIO client
 const minioClient = new Minio.Client({
-  endPoint: "69.62.72.83", // e.g. 123.45.67.89
+  endPoint: "72.60.206.59", // e.g. 123.45.67.89
   port: 9000,
   useSSL: false,
-  accessKey: "admin",
+  accessKey: "zoduminio",
   secretKey: "zodu@2025"
 });
 
@@ -152,7 +153,7 @@ router.post("/upload", upload.single("file"), async (req, res) => {
       "Content-Type": file.mimetype,
     });
 
-    const fileurl=`http://69.62.72.83:8080/restaurant/file/${objectName}`
+    const fileurl=`http://72.60.206.59:5000/restaurant/file/${objectName}`
 
     // Construct public URL to access via GET /file/:name
     res.json({
@@ -170,9 +171,18 @@ router.post("/upload", upload.single("file"), async (req, res) => {
 
 router.get("/file/:name", async (req, res) => {
   try {
-    const fileStream = await minioClient.getObject(bucketName, req.params.name);
+    const fileName = req.params.name;
+
+    const fileStream = await minioClient.getObject(bucketName, fileName);
+
+    const contentType = mime.lookup(fileName) || "application/octet-stream";
+
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Content-Disposition", `inline; filename="${fileName}"`);
+
     fileStream.pipe(res);
   } catch (err) {
+    console.error(err);
     res.status(404).json({ error: "File not found" });
   }
 });
@@ -239,6 +249,117 @@ router.post(
   }
 );
 
+router.post(
+  "/api/add/orders",
+  async (req, res) => {
+    try {
+      console.log(req.body)
+      const orderData = req.body;
+     
+      await conn.query("BEGIN");
+      const { errors, input } = await RequestValidator(
+        schema.order_create,
+        orderData
+      );
+
+      if (errors) {
+        await conn.query("ROLLBACK");
+        return res.status(400).json({ errors });
+      }
+
+      const data = await service.createOrder(input);
+
+      if (!data.success) {
+        await conn.query("ROLLBACK");
+        return res.status(400).json({ message: data.message });
+      }
+
+      await conn.query("COMMIT");
+      return res.status(201).json({ data });
+    } catch (error) {
+      await conn.query("ROLLBACK");
+      console.error(error);
+      return res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+router.post(
+  "/api/add/vendor",
+  async (req, res) => {
+    try {
+      const vendorData = req.body;
+
+      await conn.query("BEGIN");
+      const { errors, input } = await RequestValidator(
+        schema.vendor_create,
+        vendorData
+      );
+
+      if (errors) {
+        await conn.query("ROLLBACK");
+        return res.status(400).json({ errors });
+      }
+
+      const data = await service.createVendor(input);
+
+      if (!data.success) {
+        await conn.query("ROLLBACK");
+        return res.status(400).json({ message: data.message });
+      }
+
+      await conn.query("COMMIT");
+      return res.status(201).json({ data });
+    } catch (error) {
+      await conn.query("ROLLBACK");
+      console.error(error);
+      return res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+router.post(
+  "/api/add/purchase_orders", upload.single("attachment_url"),
+  async (req, res) => {
+    try {
+      const purchaseOrderData = req.body;
+
+      if (req.file) {
+        purchaseOrderData.attachment_url = req.file; // multer stores file in req.file
+      }
+      purchaseOrderData.items = JSON.parse(purchaseOrderData.items);
+     
+      await conn.query("BEGIN");
+      const { errors, input } = await RequestValidator(
+        schema.purchase_order_create,
+        purchaseOrderData
+      );
+
+      if (errors) {
+        await conn.query("ROLLBACK");
+        return res.status(400).json({ errors });
+      }
+
+      console.log(input)
+
+      const data = await service.createPurchaseOrder(input);
+
+      if (!data.success) {
+        await conn.query("ROLLBACK");
+        return res.status(400).json({ message: data.message });
+      }
+
+      await conn.query("COMMIT");
+      return res.status(201).json({ data });
+    } catch (error) {
+      await conn.query("ROLLBACK");
+      console.error(error);
+      return res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+
 router.put("/update/favorite/:favorite/:menuId",async (req,res)=>{
    try {
       const { menuId,favorite } = req.params;
@@ -295,7 +416,24 @@ router.get("/get/menu_item/:branch_id", async (req, res) => {
 
   try {
       const {branch_id} = req.params
+      console.log("mybranch",branch_id)
     const getMenuItemData = await service.get_menuItem_data(branch_id);
+    console.log("mymenu",getMenuItemData.data)
+    if (!getMenuItemData.success) return res.status(400).json({ message: getMenuItemData.message });
+    return res.status(201).json({ message : "Data Get Successfully" , Data: getMenuItemData.data });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.get("/get/orders/:branch_id", async (req, res) => {
+
+  try {
+        console.log(req.params)
+
+      const {branch_id} = req.params
+    const getMenuItemData = await service.get_ordered_data(branch_id);
     if (!getMenuItemData.success) return res.status(400).json({ message: getMenuItemData.message });
     return res.status(201).json({ message : "Data Get Successfully" , Data: getMenuItemData.data });
   } catch (error) {

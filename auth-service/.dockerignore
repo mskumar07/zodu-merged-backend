@@ -1,0 +1,12 @@
+# .dockerignore in root (microservice/.dockerignore)
+node_modules
+.git
+.gitignore
+README.md
+Dockerfile
+*.log
+
+# DO NOT ignore service folders
+!auth-service/
+!restaurant-service/
+!api-gateway/

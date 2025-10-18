@@ -82,11 +82,128 @@ const menu_item_create = Joi.object({
   menu_unit: Joi.string()        
 });
 
+// item schema for each order item
+
+// item schema
+const itemSchema = Joi.object({
+  menu_id: Joi.string().max(100).required(),
+  name: Joi.string().max(200).required(),
+  qty: Joi.number().integer().min(1).required(),
+  price: Joi.number().precision(2).min(0).required(),
+  image: Joi.string().allow(null, ''),
+  tax: Joi.number().precision(2).min(0).required(),
+  menu_unit: Joi.string().max(50).optional(),
+  variantName: Joi.string().max(100).optional().allow(null, ''),
+  variant_id: Joi.string().max(100).optional().allow(null, ''),
+});
+// order schema
+ const order_create = Joi.object({
+  zodu_id: Joi.string().max(50).required(),
+  branch_id: Joi.string().max(50).required(),
+  table_no: Joi.number().integer().required(),
+  kot_no:Joi.string().required(),
+  no_of_items:Joi.number().integer().required(),
+  order_type: Joi.string().valid('Dine-In', 'Takeaway', 'Delivery').required(),
+  order_id:Joi.string().max(50),
+   customer_name: Joi.string().max(100).allow('', null),
+  customer_phone: Joi.string()
+    .pattern(/^[0-9]{7,15}$/)
+    .allow('', null),
+  total_amt: Joi.number().precision(2).min(0).required(),
+items: Joi.array().items(itemSchema).min(1).required(),
+  final_payment: Joi.boolean().required(),
+   order_date: Joi.alternatives().try(
+    Joi.date().iso(), // '2025-10-09'
+    Joi.string().pattern(/^\d{2}-\d{2}-\d{4}$/) // '09-10-2025'
+  ).required(),
+
+  order_time: Joi.alternatives().try(
+    Joi.string().pattern(/^([01]\d|2[0-3]):([0-5]\d)(:([0-5]\d))?$/), // 15:30 or 15:30:00
+    Joi.string().pattern(/^(0?[1-9]|1[0-2]):[0-5][0-9]\s?(AM|PM|am|pm)$/) // 03:30 PM
+  ).required()
+}).options({ abortEarly: false });
+
+const purchase_order_create = Joi.object({
+  zodu_id: Joi.string().max(50).required(),
+  branch_id: Joi.string().max(50).required(),
+  vendor: Joi.string().required(),
+  category: Joi.string().max(100).required(),
+  purchase_date: Joi.date().required(),
+  purchase_type: Joi.string().max(100).required(),
+  total_amount: Joi.number().precision(2).min(0).required(),
+  paid_amount: Joi.number().precision(2).min(0).required(),
+  attachment_url: Joi.object().required(),
+  payment_type: Joi.string().valid("cash", "card", "upi", "credit").required(),
+  notes: Joi.string().allow("", null),
+  
+  // array of items
+  items: Joi.array()
+    .items(
+      Joi.object({
+        id: Joi.string().required(),
+        name: Joi.string().required(),
+        qty: Joi.number().min(1).required(),
+        unit: Joi.string().max(50).required(),
+        purchase_price: Joi.number().precision(2).min(0).required(),
+        selling_price: Joi.number().precision(2).min(0).required(),
+        gst_tax: Joi.number().min(0).required(),
+        total_price: Joi.number().precision(2).min(0).required(),
+      })
+    )
+    .min(1)
+    .required(),
+});
+
+const vendor_create = Joi.object({
+  zodu_id: Joi.string().max(50).required().messages({
+    "string.base": "Zodu ID must be a string",
+    "any.required": "Zodu ID is required",
+  }),
+
+  branch_id: Joi.string().max(50).required().messages({
+    "string.base": "Branch ID must be a string",
+    "any.required": "Branch ID is required",
+  }),
+
+  vendor_name: Joi.string().max(150).required().messages({
+    "string.base": "Vendor name must be a string",
+    "any.required": "Vendor name is required",
+  }),
+
+  vendor_phone: Joi.string()
+    .pattern(/^[0-9]{10}$/)
+    .required()
+    .messages({
+      "string.pattern.base": "Vendor phone must be a valid 10-digit number",
+      "any.required": "Vendor phone is required",
+    }),
+
+  vendor_email: Joi.string()
+    .email({ tlds: { allow: false } })
+    .required()
+    .messages({
+      "string.email": "Vendor email must be a valid email address",
+      "any.required": "Vendor email is required",
+    }),
+
+  vendor_address: Joi.string().max(255).required().messages({
+    "string.base": "Vendor address must be a string",
+    "any.required": "Vendor address is required",
+  }),
+
+  company_name: Joi.string().max(150).required().messages({
+    "string.base": "Company name must be a string",
+    "any.required": "Company name is required",
+  }),
+});
 
 
 module.exports = {
   company_create,
   branch_create,
   menu_item_create,
-  update_company
+  update_company,
+  order_create,
+  purchase_order_create,
+  vendor_create
 };

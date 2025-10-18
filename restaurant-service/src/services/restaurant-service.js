@@ -9,10 +9,10 @@ const { DB_HOSTNAME, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY } = require('.
 
 
 const minioClient = new Minio.Client({
-  endPoint: "69.62.72.83", // e.g. 123.45.67.89
+  endPoint: "72.60.206.59", // e.g. 123.45.67.89
   port: 9000,
   useSSL: false,
-  accessKey: "admin",
+  accessKey: "zoduminio",
   secretKey: "zodu@2025"
 });
 
@@ -101,7 +101,7 @@ async function uploadImg(file) {
       }
     );
 
-    const fileurl=`http://69.62.72.83:8080/restaurant/file/${objectName}`
+    const fileurl=`https://zodusolutions.cloud/restaurant/file/${objectName}`
 
     console.log("myurl",fileurl)
 
@@ -248,6 +248,26 @@ async function get_menuItem_data(branch_id) {
 }
 
 
+async function get_ordered_data(branch_id) {
+  try {
+    const orderData = await repository.get_ordered_data(branch_id);
+
+    // ✅ Ensure structure is categories with items
+   
+
+    return {
+      success: true,
+      data: orderData,
+    };
+  } catch (error) {
+    console.error("Menu Item Data getting Error", error);
+    return {
+      success: false,
+      message: error.message,
+    };
+  }
+}
+
 
 async function createBranch(branchData) {
   try {
@@ -377,6 +397,90 @@ menuData.menu_image = imgResult;
   }
 }
 
+async function createOrder(orderData) {
+
+  try {
+
+     if (!orderData.order_id || orderData.order_id.trim() === "" || orderData.order_id === "null") {
+      const nextOrderId = await repository.getNextOrderId(orderData.branch_id);
+      orderData.order_id = `${orderData.branch_id}-O${nextOrderId}`;
+    }
+
+const newOrder = await repository.createOrder(orderData);
+const neworderItem=await repository.createOrderedItems(orderData);
+const newKot = await repository.createKOT(orderData);
+
+return {
+      success: true,
+      message: "Order created successfully",
+      data: {newOrder,neworderItem,newKot},
+    };
+  }catch(err){
+     console.error("Error inserting Order:", err);
+    return {
+      success: false,
+      message: err.message,
+    };
+  }
+}
+
+async function createVendor(vendorData) {
+  try {
+    console.log(vendorData)
+        const repository = require('../repository/restaurant-repo'); // lazy load
+
+    const newVendor = await repository.createnewVendor(vendorData);
+    return {
+      success: true,
+      message: "Vendor created successfully",
+      data: newVendor,
+    };
+  } catch (err) {
+    console.error("Error inserting Vendor:", err);
+    return {
+      success: false,
+      message: err.message,
+    };
+  }
+}
+
+async function createPurchaseOrder(purchaseOrderData) {
+  try {
+            const repository = require('../repository/restaurant-repo'); // lazy load
+      const CategoryCreate = await repository.createCategory(
+      purchaseOrderData.zodu_id,
+      purchaseOrderData.branch_id,
+      purchaseOrderData.category
+    );
+    purchaseOrderData.category = CategoryCreate.id;
+    const getVendor = await repository.getVendorId(
+      purchaseOrderData.zodu_id,
+      purchaseOrderData.branch_id,
+      purchaseOrderData.vendor
+    );
+    console.log("vendor",getVendor);
+    purchaseOrderData.vendor = getVendor.vendor_id;
+    const imgResult = await uploadImg(purchaseOrderData.attachment_url);
+    purchaseOrderData.attachment_url = imgResult;
+    const nextPurchaseId = await repository.getNextPurchaseId(purchaseOrderData.branch_id);
+    purchaseOrderData.purchase_id = `${purchaseOrderData.branch_id}-PO${nextPurchaseId}`;
+    await repository.createPurchaseOrder(purchaseOrderData);
+    await repository.insertPurchaseItems(purchaseOrderData.purchase_id, purchaseOrderData.items);
+    await repository.addInventory(purchaseOrderData.items,purchaseOrderData.branch_id, purchaseOrderData.zodu_id, purchaseOrderData.purchase_date, purchaseOrderData.category);
+    await repository.addExpense(purchaseOrderData.zodu_id, purchaseOrderData.branch_id, purchaseOrderData.vendor, purchaseOrderData.purchase_date, purchaseOrderData.purchase_id, purchaseOrderData.total_amount, purchaseOrderData.balance_amount);
+
+    return {
+      success: true,
+      message: "Purchase order created successfully",
+    };
+  } catch (err) {
+    console.error("Error inserting Purchase Order:", err);
+    return {
+      success: false,
+      message: err.message,
+    };
+  }
+}
 
 // Export all functions
 module.exports = {
@@ -389,5 +493,9 @@ module.exports = {
   updateCompanyService,
   uploadImg,
   updateMenuFav,
-  updateMenustaus
+  updateMenustaus,
+  createOrder,
+  get_ordered_data,
+  createPurchaseOrder,
+  createVendor
 };
