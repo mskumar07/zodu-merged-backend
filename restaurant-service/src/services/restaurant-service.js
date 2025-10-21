@@ -2,9 +2,8 @@ const multer = require('multer');
 const { consumeEvents } = require('../consumer/consumer');
 const Minio = require("minio");
 const sharp = require("sharp");
-const repository = require('../repository/restaurant-repo');
-const { DB_HOSTNAME, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY } = require('../config');
-
+const repository = require('../repository/restaurant-repo.js');
+const { PDFDocument } = require('pdf-lib');
 
 
 
@@ -64,7 +63,11 @@ async function createCompanyService(companyData) {
 
 async function uploadImg(file) {
   try {
-     const MAX_SIZE = 5 * 1024 * 1024;
+    const MAX_SIZE = 5 * 1024 * 1024; // 5 MB limit
+
+    if (!file || !file.buffer) {
+      throw new Error("Invalid file input");
+    }
 
     if (file.size > MAX_SIZE) {
       throw new Error("File size exceeds 5MB limit");
@@ -73,8 +76,11 @@ async function uploadImg(file) {
     let optimizedBuffer;
     let objectName;
 
+    const originalExt = file.originalname.split(".").pop().toLowerCase();
+    const baseName = file.originalname.replace(/\.[^/.]+$/, "");
+
+    // 🖼️ Image optimization
     if (file.mimetype.startsWith("image/")) {
-      // Convert everything to webp
       optimizedBuffer = await sharp(file.buffer)
         .resize({
           width: 1920,
@@ -84,30 +90,48 @@ async function uploadImg(file) {
         .webp({ quality: 80 })
         .toBuffer();
 
-      objectName = Date.now() + "-" + file.originalname.split(".")[0] + ".webp";
-    } else {
-      optimizedBuffer = file.buffer;
-      objectName = Date.now() + "-" + file.originalname;
+      objectName = `${Date.now()}-${baseName}.webp`;
     }
 
-    // Upload to MinIO
-      await minioClient.putObject(
+    // 📄 PDF optimization
+    else if (originalExt === "pdf") {
+      const pdfDoc = await PDFDocument.load(file.buffer);
+      const compressedPdf = await pdfDoc.save({
+        useObjectStreams: true,
+        addDefaultPage: false,
+      });
+
+      optimizedBuffer = Buffer.from(compressedPdf); // ✅ Ensure it's a Node Buffer
+      objectName = `${Date.now()}-${file.originalname}`;
+    }
+
+    // 📃 Other document formats (no processing)
+    else {
+      optimizedBuffer = Buffer.isBuffer(file.buffer)
+        ? file.buffer
+        : Buffer.from(file.buffer); // ✅ Always convert to Buffer
+      objectName = `${Date.now()}-${file.originalname}`;
+    }
+
+    // ✅ Ensure we’re uploading a valid Buffer
+    if (!Buffer.isBuffer(optimizedBuffer)) {
+      throw new Error("File data is not a valid Buffer");
+    }
+
+    // ✅ Upload to MinIO (use content-length as the 4th param)
+    await minioClient.putObject(
       bucketName,
       objectName,
       optimizedBuffer,
-      optimizedBuffer.length, // <-- this is required
-      {
-        "Content-Type": file.mimetype,
-      }
+      optimizedBuffer.length,
+      { "Content-Type": file.mimetype }
     );
 
-    const fileurl=`https://zodusolutions.cloud/restaurant/file/${objectName}`
+    const fileurl = `https://zodusolutions.cloud/restaurant/file/${objectName}`;
+    console.log("✅ File uploaded successfully:", fileurl);
 
-    console.log("myurl",fileurl)
-
-    // Construct public URL to access via GET /file/:name
-   return fileurl
-  }catch (err) {
+    return fileurl;
+  } catch (err) {
     console.error("Upload failed:", err);
     return {
       success: false,
@@ -115,6 +139,7 @@ async function uploadImg(file) {
     };
   }
 }
+
 
 async function updateCompanyService(zodu_id, updateData) {
   try {
@@ -187,6 +212,22 @@ async function getCategoryData(branch_id) {
   }
 }
 
+async function getVendorData(branch_id) {
+  try {
+    const allVendorData = await repository.getVendor(branch_id); 
+    return {
+      success: true,
+      data: allVendorData,
+    };
+  } catch (error) {
+    console.error("Vendor Data getting Error", error);
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+}
+
 // async function get_menuItem_data(branch_id) {
 //   try {
 //     const allMenuItemData = await repository.get_menuItem_data(branch_id);
@@ -207,7 +248,6 @@ async function getCategoryData(branch_id) {
 async function get_menuItem_data(branch_id) {
   try {
     const allMenuItemData = await repository.get_menuItem_data(branch_id);
-
     // ✅ Ensure structure is categories with items
     const categories = (allMenuItemData.rows || []).map((category) => {
       const items = (category.items || []).map((item) => {
@@ -426,8 +466,6 @@ return {
 
 async function createVendor(vendorData) {
   try {
-    console.log(vendorData)
-        const repository = require('../repository/restaurant-repo'); // lazy load
 
     const newVendor = await repository.createnewVendor(vendorData);
     return {
@@ -446,7 +484,6 @@ async function createVendor(vendorData) {
 
 async function createPurchaseOrder(purchaseOrderData) {
   try {
-            const repository = require('../repository/restaurant-repo'); // lazy load
       const CategoryCreate = await repository.createCategory(
       purchaseOrderData.zodu_id,
       purchaseOrderData.branch_id,
@@ -458,7 +495,6 @@ async function createPurchaseOrder(purchaseOrderData) {
       purchaseOrderData.branch_id,
       purchaseOrderData.vendor
     );
-    console.log("vendor",getVendor);
     purchaseOrderData.vendor = getVendor.vendor_id;
     const imgResult = await uploadImg(purchaseOrderData.attachment_url);
     purchaseOrderData.attachment_url = imgResult;
@@ -467,7 +503,7 @@ async function createPurchaseOrder(purchaseOrderData) {
     await repository.createPurchaseOrder(purchaseOrderData);
     await repository.insertPurchaseItems(purchaseOrderData.purchase_id, purchaseOrderData.items);
     await repository.addInventory(purchaseOrderData.items,purchaseOrderData.branch_id, purchaseOrderData.zodu_id, purchaseOrderData.purchase_date, purchaseOrderData.category);
-    await repository.addExpense(purchaseOrderData.zodu_id, purchaseOrderData.branch_id, purchaseOrderData.vendor, purchaseOrderData.purchase_date, purchaseOrderData.purchase_id, purchaseOrderData.total_amount, purchaseOrderData.balance_amount);
+    await repository.addExpense(purchaseOrderData);
 
     return {
       success: true,
@@ -497,5 +533,6 @@ module.exports = {
   createOrder,
   get_ordered_data,
   createPurchaseOrder,
-  createVendor
+  createVendor,
+  getVendorData
 };

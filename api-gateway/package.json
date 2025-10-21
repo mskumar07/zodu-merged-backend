@@ -4,13 +4,14 @@
   "description": "",
   "main": "gateway.js",
   "scripts": {
-   "start":"node gateway.js"
+    "start": "node gateway.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "cors": "^2.8.5",
     "express": "^5.1.0",
     "http-proxy-middleware": "^3.0.5"
   },

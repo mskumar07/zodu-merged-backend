@@ -1,11 +1,10 @@
 const { get } = require('../api/restaurant-controller');
 const conn = require('../database/connection');
-const { getCategoryData } = require('../services/restaurant-service');
 
 // ========== Company Repository Functions ==========
 
 
-async function createCompany(companyData) {
+exports.createCompany= async (companyData) => {
   const query = `
   INSERT INTO tbl_company_registration (
     zodu_id, restaurant_name, mobile_no, mail_id
@@ -40,7 +39,7 @@ async function createCompany(companyData) {
   throw new Error('Unable to create company');
 }
 
-async function updateCompany(zodu_id, fields) {
+exports.updateCompany = async (zodu_id, fields) => {
   const keys = Object.keys(fields);
   if (keys.length === 0) return null;
 
@@ -57,7 +56,7 @@ async function updateCompany(zodu_id, fields) {
   return res.rows[0];
 }
 
-async function getCompanyByZoduId(zodu_id) {
+exports.getCompanyByZoduId = async (zodu_id) => {
   const res = await conn.query(
     `SELECT * FROM tbl_company_registration WHERE zodu_id=$1`,
     [zodu_id]
@@ -66,12 +65,12 @@ async function getCompanyByZoduId(zodu_id) {
 }
 
 
-async function isEventProcessed(eventId) {
+exports.isEventProcessed = async (eventId) => {
   const res = await conn.query(`SELECT 1 FROM processed_events WHERE event_id=$1`, [eventId]);
   return res.rowCount > 0;
 }
 
-async function markEventProcessed({ eventId, topic, partition, offset }) {
+exports.markEventProcessed = async ({ eventId, topic, partition, offset }) => {
   await conn.query(
     `INSERT INTO processed_events (event_id, topic, partition, msg_offset)
      VALUES ($1,$2,$3,$4)
@@ -80,17 +79,17 @@ async function markEventProcessed({ eventId, topic, partition, offset }) {
   );
 }
 
-async function findMaxZoduId() {
+exports.findMaxZoduId = async () => {
   return await conn.query(
     'SELECT max(zodu_id) FROM tbl_company_registration');
 }
 
-// async function get_category_data() {
+// exports.get_category_data() {
 //   return await conn.query(
 //     'SELECT name,zodu_id,branch_id,active FROM tbl_category');
 // }
 
-async function get_category_data(branch_id) {
+exports.get_category_data = async (branch_id) => {
   try {
     const query = `
       SELECT name, zodu_id, branch_id, active
@@ -105,7 +104,7 @@ async function get_category_data(branch_id) {
 }
 
 
-// async function get_menuItem_data(branch_id) {
+// exports.get_menuItem_data(branch_id) {
 //   return await conn.query(
 //     `SELECT 
 //     c.name,
@@ -134,7 +133,7 @@ async function get_category_data(branch_id) {
 // );
 // }
 
-async function get_menuItem_data(branch_id) {
+exports.get_menuItem_data = async (branch_id) =>  {
   return await conn.query(
     `SELECT 
         c.name,
@@ -173,7 +172,7 @@ async function get_menuItem_data(branch_id) {
 }
 
 
-async function get_ordered_data(branch_id) {
+exports.get_ordered_data = async (branch_id) => {
   const query = `
     SELECT 
       o.order_id,
@@ -231,18 +230,18 @@ async function get_ordered_data(branch_id) {
 
 
 
-async function findMaxBranchID(zodu_id) {
+exports.findMaxBranchID = async (zodu_id) => {
   return await conn.query(
     'SELECT max(branch_id) FROM tbl_resturant_branch where zodu_id = $1', ['ZODU001']);
 }
 
-async function FindExistingData(tbl_name, column_name, value) {
+exports.FindExistingData = async (tbl_name, column_name, value) => {
   console.log("repository", tbl_name, column_name, value);
   return await conn.query(
     `SELECT * FROM ${tbl_name} where ${column_name} = $1`, [value]);
 }
 
-async function createBranch(branchData) {
+exports.createBranch = async (branchData) => {
   console.log("repository branchData", branchData);
   try {
     const query = `
@@ -293,7 +292,7 @@ async function createBranch(branchData) {
   }
 }
 
-async function createQRCode(qr_code) {
+exports.createQRCode = async (qr_code) => {
   try {
     const query = `
       INSERT INTO tbl_qr_code (
@@ -314,7 +313,7 @@ async function createQRCode(qr_code) {
   }
 }
 
-async function createCategory(zodu_id, branch_id, name) {
+exports.createCategory = async (zodu_id, branch_id, name) => {
   try {
     // 1️⃣ Check if category already exists in this branch
     const checkQuery = `
@@ -350,7 +349,7 @@ async function createCategory(zodu_id, branch_id, name) {
 }
 
 
-async function createnewVendor(vendorData) {
+exports.createnewVendor = async (vendorData) => {
   try {
     const { zodu_id, branch_id, vendor_name, vendor_phone, vendor_email, vendor_address, company_name } = vendorData;
 
@@ -372,7 +371,22 @@ async function createnewVendor(vendorData) {
   }
 }
 
-async function getVendorId(zoduId, branchId, vendor) {
+exports.getVendor = async (branch_id) => {
+  try {
+    const query = `
+      SELECT *
+      FROM tbl_vendor
+      WHERE branch_id = $1
+    `;
+    const result = await conn.query(query, [branch_id]);
+    console.log(result)
+    return result.rows;
+  } catch (err) {
+    throw new Error("Unable to fetch vendor data: " + err.message);
+  }
+}
+
+exports.getVendorId = async (zoduId, branchId, vendor) => {
   try {
     const query = `
       SELECT * FROM tbl_vendor
@@ -387,7 +401,7 @@ async function getVendorId(zoduId, branchId, vendor) {
   }
 }
 
-async function getNextMenuId(zoduId, branchId) {
+exports.getNextMenuId = async (zoduId, branchId) => {
   try {
     await conn.query("BEGIN");
 
@@ -420,7 +434,7 @@ async function getNextMenuId(zoduId, branchId) {
   }
 }
 
-async function getNextOrderId(branchId) {
+exports.getNextOrderId = async (branchId) => {
   try {
     await conn.query("BEGIN");
 
@@ -451,7 +465,7 @@ async function getNextOrderId(branchId) {
   }
 }
 
-async function getNextPurchaseId(branchId) {
+exports.getNextPurchaseId = async (branchId) => {
   try {
     await conn.query("BEGIN");
 
@@ -482,7 +496,7 @@ async function getNextPurchaseId(branchId) {
   }
 }
 
-async function updateFavorite(menuId, favoriteValue) {
+exports.updateFavorite = async (menuId, favoriteValue) => {
   try {
     await conn.query('BEGIN');
 
@@ -505,7 +519,7 @@ async function updateFavorite(menuId, favoriteValue) {
   }
 }
 
-async function updateActive(menuId, active) {
+exports.updateActive = async (menuId, active) => {
   try {
     await conn.query('BEGIN');
 
@@ -530,7 +544,7 @@ async function updateActive(menuId, active) {
 
 
 
-async function createMenuItem(menuData) {
+exports.createMenuItem = async (menuData) => {
   try {
     await conn.query('BEGIN');
     const query = `
@@ -577,7 +591,7 @@ async function createMenuItem(menuData) {
 
 
 // ✅ Create or Update Order
-async function createOrder(orderData) {
+exports.createOrder = async (orderData) => {
   try {
     await conn.query('BEGIN');
     // Check if order already exists (same order_id & table_no)
@@ -650,7 +664,7 @@ async function createOrder(orderData) {
 
 
 // ✅ Create or Update Ordered Items
-async function createOrderedItems(orderData) {
+exports.createOrderedItems = async (orderData) => {
   try {
     await conn.query('BEGIN');
     const items = orderData.items;
@@ -750,7 +764,7 @@ async function createOrderedItems(orderData) {
 }
 
 
-async function createKOT(orderData) {
+exports.createKOT = async (orderData) => {
   try {
     await conn.query('BEGIN');
     const items = orderData.items;
@@ -794,7 +808,7 @@ async function createKOT(orderData) {
   }
 }
 // services/purchaseService.js
-async function createPurchaseOrder(orderData) {
+exports.createPurchaseOrder = async (orderData) => {
   try {
     await conn.query('BEGIN');
     const {
@@ -852,7 +866,7 @@ async function createPurchaseOrder(orderData) {
   }
 };
 
-async function insertPurchaseItems(purchase_id, items) {
+exports.insertPurchaseItems = async (purchase_id, items) => {
   try {
     await conn.query('BEGIN');
     for (const item of items) {
@@ -878,14 +892,14 @@ async function insertPurchaseItems(purchase_id, items) {
   }
 }
 
-async function addInventory(items, branch_id, zodu_id, purchase_date, category_id) {
+exports.addInventory = async (items, branch_id, zodu_id, purchase_date, category_id) => {
   try {
     await conn.query('BEGIN');
     for (const item of items) {
       // Check if the item already exists in inventory
       const existing = await conn.query(
         `SELECT item_id FROM tbl_inventory WHERE item_id = $1`,
-        [item.item_id]
+        [item.id]
       );
 
       if (existing.rows.length > 0) {
@@ -894,14 +908,14 @@ async function addInventory(items, branch_id, zodu_id, purchase_date, category_i
           `UPDATE tbl_inventory
          SET stock_qty = stock_qty + $1
          WHERE item_id = $2`,
-          [item.qty, item.item_id]
+          [item.qty, item.id]
         );
       } else {
         // 🆕 If not exists → insert new item record
         await conn.query(
           `INSERT INTO tbl_inventory (zodu_id,branch_id, item_id, category_id, item_name,item_unit, stock_qty, stock_alert,purchase_price, selling_price,last_purchase_date)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-          [zodu_id, branch_id, item.item_id, category_id, item.item_name, item.unit, item.qty, item.stock_alert, item.purchase_price, item.selling_price, purchase_date]
+          [zodu_id, branch_id, item.id, category_id, item.name, item.unit, item.qty, item.stock_alert, item.purchase_price, item.selling_price, purchase_date]
         );
       }
     }
@@ -913,7 +927,7 @@ async function addInventory(items, branch_id, zodu_id, purchase_date, category_i
   }
 };
 
-async function addExpense(orderData) {
+exports.addExpense = async (orderData) => {
   try {
     await conn.query('BEGIN');
     // 🔍 Check if expense already exists (by expense_id or purchase description)
@@ -958,47 +972,59 @@ async function addExpense(orderData) {
         const lastNum = parseInt(lastId.split("-EXP")[1]);
         nextNumber = lastNum + 1;
       }
-      orderData.expense_id = 'EXP-' + String(nextNumber).padStart(3, "0");
+      orderData.expense_id = orderData.branch_id + '-EXP-' + String(nextNumber).padStart(3, "0");
 
-      const vendorName = await conn.query(
-        `SELECT id FROM tbl_vendor WHERE branch_id = $1 AND vendor_id = $2 LIMIT 1`,
-        [orderData.branch_id, orderData.vendor]
+      const categoryName = await conn.query(
+        `SELECT name FROM tbl_category WHERE branch_id = $1 AND id = $2 LIMIT 1`,
+        [orderData.branch_id, orderData.category]
       );
-      orderData.expense_name = vendorName.rows[0].vendor_name;
+      orderData.expense_name = categoryName.rows[0].name;
+
+      if (!orderData.expense_date) {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  orderData.expense_date = `${year}-${month}-${day}`;
+}
+
+if (!orderData.balance_amount) {
+  orderData.balance_amount = orderData.total_amount - (orderData.paid_amount || 0);
+}
 
       await conn.query(
-        `INSERT INTO tbl_expense 
-          (zodu_id, branch_id, category_id, expense_id, expense_name, expense_date, payment_amount, balance_amount, description, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
-        [
-          orderData.zodu_id,
-          orderData.branch_id,
-          orderData.category_id,
-          orderData.expense_id,
-          orderData.expense_name, // expense_name
-          orderData.order_date,
-          orderData.total_amount,
-          orderData.balance_amount || 0, // balance_amt = 0 for purchases
-          `Purchase Order ${orderData.expense_id}`
-        ]
-      );
+  `INSERT INTO tbl_expense 
+    (zodu_id, branch_id, category_id, expense_id, expense_name, expense_date, payment_amount, balance_amount, description,attachment_url, created_at)
+   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+  [
+    orderData.zodu_id,              // $1
+    orderData.branch_id,            // $2
+    orderData.category,          // $3
+    orderData.expense_id,           // $4
+    orderData.expense_name,         // $5
+    orderData.expense_date,           // $6
+    orderData.total_amount,         // $7
+    orderData.balance_amount || 0,  // $8
+    `Purchase Order ${orderData.expense_id}` ,// $9 ✅ fixed
+    orderData.attachment_url || null // $10
+  ]
+);
+
     }
     if (Array.isArray(orderData.items) && orderData.items.length > 0) {
       const insertItemQuery = `
         INSERT INTO tbl_expense_items 
-          ( expense_id,item_id, item_name, qty, price, total, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, NOW())
+          ( expense_id,item_id, item_name, qty, price, created_at)
+        VALUES ($1, $2, $3, $4, $5, NOW())
       `;
 
       for (const item of orderData.items) {
-        const total = Number(item.qty) * Number(item.price);
         await conn.query(insertItemQuery, [
-          expenseId,
-          item.item_id,
-          item.item_name,
+          orderData.expense_id,
+          item.id,
+          item.name,
           item.qty,
-          item.price,
-          total
+          item.purchase_price,
         ]);
       }
     }
@@ -1019,34 +1045,4 @@ async function addExpense(orderData) {
 
 
 
-module.exports = {
-  createCompany,
-  findMaxZoduId,
-  FindExistingData,
-  findMaxBranchID,
-  createBranch,
-  createQRCode,
-  createCategory,
-  createMenuItem,
-  get_category_data,
-  get_menuItem_data,
-  isEventProcessed,
-  markEventProcessed,
-  updateCompany,
-  getCompanyByZoduId,
-  getNextMenuId,
-  updateFavorite,
-  updateActive,
-  createOrder,
-  createOrderedItems,
-  createKOT,
-  get_ordered_data,
-  getNextOrderId,
-  getNextPurchaseId,
-  createPurchaseOrder,
-  insertPurchaseItems,
-  addInventory,
-  addExpense,
-  createnewVendor,
-  getVendorId
-};
+

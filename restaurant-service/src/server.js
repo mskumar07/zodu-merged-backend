@@ -2,6 +2,7 @@ const { PORT } = require('./config');
 const { consumeEvents } = require('./consumer/consumer');
 const expressApp = require('./express-app');
 const { logger } = require('./utils/logger');
+const fs = require('fs');
 // const { consumeEvents } = require('./consumer/consumer');
 
 

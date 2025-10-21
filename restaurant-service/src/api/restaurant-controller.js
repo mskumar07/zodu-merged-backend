@@ -127,42 +127,8 @@ router.post("/add/branch", async (req, res) => {
 
 router.post("/upload", upload.single("file"), async (req, res) => {
   try {
-    const file = req.file;
-    let optimizedBuffer;
-    let objectName;
-
-    if (file.mimetype.startsWith("image/")) {
-      // Convert everything to webp
-      optimizedBuffer = await sharp(file.buffer)
-        .resize({
-          width: 1920,
-          withoutEnlargement: true,
-          fastShrinkOnLoad: true,
-        })
-        .webp({ quality: 80 })
-        .toBuffer();
-
-      objectName = Date.now() + "-" + file.originalname.split(".")[0] + ".webp";
-    } else {
-      optimizedBuffer = file.buffer;
-      objectName = Date.now() + "-" + file.originalname;
-    }
-
-    // Upload to MinIO
-    await minioClient.putObject(bucketName, objectName, optimizedBuffer, {
-      "Content-Type": file.mimetype,
-    });
-
-    const fileurl=`http://72.60.206.59:5000/restaurant/file/${objectName}`
-
-    // Construct public URL to access via GET /file/:name
-    res.json({
-      message: "✅ File uploaded & optimized",
-      fileurl:fileurl,
-      filename: objectName,
-      sizeBefore: file.size,
-      sizeAfter: optimizedBuffer.length,
-    });
+   const result =await service.uploadImg(req.file);
+   return res.status(200).json({ success: true, data: result });
   } catch (err) {
     console.log(err)
     res.status(500).json({ error: err.message });
@@ -172,18 +138,36 @@ router.post("/upload", upload.single("file"), async (req, res) => {
 router.get("/file/:name", async (req, res) => {
   try {
     const fileName = req.params.name;
-
     const fileStream = await minioClient.getObject(bucketName, fileName);
 
     const contentType = mime.lookup(fileName) || "application/octet-stream";
 
-    res.setHeader("Content-Type", contentType);
-    res.setHeader("Content-Disposition", `inline; filename="${fileName}"`);
+    // Common inline preview types
+    const inlineTypes = [
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+      "image/gif",
+      "application/pdf",
+    ];
 
+    res.setHeader("Content-Type", contentType);
+
+    // 🧠 Automatically decide inline vs download
+    if (inlineTypes.includes(contentType)) {
+      res.setHeader("Content-Disposition", `inline; filename="${fileName}"`);
+    } else {
+      res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    }
+
+    // Pipe file to client
     fileStream.pipe(res);
   } catch (err) {
-    console.error(err);
-    res.status(404).json({ error: "File not found" });
+    console.error("File fetch error:", err);
+    if (err.code === "NoSuchKey") {
+      return res.status(404).json({ error: "File not found" });
+    }
+    res.status(500).json({ error: "Failed to retrieve file" });
   }
 });
 
@@ -412,13 +396,25 @@ router.get("/get/category/:branch_id", async (req, res) => {
   }
 });
 
+router.get("/get/vendor/:branch_id", async (req, res) => {
+  
+  try {
+     const { branch_id } = req.params;
+    const getVendorData = await service.getVendorData(branch_id);
+    console.log(getVendorData);
+    if (!getVendorData.success) return res.status(400).json({ message: getVendorData.message });
+    return res.status(201).json({ message : "Data Get Successfully" , Data: getVendorData.data });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 router.get("/get/menu_item/:branch_id", async (req, res) => {
 
   try {
       const {branch_id} = req.params
-      console.log("mybranch",branch_id)
     const getMenuItemData = await service.get_menuItem_data(branch_id);
-    console.log("mymenu",getMenuItemData.data)
     if (!getMenuItemData.success) return res.status(400).json({ message: getMenuItemData.message });
     return res.status(201).json({ message : "Data Get Successfully" , Data: getMenuItemData.data });
   } catch (error) {
