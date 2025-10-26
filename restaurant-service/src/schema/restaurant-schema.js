@@ -78,12 +78,22 @@ const menu_item_create = Joi.object({
   hsn_code: Joi.string().max(50).required(),
   gst_tax: Joi.string().max(50).required(),
   tax_include_or_exclude: Joi.boolean().required(),
-  menu_image: Joi.object().required(), 
-  menu_unit: Joi.string()        
+  menu_image: Joi.object().allow(null).optional(),
+  menu_unit: Joi.string()
 });
 
 // item schema for each order item
-
+const inventorySchema = 
+      Joi.object({
+        inventory_id: Joi.number().required(),
+        stock_qty: Joi.number().optional(),
+        stock_alert: Joi.number().optional(),
+        selling_price: Joi.number().optional(),
+        purchase_price: Joi.number().optional(),
+        last_purchase_date: Joi.date().optional(),
+      });
+    
+    
 // item schema
 const itemSchema = Joi.object({
   menu_id: Joi.string().max(100).required(),
@@ -154,6 +164,33 @@ const purchase_order_create = Joi.object({
     .required(),
 });
 
+const expense_data = Joi.object({
+  zodu_id: Joi.string().max(50).required(),
+  branch_id: Joi.string().max(50).required(),
+  category: Joi.string().max(100).required(),
+  expense_date: Joi.date().required(),
+  expense_name:Joi.string().required(),
+  // purchase_type: Joi.string().max(100).required(),
+  total_amount: Joi.number().precision(2).min(0).required(),
+  paid_amount: Joi.number().precision(2).min(0).required(),
+  attachment_url: Joi.object().required(),
+  // payment_type: Joi.string().valid("cash", "card", "upi", "credit").required(),
+  description: Joi.string().allow("", null),
+  
+  // array of items
+  items: Joi.array()
+    .items(
+      Joi.object({
+        // id: Joi.string().required(),
+        name: Joi.string().required(),
+        qty: Joi.number().min(1).required(),
+        purchase_price: Joi.number().precision(2).min(0).required(),
+      })
+    )
+    .min(1)
+    .required(),
+});
+
 const vendor_create = Joi.object({
   zodu_id: Joi.string().max(50).required().messages({
     "string.base": "Zodu ID must be a string",
@@ -205,5 +242,7 @@ module.exports = {
   update_company,
   order_create,
   purchase_order_create,
-  vendor_create
+  vendor_create,
+  expense_data,
+  inventorySchema
 };

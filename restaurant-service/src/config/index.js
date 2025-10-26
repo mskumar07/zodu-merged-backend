@@ -8,6 +8,7 @@ if (process.env.NODE_ENV !== "production") {
   dotEnv.config();
 }
 
+console.log(process.env.PORT)
 module.exports = {
   PORT: process.env.PORT,
   DB_USERNAME: process.env.DB_USERNAME,

@@ -62,63 +62,55 @@ async function createCompanyService(companyData) {
 }
 
 async function uploadImg(file) {
+  console.log(file)
   try {
     const MAX_SIZE = 5 * 1024 * 1024; // 5 MB limit
 
-    if (!file || !file.buffer) {
-      throw new Error("Invalid file input");
+    if (!file || !file.buffer || file.size === 0) {
+      throw new Error("Invalid file input or empty file");
     }
 
     if (file.size > MAX_SIZE) {
       throw new Error("File size exceeds 5MB limit");
     }
 
+    const originalExt = file.originalname.split(".").pop().toLowerCase();
+    const baseName = file.originalname.replace(/\.[^/.]+$/, "");
     let optimizedBuffer;
     let objectName;
 
-    const originalExt = file.originalname.split(".").pop().toLowerCase();
-    const baseName = file.originalname.replace(/\.[^/.]+$/, "");
-
     // 🖼️ Image optimization
     if (file.mimetype.startsWith("image/")) {
+      // Optional: keep original format
+      const format = originalExt === "png" || originalExt === "jpg" || originalExt === "jpeg"
+        ? originalExt
+        : "webp";
+
       optimizedBuffer = await sharp(file.buffer)
-        .resize({
-          width: 1920,
-          withoutEnlargement: true,
-          fastShrinkOnLoad: true,
-        })
-        .webp({ quality: 80 })
+        .resize({ width: 1920, withoutEnlargement: true, fastShrinkOnLoad: true })
+        .toFormat(format, { quality: 80 })
         .toBuffer();
 
-      objectName = `${Date.now()}-${baseName}.webp`;
+      objectName = `${Date.now()}-${baseName}.${format}`;
     }
-
     // 📄 PDF optimization
     else if (originalExt === "pdf") {
       const pdfDoc = await PDFDocument.load(file.buffer);
-      const compressedPdf = await pdfDoc.save({
-        useObjectStreams: true,
-        addDefaultPage: false,
-      });
-
-      optimizedBuffer = Buffer.from(compressedPdf); // ✅ Ensure it's a Node Buffer
+      const compressedPdf = await pdfDoc.save({ useObjectStreams: true, addDefaultPage: false });
+      optimizedBuffer = Buffer.from(compressedPdf);
       objectName = `${Date.now()}-${file.originalname}`;
     }
-
-    // 📃 Other document formats (no processing)
+    // 📃 Other files (no processing)
     else {
-      optimizedBuffer = Buffer.isBuffer(file.buffer)
-        ? file.buffer
-        : Buffer.from(file.buffer); // ✅ Always convert to Buffer
+      optimizedBuffer = Buffer.isBuffer(file.buffer) ? file.buffer : Buffer.from(file.buffer);
       objectName = `${Date.now()}-${file.originalname}`;
     }
 
-    // ✅ Ensure we’re uploading a valid Buffer
     if (!Buffer.isBuffer(optimizedBuffer)) {
       throw new Error("File data is not a valid Buffer");
     }
 
-    // ✅ Upload to MinIO (use content-length as the 4th param)
+    // ✅ Upload to MinIO
     await minioClient.putObject(
       bucketName,
       objectName,
@@ -127,19 +119,15 @@ async function uploadImg(file) {
       { "Content-Type": file.mimetype }
     );
 
-    const fileurl = `https://zodusolutions.cloud/restaurant/file/${objectName}`;
-    console.log("✅ File uploaded successfully:", fileurl);
+    const fileUrl = `https://api.zodusolutions.cloud/restaurant/file/${objectName}`;
+    console.log("✅ File uploaded successfully:", fileUrl);
+    return fileUrl;
 
-    return fileurl;
   } catch (err) {
     console.error("Upload failed:", err);
-    return {
-      success: false,
-      error: err.message,
-    };
+    return { success: false, error: err.message };
   }
 }
-
 
 async function updateCompanyService(zodu_id, updateData) {
   try {
@@ -228,6 +216,53 @@ async function getVendorData(branch_id) {
   }
 }
 
+async function getInventoryListData(branch_id,type) {
+  try {
+    const allInventoryData = await repository.get_inventory_list(branch_id,type);
+    return {
+      success: true,
+      data: allInventoryData,
+    };
+  } catch (error) {
+    console.error("Inventory Data getting Error", error);
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+}
+
+async function getPurchaseListData(branch_id) {
+  try {
+    const allPurchaseData = await repository.get_purchase(branch_id);
+    return {
+      success: true,
+      data: allPurchaseData,
+    };
+  } catch (error) {
+    console.error("Purchase Data getting Error", error);
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+}
+
+async function getExpenseListData(branch_id) {
+  try {
+    const allExpenseData = await repository.get_Expense(branch_id);
+    return {
+      success: true,
+      data: allExpenseData,
+    };
+  } catch (error) {
+    console.error("Purchase Data getting Error", error);
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+}
 // async function get_menuItem_data(branch_id) {
 //   try {
 //     const allMenuItemData = await repository.get_menuItem_data(branch_id);
@@ -244,6 +279,20 @@ async function getVendorData(branch_id) {
 //     };
 //   }
 // }
+
+async function update_Inventory(data){
+  try{
+ const updatedInventory = await repository.updateInventory(data)
+    return {success:true, data: updatedInventory}
+    
+  }catch(error){
+    console.error("Menu Item Data getting Error", error);
+    return {
+      success: false,
+      message: error.message,
+    };
+  }
+}
 
 async function get_menuItem_data(branch_id) {
   try {
@@ -399,11 +448,10 @@ async function createMenuItem(menuData) {
     const CreateQr = await repository.createQRCode(menuData.item_code);
     menuData.qr_code_id = CreateQr.id;
 
-   const imgResult = await uploadImg(menuData.menu_image);
-
-console.log(imgResult)
-menuData.menu_image = imgResult;
-
+    if(menuData.menu_image){
+      const imgResult = await uploadImg(menuData.menu_image);
+      menuData.menu_image = imgResult;
+    }
 
     const CategoryCreate = await repository.createCategory(
       menuData.zodu_id,
@@ -418,6 +466,7 @@ menuData.menu_image = imgResult;
       menuData.branch_id
     );
     menuData.menu_id = `${menuData.zodu_id}-${menuData.branch_id}-${nextNumber}`;
+    console.log(nextNumber)
     menuData.menu_code=menuData.item_code
     menuData.favorites=false
 
@@ -484,26 +533,74 @@ async function createVendor(vendorData) {
 
 async function createPurchaseOrder(purchaseOrderData) {
   try {
-      const CategoryCreate = await repository.createCategory(
+    // ✅ Step 1: Create category
+    const CategoryCreate = await repository.createCategory(
       purchaseOrderData.zodu_id,
       purchaseOrderData.branch_id,
       purchaseOrderData.category
     );
     purchaseOrderData.category = CategoryCreate.id;
+
+    // ✅ Step 2: Get vendor ID
     const getVendor = await repository.getVendorId(
       purchaseOrderData.zodu_id,
       purchaseOrderData.branch_id,
       purchaseOrderData.vendor
     );
     purchaseOrderData.vendor = getVendor.vendor_id;
+
+    // ✅ Step 3: Upload image (Stop if fails)
     const imgResult = await uploadImg(purchaseOrderData.attachment_url);
-    purchaseOrderData.attachment_url = imgResult;
+    if (!imgResult.success) {
+      // ❌ Stop execution and throw error with the image upload message
+      throw new Error(imgResult.message || "Image upload failed");
+    }
+    purchaseOrderData.attachment_url = imgResult.url; // assuming uploadImg returns { success, url, message }
+
+    // ✅ Step 4: Generate Purchase ID
     const nextPurchaseId = await repository.getNextPurchaseId(purchaseOrderData.branch_id);
     purchaseOrderData.purchase_id = `${purchaseOrderData.branch_id}-PO${nextPurchaseId}`;
+
+    // ✅ Step 5: Create purchase order and related data
     await repository.createPurchaseOrder(purchaseOrderData);
     await repository.insertPurchaseItems(purchaseOrderData.purchase_id, purchaseOrderData.items);
-    await repository.addInventory(purchaseOrderData.items,purchaseOrderData.branch_id, purchaseOrderData.zodu_id, purchaseOrderData.purchase_date, purchaseOrderData.category);
+
+    await repository.addInventory(
+      purchaseOrderData.items,
+      purchaseOrderData.branch_id,
+      purchaseOrderData.zodu_id,
+      purchaseOrderData.purchase_date,
+      purchaseOrderData.category,
+      purchaseOrderData.purchase_type // include purchase_type for inventory_type logic
+    );
+
     await repository.addExpense(purchaseOrderData);
+
+    return {
+      success: true,
+      message: "Purchase order created successfully",
+    };
+  } catch (err) {
+    console.error("Error inserting Purchase Order:", err);
+    return {
+      success: false,
+      message: err.message,
+    };
+  }
+}
+
+
+async function createExpense(expenseData) {
+  try {
+      const CategoryCreate = await repository.createCategory(
+      expenseData.zodu_id,
+      expenseData.branch_id,
+      expenseData.category
+    );
+    expenseData.category = CategoryCreate.id;
+      const imgResult = await uploadImg(expenseData.attachment_url);
+    expenseData.attachment_url = imgResult;
+    await repository.addExpense(expenseData);
 
     return {
       success: true,
@@ -534,5 +631,10 @@ module.exports = {
   get_ordered_data,
   createPurchaseOrder,
   createVendor,
-  getVendorData
+  getVendorData,
+  getInventoryListData,
+  getPurchaseListData,
+  getExpenseListData,
+  createExpense,
+  update_Inventory
 };

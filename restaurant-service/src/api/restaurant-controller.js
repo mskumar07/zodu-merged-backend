@@ -308,6 +308,8 @@ router.post(
     try {
       const purchaseOrderData = req.body;
 
+      console.log("test",purchaseOrderData)
+
       if (req.file) {
         purchaseOrderData.attachment_url = req.file; // multer stores file in req.file
       }
@@ -343,6 +345,46 @@ router.post(
   }
 );
 
+
+router.post(
+  "/api/add/expense", upload.single("attachment_url"),
+  async (req, res) => {
+    try {
+      const expenseData = req.body;
+
+
+      if (req.file) {
+        expenseData.attachment_url = req.file; // multer stores file in req.file
+      }
+      expenseData.items = JSON.parse(expenseData.items);
+     
+      await conn.query("BEGIN");
+      const { errors, input } = await RequestValidator(
+        schema.expense_data,
+        expenseData
+      );
+
+      if (errors) {
+        await conn.query("ROLLBACK");
+        return res.status(400).json({ errors });
+      }
+
+      const data = await service.createExpense(input);
+
+      if (!data.success) {
+        await conn.query("ROLLBACK");
+        return res.status(400).json({ message: data.message });
+      }
+
+      await conn.query("COMMIT");
+      return res.status(201).json({ data });
+    } catch (error) {
+      await conn.query("ROLLBACK");
+      console.error(error);
+      return res.status(500).json({ error: error.message });
+    }
+  }
+);
 
 router.put("/update/favorite/:favorite/:menuId",async (req,res)=>{
    try {
@@ -380,7 +422,37 @@ router.put("/update/menustatus/:menu_status/:menuId",async (req,res)=>{
   }
 })
 
+router.put("/api/update/inventory",async (req,res)=>{
+ try {
+  console.log(req.body);
+      const items = req.body;
+      
+      await conn.query("BEGIN");
+      const { errors, input } = await RequestValidator(
+        schema.inventorySchema,
+        items
+      );
 
+      if (errors) {
+        await conn.query("ROLLBACK");
+        return res.status(400).json({ errors });
+      }
+
+      const data = await service.update_Inventory(input);
+
+      if (!data.success) {
+        await conn.query("ROLLBACK");
+        return res.status(400).json({ message: data.message });
+      }
+
+      await conn.query("COMMIT");
+      return res.status(201).json({ data });
+    } catch (error) {
+      await conn.query("ROLLBACK");
+      console.error(error);
+      return res.status(500).json({ error: error.message });
+    }
+})
 
 router.get("/get/category/:branch_id", async (req, res) => {
   
@@ -396,12 +468,53 @@ router.get("/get/category/:branch_id", async (req, res) => {
   }
 });
 
+router.get("/get/inventory-list/:branch_id", async (req, res) => {
+  
+  try {
+    
+     const { branch_id } = req.params;
+     const type= req.query.type
+    const getInventoryListData = await service.getInventoryListData(branch_id,type);
+    if (!getInventoryListData.success) return res.status(400).json({ message: getInventoryListData.message });
+    return res.status(201).json({ message : "Data Get Successfully" , Data: getInventoryListData.data });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.get("/get/purchase-list/:branch_id", async (req, res) => {
+  
+  try {
+     const { branch_id } = req.params;
+    const getPurchaseListData = await service.getPurchaseListData(branch_id);
+    console.log(getPurchaseListData);
+    if (!getPurchaseListData.success) return res.status(400).json({ message: getPurchaseListData.message });
+    return res.status(201).json({ message : "Data Get Successfully" , Data: getPurchaseListData.data });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.get("/get/expense-list/:branch_id", async (req, res) => {
+  
+  try {
+     const { branch_id } = req.params;
+    const getExpenseListData = await service.getExpenseListData(branch_id);
+    if (!getExpenseListData.success) return res.status(400).json({ message: getExpenseListData.message });
+    return res.status(201).json({ message : "Data Get Successfully" , Data: getExpenseListData.data });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 router.get("/get/vendor/:branch_id", async (req, res) => {
   
   try {
      const { branch_id } = req.params;
     const getVendorData = await service.getVendorData(branch_id);
-    console.log(getVendorData);
     if (!getVendorData.success) return res.status(400).json({ message: getVendorData.message });
     return res.status(201).json({ message : "Data Get Successfully" , Data: getVendorData.data });
   } catch (error) {
@@ -416,6 +529,7 @@ router.get("/get/menu_item/:branch_id", async (req, res) => {
       const {branch_id} = req.params
     const getMenuItemData = await service.get_menuItem_data(branch_id);
     if (!getMenuItemData.success) return res.status(400).json({ message: getMenuItemData.message });
+    console.log("menuitem",getMenuItemData.data)
     return res.status(201).json({ message : "Data Get Successfully" , Data: getMenuItemData.data });
   } catch (error) {
     console.error(error);
@@ -426,7 +540,6 @@ router.get("/get/menu_item/:branch_id", async (req, res) => {
 router.get("/get/orders/:branch_id", async (req, res) => {
 
   try {
-        console.log(req.params)
 
       const {branch_id} = req.params
     const getMenuItemData = await service.get_ordered_data(branch_id);

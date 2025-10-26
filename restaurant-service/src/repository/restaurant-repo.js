@@ -103,6 +103,182 @@ exports.get_category_data = async (branch_id) => {
   }
 }
 
+exports.get_inventory_list = async (branch_id,type) => {
+  try {
+    const query = `
+      SELECT 
+        i.*, 
+        c.name AS category_name,
+        m.gst_tax AS gst_tax
+      FROM tbl_inventory i
+      LEFT JOIN tbl_category c ON i.category_id = c.id
+      LEFT JOIN tbl_menu_item m ON i.item_id = m.menu_id
+      WHERE i.branch_id = $1 AND i.inventory_type = $2
+    `;
+    const result = await conn.query(query, [branch_id,type]);
+    return result.rows;
+  } catch (err) {
+    throw new Error("Unable to fetch inventory data: " + err.message);
+  }
+};
+
+
+exports.get_purchase = async (branch_id) => {
+  try {
+    const query = `
+      WITH purchase_data AS (
+        SELECT 
+          p.purchase_id,
+          p.branch_id,
+          p.category_id,
+          p.payment_type,
+          p.attachment_url,
+          p.notes,
+          c.name AS category_name,
+          p.vendor_id,
+          v.vendor_name,
+          v.vendor_phone,
+          v.vendor_email,
+          v.company_name,
+          p.purchase_date,
+          p.total_amount,
+          p.paid_amount,
+          p.balance_amount,
+          p.created_at,
+          p.updated_at,
+          COALESCE(
+            JSON_AGG(
+              JSON_BUILD_OBJECT(
+                'item_id', pi.item_id,
+                'item_name', pi.item_name,
+                'quantity', pi.qty,
+                'unit', pi.unit,
+                'price', pi.purchase_price,
+                'total', pi.total_price,
+                'image', m.menu_image  -- added menu image
+              )
+            ) FILTER (WHERE pi.purchase_id IS NOT NULL), 
+            '[]'
+          ) AS items
+        FROM tbl_purchase p
+        LEFT JOIN tbl_purchase_items pi ON p.purchase_id = pi.purchase_id
+        LEFT JOIN tbl_category c ON p.category_id = c.id
+        LEFT JOIN tbl_vendor v ON p.vendor_id = v.vendor_id
+        LEFT JOIN tbl_menu_item m ON pi.item_id = m.menu_id  -- join menu table to get image
+        WHERE p.branch_id = $1::text
+        GROUP BY 
+          p.purchase_id, 
+          p.branch_id, 
+          p.category_id, 
+          p.payment_type,
+          p.attachment_url,
+          p.notes,
+          c.name,
+          p.vendor_id,
+          v.vendor_name,
+          v.company_name,
+          v.vendor_phone,
+          v.vendor_email,
+          p.purchase_date, 
+          p.total_amount, 
+          p.paid_amount,
+          p.balance_amount,
+          p.created_at, 
+          p.updated_at
+      )
+      SELECT 
+        JSON_AGG(purchase_data) AS purchases,
+        COUNT(*) AS total_purchase_count,
+        COALESCE(SUM(paid_amount), 0) AS total_spent_amount
+      FROM purchase_data;
+    `;
+
+    const result = await conn.query(query, [branch_id]);
+    return result.rows[0]; // { purchases: [...], total_purchase_count, total_spent_amount }
+  } catch (err) {
+    throw new Error("Unable to fetch purchase data: " + err.message);
+  }
+};
+
+
+exports.get_Expense = async (branch_id) => {
+  try {
+    const query = `
+      SELECT 
+        JSON_AGG(expense_data ORDER BY expense_date DESC) AS expenses,
+        (SELECT COALESCE(SUM(paid_amount),0) FROM tbl_expense WHERE branch_id = $1::text) AS total_paid_all,
+        (SELECT COALESCE(SUM(paid_amount) FILTER (
+             WHERE DATE_TRUNC('month', expense_date) = DATE_TRUNC('month', CURRENT_DATE)
+        ),0) FROM tbl_expense WHERE branch_id = $1::text) AS total_paid_this_month,
+        (SELECT COALESCE(SUM(paid_amount) FILTER (
+             WHERE DATE_TRUNC('month', expense_date) = DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')
+        ),0) FROM tbl_expense WHERE branch_id = $1::text) AS total_paid_last_month,
+        (SELECT COALESCE(SUM(paid_amount) FILTER (
+             WHERE DATE_TRUNC('week', expense_date) = DATE_TRUNC('week', CURRENT_DATE)
+        ),0) FROM tbl_expense WHERE branch_id = $1::text) AS total_paid_this_week,
+        (SELECT COALESCE(SUM(paid_amount) FILTER (
+             WHERE expense_date::date = CURRENT_DATE
+        ),0) FROM tbl_expense WHERE branch_id = $1::text) AS total_paid_today
+      FROM (
+        SELECT 
+          e.expense_id,
+          e.branch_id,
+          e.category_id,
+          e.expense_name,
+          e.attachment_url,
+          e.description,
+          c.name AS category_name,
+          e.expense_date,
+          e.total_amount,
+          e.paid_amount,
+          e.balance_amount,
+          e.created_at,
+          e.updated_at,
+          COALESCE(
+            JSON_AGG(
+              JSON_BUILD_OBJECT(
+                'item_id', ei.item_id,
+                'item_name', ei.item_name,
+                'quantity', ei.qty,
+                'price', ei.price,
+                'total', ei.total
+              )
+            ) FILTER (WHERE ei.expense_id IS NOT NULL), 
+            '[]'
+          ) AS items
+        FROM tbl_expense e
+        LEFT JOIN tbl_expense_items ei ON e.expense_id = ei.expense_id
+        LEFT JOIN tbl_category c ON e.category_id = c.id
+        WHERE e.branch_id = $1::text
+        GROUP BY 
+          e.expense_id,
+          e.branch_id,
+          e.expense_name,
+          e.category_id,
+          e.attachment_url,
+          e.description,
+          c.name,
+          e.expense_date,
+          e.total_amount,
+          e.paid_amount,
+          e.balance_amount,
+          e.created_at,
+          e.updated_at
+      ) AS expense_data;
+    `;
+
+    // Execute query with branch_id as parameter
+    const result = await conn.query(query, [branch_id]);
+
+    // Return the first row (JSON object)
+    return result.rows[0];
+  } catch (err) {
+    throw new Error("Unable to fetch expense data: " + err.message);
+  }
+};
+
+
+
 
 // exports.get_menuItem_data(branch_id) {
 //   return await conn.query(
@@ -405,34 +581,41 @@ exports.getNextMenuId = async (zoduId, branchId) => {
   try {
     await conn.query("BEGIN");
 
-    // Lock all rows for this branch to prevent race condition
+    // Select the last numeric part of menu_id, sorted numerically
     const result = await conn.query(
-      `SELECT menu_id 
-       FROM tbl_menu_item
-       WHERE zodu_id = $1 AND branch_id = $2
-       ORDER BY menu_id DESC
-       LIMIT 1
-       FOR UPDATE`,
+      `
+      SELECT menu_id
+      FROM tbl_menu_item
+      WHERE zodu_id = $1 AND branch_id = $2
+      ORDER BY (regexp_replace(menu_id, '[^0-9]', '', 'g'))::int DESC
+      LIMIT 1
+      FOR UPDATE;
+      `,
       [zoduId, branchId]
     );
 
     let nextNumber = 1;
 
     if (result.rows.length > 0) {
-      // Extract last part (e.g. 003 from zodu-branch-003)
       const lastId = result.rows[0].menu_id;
-      const lastNum = parseInt(lastId.split("-").pop(), 10);
+
+      // Extract numeric part from something like "zodu-branch-320"
+      const match = lastId.match(/(\d+)$/);
+      const lastNum = match ? parseInt(match[1], 10) : 0;
+
       nextNumber = lastNum + 1;
     }
 
     await conn.query("COMMIT");
 
-    return String(nextNumber).padStart(3, "0"); // 001, 002...
+    // Return zero-padded ID part (e.g., "001", "320")
+    return String(nextNumber).padStart(3, "0");
   } catch (err) {
     await conn.query("ROLLBACK");
-    throw err;
+    throw new Error("Error generating next menu ID: " + err.message);
   }
-}
+};
+
 
 exports.getNextOrderId = async (branchId) => {
   try {
@@ -547,14 +730,15 @@ exports.updateActive = async (menuId, active) => {
 exports.createMenuItem = async (menuData) => {
   try {
     await conn.query('BEGIN');
+
     const query = `
       INSERT INTO tbl_menu_item (
         zodu_id, branch_id, menu_category_id, menu_name, menu_type, food_type,
         variants, qr_code_id, sell_price, purchase_price,
-        hsn_code, gst_tax, tax_include_or_exclude, menu_image, menu_code, menu_id, menu_unit,favorites
+        hsn_code, gst_tax, tax_include_or_exclude, menu_image, menu_code, menu_id, menu_unit, favorites
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8,
-        $9, $10, $11, $12, $13, $14, $15, $16, $17,$18
+        $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
       )
       RETURNING *;
     `;
@@ -581,19 +765,60 @@ exports.createMenuItem = async (menuData) => {
     ];
 
     const result = await conn.query(query, values);
+    const createdMenu = result.rows[0];
+
+    // ✅ If menu_type is 'Product', add it to inventory
+    if (createdMenu.menu_type && createdMenu.menu_type.toLowerCase() === 'product') {
+      const existing = await conn.query(
+        `SELECT item_id FROM tbl_inventory WHERE item_id = $1`,
+        [createdMenu.menu_id]
+      );
+
+      if (existing.rows.length > 0) {
+        // Update quantity if already exists
+        await conn.query(
+          `UPDATE tbl_inventory
+           SET stock_qty = stock_qty + 0
+           WHERE item_id = $1`,
+          [createdMenu.menu_id]
+        );
+      } else {
+        // Insert new inventory item
+        await conn.query(
+          `INSERT INTO tbl_inventory (
+            zodu_id, branch_id, item_id, category_id, item_name, item_unit,
+            stock_qty, stock_alert, purchase_price, selling_price, last_purchase_date
+          ) VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $8, $9, NOW())`,
+          [
+            createdMenu.zodu_id,
+            createdMenu.branch_id,
+            createdMenu.menu_id,
+            createdMenu.menu_category_id,
+            createdMenu.menu_name,
+            createdMenu.menu_unit,
+            0, // default stock = 0
+            createdMenu.purchase_price,
+            createdMenu.sell_price
+          ]
+        );
+      }
+    }
+
     await conn.query('COMMIT');
-    return result.rows[0];
+    return createdMenu;
+
   } catch (err) {
     await conn.query('ROLLBACK');
     throw new Error("Unable to create menu: " + err.message);
   }
-}
+};
 
 
 // ✅ Create or Update Order
 exports.createOrder = async (orderData) => {
   try {
     await conn.query('BEGIN');
+    console.log("web",orderData)
     // Check if order already exists (same order_id & table_no)
     const checkQuery = `
       SELECT * FROM tbl_orders
@@ -611,7 +836,7 @@ exports.createOrder = async (orderData) => {
         SET 
           total_amt = total_amt + $1,
           no_of_items = no_of_items + $2,
-          final_payment = final_payment +3,
+          final_payment = $3,
           order_time = CURRENT_TIMESTAMP
         WHERE order_id = $4 AND table_no = $5
         RETURNING *;
@@ -619,8 +844,8 @@ exports.createOrder = async (orderData) => {
       const updateValues = [
         orderData.total_amt,      // new added total
         orderData.no_of_items,    // new added item count
-        orderData.order_id,
         orderData.final_payment,
+        orderData.order_id,
         orderData.table_no
       ];
       result = await conn.query(updateQuery, updateValues);
@@ -892,33 +1117,100 @@ exports.insertPurchaseItems = async (purchase_id, items) => {
   }
 }
 
-exports.addInventory = async (items, branch_id, zodu_id, purchase_date, category_id) => {
+exports.updateInventory = async (items) => {
   try {
     await conn.query('BEGIN');
+      const {
+        inventory_id,
+        stock_qty,
+        stock_alert,
+        selling_price,
+        purchase_price,
+        last_purchase_date,
+      } = items;
+
+      if (!inventory_id) {
+        throw new Error("Missing inventory_id for one or more items");
+      }
+
+      await conn.query(
+        `
+        UPDATE tbl_inventory
+        SET 
+           stock_qty = stock_qty + COALESCE($1, 0),
+          stock_alert = COALESCE($2, stock_alert),
+          selling_price = COALESCE($3, selling_price),
+          purchase_price = COALESCE($4, purchase_price),
+          last_purchase_date = COALESCE($5, last_purchase_date),
+          updated_at = NOW()
+        WHERE inventory_id = $6
+        `,
+        [
+          stock_qty,
+          stock_alert,
+          selling_price,
+          purchase_price,
+          last_purchase_date,
+          inventory_id,
+        ]
+      );
+    
+
+    await conn.query('COMMIT');
+    return { success: true, message: "Inventory updated successfully" };
+  } catch (err) {
+    await conn.query('ROLLBACK');
+    throw new Error("Unable to update Inventory: " + err.message);
+  } 
+};
+
+exports.addInventory = async (items, branch_id, zodu_id, purchase_date, category_id, purchase_type) => {
+  try {
+    await conn.query('BEGIN');
+
+    // ✅ Determine inventory type
+    const inventory_type = purchase_type === "Product" ? "direct" : "indirect";
+
     for (const item of items) {
-      // Check if the item already exists in inventory
       const existing = await conn.query(
         `SELECT item_id FROM tbl_inventory WHERE item_id = $1`,
         [item.id]
       );
 
       if (existing.rows.length > 0) {
-        // ✅ If exists → update quantity
+        // ✅ If exists → update quantity & inventory type
         await conn.query(
           `UPDATE tbl_inventory
-         SET stock_qty = stock_qty + $1
-         WHERE item_id = $2`,
-          [item.qty, item.id]
+           SET stock_qty = stock_qty + $1,
+               last_purchase_date = $2,
+           WHERE item_id = $4`,
+          [item.qty, purchase_date,item.id]
         );
       } else {
         // 🆕 If not exists → insert new item record
         await conn.query(
-          `INSERT INTO tbl_inventory (zodu_id,branch_id, item_id, category_id, item_name,item_unit, stock_qty, stock_alert,purchase_price, selling_price,last_purchase_date)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-          [zodu_id, branch_id, item.id, category_id, item.name, item.unit, item.qty, item.stock_alert, item.purchase_price, item.selling_price, purchase_date]
+          `INSERT INTO tbl_inventory (
+            zodu_id, branch_id, item_id, category_id, item_name, item_unit,
+            stock_qty, stock_alert, purchase_price, selling_price, last_purchase_date, inventory_type
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+          [
+            zodu_id,
+            branch_id,
+            item.id,
+            category_id,
+            item.name,
+            item.unit,
+            item.qty,
+            item.stock_alert,
+            item.purchase_price,
+            item.selling_price,
+            purchase_date,
+            inventory_type
+          ]
         );
       }
     }
+
     await conn.query('COMMIT');
     return { success: true, message: "Inventory updated successfully" };
   } catch (err) {
@@ -926,6 +1218,7 @@ exports.addInventory = async (items, branch_id, zodu_id, purchase_date, category
     throw new Error("Unable to update Inventory: " + err.message);
   }
 };
+
 
 exports.addExpense = async (orderData) => {
   try {
@@ -947,38 +1240,29 @@ exports.addExpense = async (orderData) => {
       await conn.query(
         `UPDATE tbl_expense
          SET 
-           payment_amount = $1,
+           total_amount = $1,
            expense_date = $2,
-           balance_amount = $4,
+           paid_amount = $4,
            updated_at = NOW()
          WHERE expense_id = $3`,
-        [orderData.total_amount, orderData.order_date, existing.rows[0].expense_id, orderData.balance_amount]
+        [orderData.total_amount, orderData.order_date, existing.rows[0].expense_id, orderData.paid_amount]
       );
     } else {
       // 🆕 Insert new expense record
-      const result = await conn.query(
-        `SELECT expense_id 
-       FROM tbl_expense
-       WHERE branch_id = $1
-       ORDER BY expense_id DESC
-       LIMIT 1
-       FOR UPDATE`,
-        [orderData.branch_id]
-      );
+     const result = await conn.query(
+  `SELECT MAX(CAST(SPLIT_PART(expense_id, '-EXP-', 2) AS INTEGER)) AS max_num
+   FROM tbl_expense
+   WHERE branch_id = $1`,
+  [orderData.branch_id]
+);
 
-      let nextNumber = 1;
-      if (result.rows.length > 0) {
-        const lastId = result.rows[0].expense_id; // e.g. Z001-O012
-        const lastNum = parseInt(lastId.split("-EXP")[1]);
-        nextNumber = lastNum + 1;
-      }
-      orderData.expense_id = orderData.branch_id + '-EXP-' + String(nextNumber).padStart(3, "0");
+let nextNumber = 1;
+if (result.rows.length > 0 && result.rows[0].max_num !== null) {
+  nextNumber = result.rows[0].max_num + 1;
+}
 
-      const categoryName = await conn.query(
-        `SELECT name FROM tbl_category WHERE branch_id = $1 AND id = $2 LIMIT 1`,
-        [orderData.branch_id, orderData.category]
-      );
-      orderData.expense_name = categoryName.rows[0].name;
+// Build new expense_id
+orderData.expense_id = `${orderData.branch_id}-EXP-${String(nextNumber).padStart(3, "0")}`;
 
       if (!orderData.expense_date) {
   const now = new Date();
@@ -988,13 +1272,10 @@ exports.addExpense = async (orderData) => {
   orderData.expense_date = `${year}-${month}-${day}`;
 }
 
-if (!orderData.balance_amount) {
-  orderData.balance_amount = orderData.total_amount - (orderData.paid_amount || 0);
-}
 
       await conn.query(
   `INSERT INTO tbl_expense 
-    (zodu_id, branch_id, category_id, expense_id, expense_name, expense_date, payment_amount, balance_amount, description,attachment_url, created_at)
+    (zodu_id, branch_id, category_id, expense_id, expense_name, expense_date, total_amount,paid_amount, description,attachment_url, created_at)
    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
   [
     orderData.zodu_id,              // $1
@@ -1004,7 +1285,7 @@ if (!orderData.balance_amount) {
     orderData.expense_name,         // $5
     orderData.expense_date,           // $6
     orderData.total_amount,         // $7
-    orderData.balance_amount || 0,  // $8
+    orderData.paid_amount || 0,  // $8
     `Purchase Order ${orderData.expense_id}` ,// $9 ✅ fixed
     orderData.attachment_url || null // $10
   ]
