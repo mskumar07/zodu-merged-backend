@@ -200,6 +200,39 @@ async function getCategoryData(branch_id) {
   }
 }
 
+async function get_Report(data) {
+  try{
+    const ReportData= await repository.getReport(data)
+ return {
+      success: true,
+      data: ReportData,
+    };
+  }catch(error){
+    console.error("Report error",error);
+    return {
+      success: false,
+      message: err.message
+    };
+  }
+  
+}
+
+async function get_dashboard(zodu_id,branch_id) {
+   try{
+    const DashboardData= await repository.getDashboard(zodu_id,branch_id)
+ return {
+      success: true,
+      data: DashboardData,
+    };
+  }catch(error){
+    console.error("Report error",error);
+    return {
+      success: false,
+      message: err.message
+    };
+  }
+}
+
 async function getVendorData(branch_id) {
   try {
     const allVendorData = await repository.getVendor(branch_id); 
@@ -228,6 +261,30 @@ async function getInventoryListData(branch_id,type) {
     return {
       success: false,
       message: error.message
+    };
+  }
+}
+
+async function addin_Inventory(data) {
+
+  try{
+     const CategoryCreate = await repository.createCategory(
+      data.zodu_id,
+      data.branch_id,
+      data.category
+    );
+    data.category = CategoryCreate.id;
+    const InventoryData = await repository.addin_Inventory(data)
+    return{
+      success:true,
+      data:InventoryData
+    }
+
+  }catch(err){
+    console.error("Inventory Update Failed",err);
+     return {
+      success: false,
+      message: err.message
     };
   }
 }
@@ -337,12 +394,26 @@ async function get_menuItem_data(branch_id) {
 }
 
 
-async function get_ordered_data(branch_id) {
+async function get_ordered_data(data) {
   try {
-    const orderData = await repository.get_ordered_data(branch_id);
+    const orderData = await repository.get_ordered_data(data);
 
-    // ✅ Ensure structure is categories with items
-   
+    return {
+      success: true,
+      data: orderData,
+    };
+  } catch (error) {
+    console.error("update Order Error", error);
+    return {
+      success: false,
+      message: error.message,
+    };
+  }
+}
+
+async function update_Final_payment(data) {
+   try {
+    const orderData = await repository.updateFinalPayment(data);
 
     return {
       success: true,
@@ -636,5 +707,9 @@ module.exports = {
   getPurchaseListData,
   getExpenseListData,
   createExpense,
-  update_Inventory
+  update_Inventory,
+  get_Report,
+  addin_Inventory,
+  update_Final_payment,
+  get_dashboard
 };

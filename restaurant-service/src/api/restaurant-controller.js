@@ -459,7 +459,6 @@ router.get("/get/category/:branch_id", async (req, res) => {
   try {
      const { branch_id } = req.params;
     const getCategoryData = await service.getCategoryData(branch_id);
-    console.log(getCategoryData);
     if (!getCategoryData.success) return res.status(400).json({ message: getCategoryData.message });
     return res.status(201).json({ message : "Data Get Successfully" , Data: getCategoryData.data });
   } catch (error) {
@@ -528,8 +527,7 @@ router.get("/get/menu_item/:branch_id", async (req, res) => {
   try {
       const {branch_id} = req.params
     const getMenuItemData = await service.get_menuItem_data(branch_id);
-    if (!getMenuItemData.success) return res.status(400).json({ message: getMenuItemData.message });
-    console.log("menuitem",getMenuItemData.data)
+    if (!getMenuItemData.success) return res.status(201).json({ message: getMenuItemData.message });
     return res.status(201).json({ message : "Data Get Successfully" , Data: getMenuItemData.data });
   } catch (error) {
     console.error(error);
@@ -550,5 +548,97 @@ router.get("/get/orders/:branch_id", async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 });
+
+router.post("/api/completeorder",async (req,res)=>{
+  try{
+    const data = req.body
+     const orderData = await service.update_Final_payment(data);
+
+      if (!orderData.success) {
+        await conn.query("ROLLBACK");
+        return res.status(400).json({ message: orderData.message });
+      }
+
+      await conn.query("COMMIT");
+      return res.status(201).json({ orderData });
+  }catch(err){
+    console.error(err)
+    return res.status(500).json({error:err.message})
+  }
+})
+
+router.get("/api/dashboard/:zodu_id/:branch_id",async (req, res) => {
+
+  try {
+
+      const {branch_id,zodu_id} = req.params
+    const getData = await service.get_dashboard(branch_id,zodu_id);
+    if (!getData.success) return res.status(400).json({ message: getData.message });
+    return res.status(201).json({ message : "Data Get Successfully" , Data: getData.data });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+})
+
+router.get("/api/report", async (req, res) => {
+  // ✅ Validate query parameters
+ const { errors, input } = await RequestValidator(
+        schema.reportSchema,
+        req.query
+      );
+  if (errors) {
+    return res.status(400).json({ success: false, error: errors.details[0].message });
+  }
+
+  try {
+    console.log("Report Query Params:", input);
+
+    // ✅ Call service layer
+    const data = await service.get_Report(input);
+
+    return res.status(200).json({
+      success: true,
+      type: input.type,
+      filter_used: input.filter,
+      data,
+    });
+  } catch (err) {
+    console.error("Error generating report:", err);
+    return res.status(500).json({
+      success: false,
+      message: err.message || "Internal server error",
+    });
+  }
+});
+
+router.post("/api/add/inventory", async (req,res)=>{
+
+  try{
+      const { errors, input } = await RequestValidator(
+        schema.Inventory,
+        req.body
+      );
+      console.log(req.body)
+  if (errors) {
+    return res.status(400).json({ success: false, error: errors });
+  }
+     const data = await service.addin_Inventory(input);
+
+      if (!data.success) {
+        return res.status(400).json({ message: data.message });
+      }
+
+      return res.status(201).json({ data });
+
+  }catch(err){
+    console.error("Inventory Update Failed",err.message)
+    return res.status(500).json({
+        success: false,
+      message: err.message || "Internal server error",
+    })
+  }
+
+})
 
 module.exports = router;

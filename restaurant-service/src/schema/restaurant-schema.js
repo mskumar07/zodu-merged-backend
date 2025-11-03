@@ -115,7 +115,7 @@ const itemSchema = Joi.object({
   no_of_items:Joi.number().integer().required(),
   order_type: Joi.string().valid('Dine-In', 'Takeaway', 'Delivery').required(),
   order_id:Joi.string().max(50),
-   customer_name: Joi.string().max(100).allow('', null),
+  customer_name: Joi.string().max(100).allow('', null),
   customer_phone: Joi.string()
     .pattern(/^[0-9]{7,15}$/)
     .allow('', null),
@@ -234,6 +234,33 @@ const vendor_create = Joi.object({
   }),
 });
 
+ const reportSchema = Joi.object({
+    zodu_id: Joi.string().required(),
+    branch_id: Joi.string().required(),
+    type: Joi.string()
+      .valid("order", "expense", "inventory", "purchase")
+      .required(),
+    filter: Joi.string()
+      .valid("daily", "weekly", "monthly", "yearly", "custom",)
+      .default("daily"),
+    wiseData: Joi.string().valid("item","category","date").default("normal"),
+    start_date: Joi.date().optional(),
+    end_date: Joi.date().optional(),
+  });
+
+  const Inventory = Joi.object({
+    zodu_id: Joi.string().required(),
+    branch_id: Joi.string().required(),
+      category: Joi.string().max(100).required(),
+
+    item_name: Joi.string().max(50).required(),
+    item_unit: Joi.string().required(),
+     stock_qty: Joi.number().required(),
+        stock_alert: Joi.number().required(),
+        purchase_price: Joi.number().required(),
+        last_purchase_date: Joi.date().required(),
+  })
+
 
 module.exports = {
   company_create,
@@ -244,5 +271,7 @@ module.exports = {
   purchase_order_create,
   vendor_create,
   expense_data,
-  inventorySchema
+  inventorySchema,
+  reportSchema,
+  Inventory
 };
