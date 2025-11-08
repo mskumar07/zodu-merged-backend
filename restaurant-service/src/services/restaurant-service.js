@@ -4,18 +4,19 @@ const Minio = require("minio");
 const sharp = require("sharp");
 const repository = require('../repository/restaurant-repo.js');
 const { PDFDocument } = require('pdf-lib');
+const { DB_HOSTNAME, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY, BUCKET_NAME } = require('../config/index.js');
 
 
 
 const minioClient = new Minio.Client({
-  endPoint: "72.60.206.59", // e.g. 123.45.67.89
-  port: 9000,
+  endPoint: DB_HOSTNAME, // e.g. 123.45.67.89
+  port: MINIO_PORT,
   useSSL: false,
-  accessKey: "zoduminio",
-  secretKey: "zodu@2025"
+  accessKey: MINIO_ACCESSKEY,
+  secretKey: MINIO_SECRETKEY
 });
 
-const bucketName = "zodu";
+const bucketName = BUCKET_NAME;
 
 async function createCompanyService(companyData) {
   // 1. Validate data using Joi schema
@@ -121,7 +122,7 @@ async function uploadImg(file) {
 
     const fileUrl = `https://api.zodusolutions.cloud/restaurant/file/${objectName}`;
     console.log("✅ File uploaded successfully:", fileUrl);
-    return fileUrl;
+    return {success:true ,fileUrl:fileUrl};
 
   } catch (err) {
     console.error("Upload failed:", err);
@@ -187,6 +188,22 @@ async function getData(zudo_id) {
 async function getCategoryData(branch_id) {
   try {
     const allCategoryData = await repository.get_category_data(branch_id);
+    return {
+      success: true,
+      data: allCategoryData,
+    };
+  } catch (error) {
+    console.error("Category Data getting Error", error);
+    return {
+      success: false,
+      message: err.message
+    };
+  }
+}
+
+async function getExpenseCategoryData(branch_id) {
+  try {
+    const allCategoryData = await repository.get_expense_category_data(branch_id);
     return {
       success: true,
       data: allCategoryData,
@@ -288,6 +305,51 @@ async function addin_Inventory(data) {
     };
   }
 }
+
+async function addHoldMenu(data) {
+  try {
+
+    const {
+      zodu_id,
+      branch_id,
+      orderType,
+      table_no,
+      customerName,
+      customerPhone,
+      items
+    } = data;
+
+    // 1️⃣ Create new hold
+    const hold_id = await repository.createHold(
+      zodu_id,
+      branch_id,
+      orderType,
+      table_no,
+      customerName,
+      customerPhone
+    );
+
+    // 2️⃣ Insert all hold items
+    for (const item of items) {
+      await repository.insertHoldItem(hold_id, zodu_id, branch_id, item);
+    }
+
+
+    return {
+      success: true,
+      message: "Hold saved successfully",
+      hold_id,
+    };
+
+  } catch (error) {
+    console.error("❌ Hold Add Failed:", error);
+    return {
+      success: false,
+      message: error.message,
+    };
+  } 
+}
+
 
 async function getPurchaseListData(branch_id) {
   try {
@@ -623,7 +685,6 @@ async function createPurchaseOrder(purchaseOrderData) {
     // ✅ Step 3: Upload image (Stop if fails)
     const imgResult = await uploadImg(purchaseOrderData.attachment_url);
     if (!imgResult.success) {
-      // ❌ Stop execution and throw error with the image upload message
       throw new Error(imgResult.message || "Image upload failed");
     }
     purchaseOrderData.attachment_url = imgResult.url; // assuming uploadImg returns { success, url, message }
@@ -663,7 +724,8 @@ async function createPurchaseOrder(purchaseOrderData) {
 
 async function createExpense(expenseData) {
   try {
-      const CategoryCreate = await repository.createCategory(
+    console.log(expenseData)
+      const CategoryCreate = await repository.createExpenseCategory(
       expenseData.zodu_id,
       expenseData.branch_id,
       expenseData.category
@@ -711,5 +773,7 @@ module.exports = {
   get_Report,
   addin_Inventory,
   update_Final_payment,
-  get_dashboard
+  get_dashboard,
+  getExpenseCategoryData,
+  addHoldMenu
 };

@@ -104,6 +104,20 @@ exports.get_category_data = async (branch_id) => {
   }
 }
 
+exports.get_expense_category_data = async (branch_id) => {
+  try {
+    const query = `
+      SELECT name, zodu_id, branch_id, active
+      FROM tbl_expense_category
+      WHERE branch_id = $1
+    `;
+    const result = await conn.query(query, [branch_id]);
+    return result.rows;
+  } catch (err) {
+    throw new Error("Unable to fetch category data: " + err.message);
+  }
+}
+
 exports.get_inventory_list = async (branch_id,type) => {
   try {
     const query = `
@@ -407,7 +421,9 @@ exports.get_ordered_data = async (branch_id) => {
           'qty', i.qty,
           'price', i.price,
           'item_unit', i.item_unit,
-          'item_image', mi.menu_image
+          'item_image', mi.menu_image,
+          'variant_name', i.variant_name,
+          'variant_id',i.variant_id
         )
       ) FILTER (WHERE i.item_id IS NOT NULL), '[]'
     ) AS ordered_items,
@@ -567,6 +583,41 @@ exports.createCategory = async (zodu_id, branch_id, name) => {
   }
 }
 
+exports.createExpenseCategory = async (zodu_id, branch_id, name) => {
+  console.log(zodu_id,branch_id,name)
+  try {
+    // 1️⃣ Check if category already exists in this branch
+    const checkQuery = `
+      SELECT * FROM tbl_expense_category
+      WHERE zodu_id = $1 AND branch_id = $2 AND category_name = $3
+      LIMIT 1;
+    `;
+    const checkValues = [zodu_id, branch_id, name];
+    const checkResult = await conn.query(checkQuery, checkValues);
+
+    if (checkResult.rows.length > 0) {
+      // ✅ Category already exists → return existing
+      return checkResult.rows[0];
+    }
+
+    // 2️⃣ Otherwise, insert new category
+    const insertQuery = `
+      INSERT INTO tbl_expense_category (zodu_id, branch_id, category_name)
+      VALUES ($1, $2, $3)
+      RETURNING *;
+    `;
+    const insertValues = [zodu_id, branch_id, name];
+    const insertResult = await conn.query(insertQuery, insertValues);
+
+    if (insertResult.rows.length === 0) {
+      throw new Error("Category not created");
+    }
+
+    return insertResult.rows[0];
+  } catch (err) {
+    throw new Error("Unable to create Category: " + err.message);
+  }
+}
 
 exports.createnewVendor = async (vendorData) => {
   try {
@@ -1286,38 +1337,47 @@ exports.addInventory = async (items, branch_id, zodu_id, purchase_date, category
     const inventory_type = purchase_type === "Product" ? "direct" : "indirect";
 
     for (const item of items) {
+      // ⚠️ Skip items without a valid ID
+      if (!item.id || item.id === null || item.id.trim() === '') {
+        console.warn(`⚠️ Skipped item without ID: ${item.name}`);
+        continue;
+      }
+
+      // 🔍 Check if item already exists
       const existing = await conn.query(
         `SELECT item_id FROM tbl_inventory WHERE item_id = $1`,
         [item.id]
       );
 
       if (existing.rows.length > 0) {
-        // ✅ If exists → update quantity & inventory type
+        // ✅ Update existing item quantity & last purchase date
         await conn.query(
           `UPDATE tbl_inventory
-           SET stock_qty = stock_qty + $1,
-               last_purchase_date = $2,
+           SET 
+             stock_qty = stock_qty + $1,
+             last_purchase_date = $2,
+             inventory_type = $3
            WHERE item_id = $4`,
-          [item.qty, purchase_date,item.id]
+          [item.qty, purchase_date, inventory_type, item.id]
         );
       } else {
-        // 🆕 If not exists → insert new item record
+        // 🆕 Insert new item into inventory
         await conn.query(
           `INSERT INTO tbl_inventory (
             zodu_id, branch_id, item_id, category_id, item_name, item_unit,
-            stock_qty, stock_alert, purchase_price, selling_price, last_purchase_date, inventory_type
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+            stock_qty, stock_alert, purchase_price, selling_price, last_purchase_date, inventory_type, created_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())`,
           [
             zodu_id,
             branch_id,
             item.id,
             category_id,
             item.name,
-            item.unit,
+            item.unit || 'unit',
             item.qty,
-            item.stock_alert,
-            item.purchase_price,
-            item.selling_price,
+            item.stock_alert || 5,
+            item.purchase_price || 0,
+            item.selling_price || 0,
             purchase_date,
             inventory_type
           ]
@@ -1327,28 +1387,56 @@ exports.addInventory = async (items, branch_id, zodu_id, purchase_date, category
 
     await conn.query('COMMIT');
     return { success: true, message: "Inventory updated successfully" };
+
   } catch (err) {
     await conn.query('ROLLBACK');
+    console.error("❌ Error in addInventory:", err.message);
     throw new Error("Unable to update Inventory: " + err.message);
   }
 };
 
 
+
 exports.addExpense = async (orderData) => {
   try {
     await conn.query('BEGIN');
-    // 🔍 Check if expense already exists (by expense_id or purchase description)
+
+    // 🔍 1️⃣ Check if expense already exists
     const existing = await conn.query(
       `SELECT expense_id 
        FROM tbl_expense 
        WHERE expense_id = $1 
          AND branch_id = $2`,
-      [
-        orderData.expense_id || null,
-        orderData.branch_id
-      ]
+      [orderData.expense_id || null, orderData.branch_id]
     );
 
+    // 🔢 2️⃣ Generate new expense_id if needed
+    if (existing.rows.length === 0) {
+      const result = await conn.query(
+        `SELECT MAX(CAST(SPLIT_PART(expense_id, '-EXP-', 2) AS INTEGER)) AS max_num
+         FROM tbl_expense
+         WHERE branch_id = $1`,
+        [orderData.branch_id]
+      );
+
+      let nextNumber = 1;
+      if (result.rows.length > 0 && result.rows[0].max_num !== null) {
+        nextNumber = result.rows[0].max_num + 1;
+      }
+
+      orderData.expense_id = `${orderData.branch_id}-EXP-${String(nextNumber).padStart(3, '0')}`;
+    }
+
+    // 📅 3️⃣ Ensure expense_date is set
+    if (!orderData.expense_date) {
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      orderData.expense_date = `${year}-${month}-${day}`;
+    }
+
+    // 🧾 4️⃣ Update or Insert expense
     if (existing.rows.length > 0) {
       // ✅ Update existing expense
       await conn.query(
@@ -1356,67 +1444,56 @@ exports.addExpense = async (orderData) => {
          SET 
            total_amount = $1,
            expense_date = $2,
-           paid_amount = $4,
+           paid_amount = $3,
            updated_at = NOW()
-         WHERE expense_id = $3`,
-        [orderData.total_amount, orderData.order_date, existing.rows[0].expense_id, orderData.paid_amount]
+         WHERE expense_id = $4`,
+        [
+          orderData.total_amount,
+          orderData.expense_date,
+          orderData.paid_amount || 0,
+          existing.rows[0].expense_id,
+        ]
       );
     } else {
-      // 🆕 Insert new expense record
-     const result = await conn.query(
-  `SELECT MAX(CAST(SPLIT_PART(expense_id, '-EXP-', 2) AS INTEGER)) AS max_num
-   FROM tbl_expense
-   WHERE branch_id = $1`,
-  [orderData.branch_id]
-);
-
-let nextNumber = 1;
-if (result.rows.length > 0 && result.rows[0].max_num !== null) {
-  nextNumber = result.rows[0].max_num + 1;
-}
-
-// Build new expense_id
-orderData.expense_id = `${orderData.branch_id}-EXP-${String(nextNumber).padStart(3, "0")}`;
-
-      if (!orderData.expense_date) {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  orderData.expense_date = `${year}-${month}-${day}`;
-}
-
-
+      // 🆕 Insert new expense
       await conn.query(
-  `INSERT INTO tbl_expense 
-    (zodu_id, branch_id, category_id, expense_id, expense_name, expense_date, total_amount,paid_amount, description,attachment_url, created_at)
-   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
-  [
-    orderData.zodu_id,              // $1
-    orderData.branch_id,            // $2
-    orderData.category,          // $3
-    orderData.expense_id,           // $4
-    orderData.expense_name,         // $5
-    orderData.expense_date,           // $6
-    orderData.total_amount,         // $7
-    orderData.paid_amount || 0,  // $8
-    `Purchase Order ${orderData.expense_id}` ,// $9 ✅ fixed
-    orderData.attachment_url || null // $10
-  ]
-);
-
+        `INSERT INTO tbl_expense 
+          (zodu_id, branch_id, category_id, expense_id, expense_name, expense_date, total_amount, paid_amount, description, attachment_url, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+        [
+          orderData.zodu_id,
+          orderData.branch_id,
+          orderData.category,
+          orderData.expense_id,
+          orderData.expense_name,
+          orderData.expense_date,
+          orderData.total_amount,
+          orderData.paid_amount || 0,
+          `Purchase Order ${orderData.expense_id}`,
+          orderData.attachment_url || null,
+        ]
+      );
     }
+
+    // 🧩 5️⃣ Insert expense items
     if (Array.isArray(orderData.items) && orderData.items.length > 0) {
       const insertItemQuery = `
         INSERT INTO tbl_expense_items 
-          ( expense_id,item_id, item_name, qty, price, created_at)
+          (expense_id, item_id, item_name, qty, price, created_at)
         VALUES ($1, $2, $3, $4, $5, NOW())
       `;
 
       for (const item of orderData.items) {
+        // ⚙️ Auto-generate item_id if missing
+        let itemId = item.id;
+        if (!itemId || itemId === null || itemId === '' || itemId === 'null') {
+          const cleanName = (item.name || 'Unnamed').replace(/\s+/g, '-').toUpperCase();
+          itemId = `${orderData.branch_id}-ITEM-${cleanName}`;
+        }
+
         await conn.query(insertItemQuery, [
           orderData.expense_id,
-          item.id,
+          itemId,
           item.name,
           item.qty,
           item.purchase_price,
@@ -1429,13 +1506,14 @@ orderData.expense_id = `${orderData.branch_id}-EXP-${String(nextNumber).padStart
 
   } catch (error) {
     await conn.query('ROLLBACK');
-    console.error("Error in addExpenseFromPurchase:", error.message);
+    console.error("❌ Error in addExpense:", error.message);
     return {
       success: false,
-      message: "Failed to add or update expense: " + error.message
+      message: "Failed to add or update expense: " + error.message,
     };
   }
-}
+};
+
 
 
 exports.getDashboard = async (zodu_id, branch_id ) => {
@@ -2042,5 +2120,44 @@ else if (type === "inventory") {
   }
 };
 
+exports.createHold= async({ zodu_id, branch_id, orderType, table_no, customerName, customerPhone }) => {
+  const query = `
+    INSERT INTO tbl_hold (zodu_id, branch_id, order_type, table_no, customer_name, customer_phone)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    RETURNING hold_id
+  `;
+
+  const result = await conn.query(query, [
+    zodu_id,
+    branch_id,
+    orderType,
+    table_no,
+    customerName,
+    customerPhone
+  ]);
+
+  return result.rows[0].hold_id;
+}
+
+exports.insertHoldItem = async (hold_id, zodu_id, branch_id, item)=> {
+  const query = `
+    INSERT INTO tbl_hold_items 
+      (zodu_id, branch_id, hold_id, item_name, item_id, item_unit, qty, price, variant_name, variant_id)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+  `;
+
+  await conn.query(query, [
+    zodu_id,
+    branch_id,
+    hold_id,
+    item.item_name,
+    item.item_id,
+    item.item_unit || null,
+    item.qty || 0,
+    item.price || 0,
+    item.variant_name || null,
+    item.variant_id || null
+  ]);
+}
 
 
