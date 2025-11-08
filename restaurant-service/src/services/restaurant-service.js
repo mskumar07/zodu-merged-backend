@@ -245,7 +245,7 @@ async function get_dashboard(zodu_id,branch_id) {
     console.error("Report error",error);
     return {
       success: false,
-      message: err.message
+      message: error.message
     };
   }
 }
