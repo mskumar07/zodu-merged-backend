@@ -571,8 +571,8 @@ router.get("/api/dashboard/:zodu_id/:branch_id",async (req, res) => {
 
   try {
 
-      const {branch_id,zodu_id} = req.params
-    const getData = await service.get_dashboard(branch_id,zodu_id);
+      const {zodu_id, branch_id} = req.params
+    const getData = await service.get_dashboard(zodu_id, branch_id);
     if (!getData.success) return res.status(400).json({ message: getData.message });
     return res.status(201).json({ message : "Data Get Successfully" , Data: getData.data });
   } catch (error) {

@@ -1440,8 +1440,9 @@ orderData.expense_id = `${orderData.branch_id}-EXP-${String(nextNumber).padStart
 
 exports.getDashboard = async (zodu_id, branch_id ) => {
   try {
-    const startDate = moment().startOf("day");
-    const endDate = moment().endOf("day");
+    const startDate = moment("2025-10-30").startOf("day");
+const endDate = moment("2025-10-31").endOf("day");
+
     const params = [zodu_id, branch_id, startDate.toDate(), endDate.toDate()];
 
     // 🔹 Summary (today)
@@ -1455,7 +1456,6 @@ exports.getDashboard = async (zodu_id, branch_id ) => {
         WHERE o.zodu_id = $1
           AND o.branch_id = $2
           AND o.final_payment = true
-          AND o.order_date BETWEEN $3 AND $4
       ),
       expense_summary AS (
         SELECT 
@@ -1595,8 +1595,7 @@ exports.getDashboard = async (zodu_id, branch_id ) => {
       amount: `₹${e.total_amount}`,
     }));
 
-    // ✅ Final Response
-    return {
+   return {
       summary: {
         total_orders: Number(dash.total_orders || 0),
         total_amount: Number(dash.total_sales || 0),
