@@ -622,16 +622,12 @@ async function createMenuItem(menuData) {
 async function createOrder(orderData) {
 
   try {
-
-     if (!orderData.order_id || orderData.order_id.trim() === "" || orderData.order_id === "null") {
-      const nextOrderId = await repository.getNextOrderId(orderData.branch_id);
-      orderData.order_id = `${orderData.branch_id}-O${nextOrderId}`;
-    }
-
 const newOrder = await repository.createOrder(orderData);
 const neworderItem=await repository.createOrderedItems(orderData);
-const newKot = await repository.createKOT(orderData);
-
+    let newKot = null;
+if(orderData.order_type==="Dine-In"){
+ newKot = await repository.createKOT(orderData);
+}
 return {
       success: true,
       message: "Order created successfully",
