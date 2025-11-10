@@ -1441,7 +1441,7 @@ orderData.expense_id = `${orderData.branch_id}-EXP-${String(nextNumber).padStart
 exports.getDashboard = async (zodu_id, branch_id ) => {
   try {
     const startDate = moment("2025-10-30").startOf("day");
-const endDate = moment("2025-10-31").endOf("day");
+    const endDate = moment("2025-10-31").endOf("day");
 
     const params = [zodu_id, branch_id, startDate.toDate(), endDate.toDate()];
 
@@ -1613,433 +1613,564 @@ const endDate = moment("2025-10-31").endOf("day");
   }
 };
 
-
-exports.getReport = async ({
-  zodu_id,
-  branch_id,
-  type,
-  filter,
-  wiseData,
-  start_date,
-  end_date
-}) => {
+exports.getRestaurantSummary = async (zodu_id, branch_id, start_date, end_date) => {
   try {
-    let dateField = "created_at";
-    let query = "";
-    let params = [zodu_id, branch_id];
-    let startDate, endDate;
 
-    // 🔹 Date range filters
-    switch (filter) {
-      case "daily":
-        startDate = moment().startOf("day");
-        endDate = moment().endOf("day");
-        break;
-      case "weekly":
-        startDate = moment().startOf("week");
-        endDate = moment().endOf("week");
-        break;
-      case "monthly":
-        startDate = moment().startOf("month");
-        endDate = moment().endOf("month");
-        break;
-      case "yearly":
-        startDate = moment().startOf("year");
-        endDate = moment().endOf("year");
-        break;
-      case "custom":
-        startDate = start_date ? moment(start_date) : moment().startOf("day");
-        endDate = end_date ? moment(end_date) : moment().endOf("day");
-        break;
-      default:
-        startDate = moment().startOf("day");
-        endDate = moment().endOf("day");
-    }
-
-    params.push(startDate.toDate(), endDate.toDate());
-
-    console.log(params)
-
-    // 🔹 ORDER REPORT
-    if (type === "order") {
-      if (wiseData === "category") {
-        query = `
-          SELECT 
-            COALESCE(i.item_name, 'Unknown') AS category,
-            SUM(i.price * i.qty) AS total_amount,
-            COUNT(DISTINCT o.order_id) AS total_count
-          FROM tbl_orders o
-          LEFT JOIN tbl_ordered_items i ON o.order_id = i.order_id
-          WHERE o.zodu_id = $1
-            AND o.branch_id = $2
-            AND o.final_payment = true
-            AND o.${dateField} BETWEEN $3 AND $4
-          GROUP BY i.item_name
-          ORDER BY total_amount DESC;
-        `;
-      } else if (wiseData === "item") {
-        query = `
-          SELECT 
-            COALESCE(i.item_name, 'Unknown') AS item_name,
-            SUM(i.qty) AS total_qty,
-            SUM(i.price * i.qty) AS total_amount,
-            COUNT(DISTINCT o.order_id) AS total_count
-          FROM tbl_orders o
-          LEFT JOIN tbl_ordered_items i ON o.order_id = i.order_id
-          WHERE o.zodu_id = $1
-            AND o.branch_id = $2
-            AND o.final_payment = true
-            AND o.${dateField} BETWEEN $3 AND $4
-          GROUP BY i.item_name
-          ORDER BY total_amount DESC;
-        `;
-      } else {
-        query = `
-          WITH order_data AS (
-            SELECT 
-              o.order_id,
-              o.table_no,
-              o.order_type,
-              o.customer_name,
-              o.customer_phone,
-              o.total_amt,
-              o.final_payment,
-              o.order_date,
-              o.order_time,
-              COALESCE(
-                JSON_AGG(
-                  DISTINCT JSONB_BUILD_OBJECT(
-                    'item_id', i.item_id,
-                    'item_name', i.item_name,
-                    'qty', i.qty,
-                    'price', i.price,
-                    'item_unit', i.item_unit
-                  )
-                ) FILTER (WHERE i.item_id IS NOT NULL), '[]'
-              ) AS ordered_items
-            FROM tbl_orders o
-            LEFT JOIN tbl_ordered_items i ON o.order_id = i.order_id
-            WHERE o.zodu_id = $1
-              AND o.branch_id = $2
-              AND o.final_payment = true
-              AND o.${dateField} BETWEEN $3 AND $4
-            GROUP BY o.order_id
-          )
-          SELECT 
-            JSON_AGG(order_data) AS data,
-            COUNT(*) AS total_count,
-            COALESCE(SUM(total_amt), 0) AS total_amount,
-            0 AS total_unpaid
-          FROM order_data;
-        `;
-      }
-    }
-
-    // 🔹 EXPENSE REPORT
-   else if (type === "expense") {
-  if (wiseData === "category") {
-    // 🔹 CATEGORY-WISE EXPENSE REPORT
-    query = `
-      SELECT 
-        c.name AS category_name,
-        COUNT(e.expense_id) AS total_count,
-        COALESCE(SUM(e.total_amount), 0) AS total_amount,
-        COALESCE(SUM(e.paid_amount), 0) AS total_paid,
-        COALESCE(SUM(e.balance_amount), 0) AS total_balance
-      FROM tbl_expense e
-      LEFT JOIN tbl_category c ON e.category_id = c.id
-      WHERE 
-        e.zodu_id = $1
-        AND e.branch_id = $2
-        AND e.expense_date BETWEEN $3 AND $4
-      GROUP BY c.name
-      ORDER BY total_amount DESC;
-    `;
-
-  } else if (wiseData === "item") {
-    // 🔹 ITEM-WISE EXPENSE REPORT
-    query = `
-      SELECT 
-        ei.item_name,
-        c.name AS category_name,
-        COALESCE(SUM(ei.qty), 0) AS total_qty,
-        COALESCE(SUM(ei.total), 0) AS total_value,
-        COUNT(DISTINCT e.expense_id) AS expense_count
-      FROM tbl_expense e
-      LEFT JOIN tbl_expense_items ei ON e.expense_id = ei.expense_id
-      LEFT JOIN tbl_category c ON e.category_id = c.id
-      WHERE 
-        e.zodu_id = $1
-        AND e.branch_id = $2
-        AND e.expense_date BETWEEN $3 AND $4
-      GROUP BY ei.item_name, c.name
-      ORDER BY total_value DESC;
-    `;
-
-  } else {
-    // 🔹 FULL EXPENSE REPORT (WITH ITEM DETAILS)
-    query = `
-      SELECT 
-        e.expense_id,
-        e.zodu_id,
-        e.branch_id,
-        e.category_id,
-        e.expense_name,
-        e.attachment_url,
-        e.description,
-        c.name AS category_name,
-        e.expense_date,
-        e.total_amount,
-        e.paid_amount,
-        e.balance_amount,
-        e.created_at,
-        e.updated_at,
-        COALESCE(
-          JSON_AGG(
-            JSON_BUILD_OBJECT(
-              'item_id', ei.item_id,
-              'item_name', ei.item_name,
-              'quantity', ei.qty,
-              'price', ei.price,
-              'total', ei.total
-            )
-          ) FILTER (WHERE ei.expense_id IS NOT NULL),
-          '[]'
-        ) AS items
-      FROM tbl_expense e
-      LEFT JOIN tbl_expense_items ei ON e.expense_id = ei.expense_id
-      LEFT JOIN tbl_category c ON e.category_id = c.id
-      WHERE 
-        e.zodu_id = $1
-        AND e.branch_id = $2
-        AND e.expense_date BETWEEN $3 AND $4
-      GROUP BY 
-        e.expense_id,
-        e.zodu_id,
-        e.branch_id,
-        e.category_id,
-        e.expense_name,
-        e.attachment_url,
-        e.description,
-        c.name,
-        e.expense_date,
-        e.total_amount,
-        e.paid_amount,
-        e.balance_amount,
-        e.created_at,
-        e.updated_at
-      ORDER BY e.expense_date DESC;
-    `;
-  }
-}
+    const startDate = moment(start_date).format("YYYY-MM-DD");
+    const endDate = moment(end_date).format("YYYY-MM-DD");
 
 
-    // 🔹 INVENTORY REPORT
-else if (type === "inventory") {
-  if (wiseData === "category") {
-    // 🔹 CATEGORY-WISE INVENTORY REPORT
-    query = `
-      SELECT 
-        c.name AS category,
-        COALESCE(SUM(i.stock_qty * i.purchase_price), 0) AS total_amount,
-        COUNT(i.inventory_id) AS total_count
-      FROM tbl_inventory i
-      LEFT JOIN tbl_category c ON i.category_id = c.id
-      WHERE i.zodu_id = $1
-        AND i.branch_id = $2
-        AND i.last_purchase_date BETWEEN $3 AND $4
-      GROUP BY c.name
-      ORDER BY total_amount DESC;
-    `;
-  } else if (wiseData === "item") {
-    // 🔹 ITEM-WISE INVENTORY REPORT
-    query = `
-      SELECT 
-        i.item_name,
-        c.name AS category,
-        COALESCE(SUM(i.stock_qty), 0) AS total_qty,
-        COALESCE(SUM(i.purchase_price * i.stock_qty), 0) AS total_amount,
-        COUNT(i.inventory_id) AS total_count,
-        COALESCE(AVG(m.gst_tax::numeric), 0) AS gst_tax
-      FROM tbl_inventory i
-      LEFT JOIN tbl_category c ON i.category_id = c.id
-      LEFT JOIN tbl_menu_item m ON i.item_id = m.menu_id
-      WHERE i.zodu_id = $1
-        AND i.branch_id = $2
-        AND i.last_purchase_date BETWEEN $3 AND $4
-      GROUP BY i.item_name, c.name
-      ORDER BY total_amount DESC;
-    `;
-  } else {
-    // 🔹 DEFAULT INVENTORY LIST REPORT (with summary support)
-    query = `
-      WITH inventory_data AS (
+    const query = `
+      WITH order_summary AS (
         SELECT 
-          i.inventory_id,
-          i.item_name,
-          c.name AS category,
-          COALESCE(i.stock_qty, 0) AS stock_qty,
-          COALESCE(i.purchase_price, 0) AS purchase_price,
-          COALESCE(i.selling_price, 0) AS selling_price,
-          i.inventory_type,
-          i.last_purchase_date,
-          i.updated_at,
-          COALESCE(m.gst_tax::numeric, 0) AS gst_tax,
-          (COALESCE(i.stock_qty, 0) * COALESCE(i.purchase_price, 0)) AS total_value
-        FROM tbl_inventory i
-        LEFT JOIN tbl_category c ON i.category_id = c.id
-        LEFT JOIN tbl_menu_item m ON i.item_id = m.menu_id
-        WHERE i.zodu_id = $1
-          AND i.branch_id = $2
-          AND i.last_purchase_date BETWEEN $3 AND $4
+          COUNT(*) AS total_orders,
+          COALESCE(SUM(total_amt), 0) AS total_amount
+        FROM tbl_orders
+        WHERE zodu_id = $1
+          AND branch_id = $2
+          AND final_payment = TRUE
+          AND order_date BETWEEN $3 AND $4
+      ),
+      item_summary AS (
+        SELECT COALESCE(SUM(oi.qty), 0) AS total_quantity
+        FROM tbl_ordered_items oi
+        JOIN tbl_orders o ON o.order_id = oi.order_id
+        WHERE o.zodu_id = $1 AND o.branch_id = $2 AND o.final_payment = TRUE
+          AND o.order_date BETWEEN $3 AND $4
+      ),
+      top_items AS (
+        SELECT oi.item_name, SUM(oi.qty) AS total_sold
+        FROM tbl_ordered_items oi
+        JOIN tbl_orders o ON o.order_id = oi.order_id
+        WHERE o.zodu_id = $1 AND o.branch_id = $2 AND o.final_payment = TRUE
+          AND o.order_date BETWEEN $3 AND $4
+        GROUP BY oi.item_name ORDER BY total_sold DESC LIMIT 5
+      ),
+      purchase_summary AS (
+        SELECT COUNT(*) AS total_purchases, 
+               COALESCE(SUM(total_amount), 0) AS total_amount,
+               COALESCE(SUM(paid_amount), 0) AS total_paid,
+               COALESCE(SUM(balance_amount), 0) AS total_balance
+        FROM tbl_purchase
+        WHERE zodu_id = $1 AND branch_id = $2
+          AND purchase_date BETWEEN $3 AND $4
+      ),
+      top_purchase_items AS (
+        SELECT pi.item_name, SUM(pi.qty) AS total_qty
+        FROM tbl_purchase_items pi
+        JOIN tbl_purchase p ON p.purchase_id = pi.purchase_id
+        WHERE p.zodu_id = $1 AND p.branch_id = $2
+          AND p.purchase_date BETWEEN $3 AND $4
+        GROUP BY pi.item_name ORDER BY total_qty DESC LIMIT 5
+      ),
+      expense_summary AS (
+        SELECT COUNT(*) AS total_expenses,
+               COALESCE(SUM(total_amount), 0) AS total_amount,
+               COALESCE(SUM(paid_amount), 0) AS total_paid,
+               COALESCE(SUM(balance_amount), 0) AS total_balance
+        FROM tbl_expense
+        WHERE zodu_id = $1 AND branch_id = $2
+          AND expense_date BETWEEN $3 AND $4
+      ),
+      top_expense_categories AS (
+        SELECT ec.category_name, COALESCE(SUM(e.total_amount), 0) AS total_spent
+        FROM tbl_expense e
+        JOIN tbl_expense_category ec ON e.category_id = ec.id
+        WHERE e.zodu_id = $1 AND e.branch_id = $2
+          AND e.expense_date BETWEEN $3 AND $4
+        GROUP BY ec.category_name ORDER BY total_spent DESC LIMIT 5
+      ),
+      inventory_summary AS (
+        SELECT 
+          COUNT(*) FILTER (WHERE stock_qty <= 10) AS low_stock_items,
+          COUNT(*) FILTER (WHERE stock_qty > 10 AND stock_qty <= 50) AS medium_stock_items,
+          COUNT(*) FILTER (WHERE stock_qty > 50) AS high_stock_items
+        FROM tbl_inventory
+        WHERE zodu_id = $1 AND branch_id = $2
+      ),
+      low_stock_details AS (
+        SELECT item_name, stock_qty
+        FROM tbl_inventory
+        WHERE zodu_id = $1 AND branch_id = $2 AND stock_qty <= 10
+        ORDER BY stock_qty ASC LIMIT 5
+      ),
+      high_stock_details AS (
+        SELECT item_name, stock_qty
+        FROM tbl_inventory
+        WHERE zodu_id = $1 AND branch_id = $2 AND stock_qty > 50
+        ORDER BY stock_qty DESC LIMIT 5
       )
       SELECT 
-        JSON_AGG(inventory_data) AS data,
-        COUNT(*) AS total_count,
-        COALESCE(SUM(total_value), 0) AS total_amount
-      FROM inventory_data;
+        os.total_orders,
+        os.total_amount AS orders_amount,
+        isummary.total_quantity,
+        CASE WHEN os.total_orders > 0 THEN ROUND(os.total_amount::numeric / os.total_orders, 2) ELSE 0 END AS average_order_value,
+        COALESCE(json_agg(DISTINCT ti) FILTER (WHERE ti.item_name IS NOT NULL), '[]') AS top_order_items,
+        ps.total_purchases, ps.total_amount AS purchase_amount, ps.total_paid, ps.total_balance,
+        COALESCE(json_agg(DISTINCT tpi) FILTER (WHERE tpi.item_name IS NOT NULL), '[]') AS top_purchase_items,
+        es.total_expenses, es.total_amount AS expense_amount, es.total_paid AS expense_paid, es.total_balance AS expense_balance,
+        COALESCE(json_agg(DISTINCT tec) FILTER (WHERE tec.category_name IS NOT NULL), '[]') AS top_expense_categories,
+        inv.low_stock_items, inv.medium_stock_items, inv.high_stock_items,
+        COALESCE(json_agg(DISTINCT lsd) FILTER (WHERE lsd.item_name IS NOT NULL), '[]') AS low_stock_details,
+        COALESCE(json_agg(DISTINCT hsd) FILTER (WHERE hsd.item_name IS NOT NULL), '[]') AS high_stock_details
+      FROM order_summary os
+      CROSS JOIN item_summary isummary
+      CROSS JOIN purchase_summary ps
+      CROSS JOIN expense_summary es
+      CROSS JOIN inventory_summary inv
+      LEFT JOIN top_items ti ON TRUE
+      LEFT JOIN top_purchase_items tpi ON TRUE
+      LEFT JOIN top_expense_categories tec ON TRUE
+      LEFT JOIN low_stock_details lsd ON TRUE
+      LEFT JOIN high_stock_details hsd ON TRUE
+      GROUP BY os.total_orders, os.total_amount, isummary.total_quantity,
+               ps.total_purchases, ps.total_amount, ps.total_paid, ps.total_balance,
+               es.total_expenses, es.total_amount, es.total_paid, es.total_balance,
+               inv.low_stock_items, inv.medium_stock_items, inv.high_stock_items;
     `;
-  }
-}
 
-
-
-    // 🔹 PURCHASE REPORT
-    else if (type === "purchase") {
-      if (wiseData === "category") {
-        query = `
-          SELECT 
-            c.name AS category_name,
-            SUM(p.total_amount) AS total_amount,
-            SUM(p.balance_amount) AS total_unpaid,
-            COUNT(p.purchase_id) AS total_count
-          FROM tbl_purchase p
-          LEFT JOIN tbl_category c ON p.category_id = c.id
-          WHERE p.zodu_id = $1
-            AND p.branch_id = $2
-            AND p.purchase_date BETWEEN $3 AND $4
-          GROUP BY c.name
-          ORDER BY total_amount DESC;
-        `;
-      } else if (wiseData === "item") {
-        query = `
-          SELECT 
-            pi.item_name,
-            SUM(pi.qty) AS total_qty,
-            SUM(pi.total_price) AS total_amount,
-            COUNT(pi.item_id) AS total_count,
-            COALESCE(SUM(p.balance_amount), 0) AS total_unpaid
-          FROM tbl_purchase p
-          LEFT JOIN tbl_purchase_items pi ON p.purchase_id = pi.purchase_id
-          WHERE p.zodu_id = $1
-            AND p.branch_id = $2
-            AND p.purchase_date BETWEEN $3 AND $4
-          GROUP BY pi.item_name
-          ORDER BY total_amount DESC;
-        `;
-      } else {
-        query = `
-          WITH purchase_data AS (
-            SELECT 
-              p.purchase_id,
-              p.branch_id,
-              p.category_id,
-              p.payment_type,
-              p.attachment_url,
-              p.notes,
-              c.name AS category_name,
-              p.vendor_id,
-              v.vendor_name,
-              v.vendor_phone,
-              v.vendor_email,
-              v.company_name,
-              p.purchase_date,
-              p.total_amount,
-              p.paid_amount,
-              p.balance_amount,
-              p.created_at,
-              p.updated_at,
-              COALESCE(
-                JSON_AGG(
-                  JSON_BUILD_OBJECT(
-                    'item_id', pi.item_id,
-                    'item_name', pi.item_name,
-                    'quantity', pi.qty,
-                    'unit', pi.unit,
-                    'price', pi.purchase_price,
-                    'total', pi.total_price,
-                    'image', m.menu_image
-                  )
-                ) FILTER (WHERE pi.purchase_id IS NOT NULL),
-                '[]'
-              ) AS items
-            FROM tbl_purchase p
-            LEFT JOIN tbl_purchase_items pi ON p.purchase_id = pi.purchase_id
-            LEFT JOIN tbl_category c ON p.category_id = c.id
-            LEFT JOIN tbl_vendor v ON p.vendor_id = v.vendor_id
-            LEFT JOIN tbl_menu_item m ON pi.item_id = m.menu_id
-            WHERE p.zodu_id = $1
-              AND p.branch_id = $2
-              AND p.purchase_date BETWEEN $3 AND $4
-            GROUP BY 
-              p.purchase_id, p.branch_id, p.category_id, p.payment_type,
-              p.attachment_url, p.notes, c.name, p.vendor_id, v.vendor_name,
-              v.company_name, v.vendor_phone, v.vendor_email,
-              p.purchase_date, p.total_amount, p.paid_amount, 
-              p.balance_amount, p.created_at, p.updated_at
-          )
-          SELECT 
-            JSON_AGG(purchase_data) AS data,
-            COUNT(*) AS total_count,
-            COALESCE(SUM(total_amount), 0) AS total_amount,
-            COALESCE(SUM(balance_amount), 0) AS total_unpaid
-          FROM purchase_data;
-        `;
-      }
-    }
-
-    // 🔹 Execute query
+    const params = [zodu_id, branch_id, startDate, endDate];
     const result = await conn.query(query, params);
-    const rows = result.rows || [];
-
-    // 🔹 Handle JSON aggregate queries (data, summary)
-    if (rows.length && rows[0].data) {
-      const { data, total_count, total_amount, total_unpaid } = rows[0];
-      return {
-        type,
-        filter,
-        wiseData,
-        summary: {
-          total_count: parseInt(total_count || 0),
-          total_amount: parseFloat(total_amount || 0),
-          total_unpaid: parseFloat(total_unpaid || 0)
-        },
-        data
-      };
-    }
-
-    // 🔹 For item/category reports
-    const total_amount = rows.reduce((sum, r) => sum + (Number(r.total_amount || r.total_value || 0)), 0);
-    const total_count = rows.reduce((sum, r) => sum + (Number(r.total_count || 0)), 0);
-    const total_unpaid = rows.reduce((sum, r) => sum + (Number(r.total_unpaid || 0)), 0);
 
     return {
-      type,
-      filter,
-      wiseData,
-      summary: {
-        total_count,
-        total_amount,
-        total_unpaid
-      },
-      data: rows
+      success: true,
+      message: "Restaurant summary fetched successfully",
+      dateRange: { startDate, endDate },
+      data: result.rows[0] || {}
     };
-
   } catch (error) {
-    console.error("Report error", error);
-    throw new Error(`Unable to generate report: ${error.message}`);
+    console.error("Repository Error:", error);
+    return { success: false, message: "Database error while fetching restaurant summary" };
   }
 };
+
+
+// exports.getReport = async ({
+//   zodu_id,
+//   branch_id,
+//   type,
+//   filter,
+//   wiseData,
+//   start_date,
+//   end_date
+// }) => {
+//   try {
+//     let dateField = "created_at";
+//     let query = "";
+//     let params = [zodu_id, branch_id];
+//     let startDate, endDate;
+
+//     // 🔹 Date range filters
+//     switch (filter) {
+//       case "daily":
+//         startDate = moment().startOf("day");
+//         endDate = moment().endOf("day");
+//         break;
+//       case "weekly":
+//         startDate = moment().startOf("week");
+//         endDate = moment().endOf("week");
+//         break;
+//       case "monthly":
+//         startDate = moment().startOf("month");
+//         endDate = moment().endOf("month");
+//         break;
+//       case "yearly":
+//         startDate = moment().startOf("year");
+//         endDate = moment().endOf("year");
+//         break;
+//       case "custom":
+//         startDate = start_date ? moment(start_date) : moment().startOf("day");
+//         endDate = end_date ? moment(end_date) : moment().endOf("day");
+//         break;
+//       default:
+//         startDate = moment().startOf("day");
+//         endDate = moment().endOf("day");
+//     }
+
+//     params.push(startDate.toDate(), endDate.toDate());
+
+//     console.log(params)
+
+//     // 🔹 ORDER REPORT
+//     if (type === "order") {
+//       if (wiseData === "category") {
+//         query = `
+//           SELECT 
+//             COALESCE(i.item_name, 'Unknown') AS category,
+//             SUM(i.price * i.qty) AS total_amount,
+//             COUNT(DISTINCT o.order_id) AS total_count
+//           FROM tbl_orders o
+//           LEFT JOIN tbl_ordered_items i ON o.order_id = i.order_id
+//           WHERE o.zodu_id = $1
+//             AND o.branch_id = $2
+//             AND o.final_payment = true
+//             AND o.${dateField} BETWEEN $3 AND $4
+//           GROUP BY i.item_name
+//           ORDER BY total_amount DESC;
+//         `;
+//       } else if (wiseData === "item") {
+//         query = `
+//           SELECT 
+//             COALESCE(i.item_name, 'Unknown') AS item_name,
+//             SUM(i.qty) AS total_qty,
+//             SUM(i.price * i.qty) AS total_amount,
+//             COUNT(DISTINCT o.order_id) AS total_count
+//           FROM tbl_orders o
+//           LEFT JOIN tbl_ordered_items i ON o.order_id = i.order_id
+//           WHERE o.zodu_id = $1
+//             AND o.branch_id = $2
+//             AND o.final_payment = true
+//             AND o.${dateField} BETWEEN $3 AND $4
+//           GROUP BY i.item_name
+//           ORDER BY total_amount DESC;
+//         `;
+//       } else {
+//         query = `
+//           WITH order_data AS (
+//             SELECT 
+//               o.order_id,
+//               o.table_no,
+//               o.order_type,
+//               o.customer_name,
+//               o.customer_phone,
+//               o.total_amt,
+//               o.final_payment,
+//               o.order_date,
+//               o.order_time,
+//               COALESCE(
+//                 JSON_AGG(
+//                   DISTINCT JSONB_BUILD_OBJECT(
+//                     'item_id', i.item_id,
+//                     'item_name', i.item_name,
+//                     'qty', i.qty,
+//                     'price', i.price,
+//                     'item_unit', i.item_unit
+//                   )
+//                 ) FILTER (WHERE i.item_id IS NOT NULL), '[]'
+//               ) AS ordered_items
+//             FROM tbl_orders o
+//             LEFT JOIN tbl_ordered_items i ON o.order_id = i.order_id
+//             WHERE o.zodu_id = $1
+//               AND o.branch_id = $2
+//               AND o.final_payment = true
+//               AND o.${dateField} BETWEEN $3 AND $4
+//             GROUP BY o.order_id
+//           )
+//           SELECT 
+//             JSON_AGG(order_data) AS data,
+//             COUNT(*) AS total_count,
+//             COALESCE(SUM(total_amt), 0) AS total_amount,
+//             0 AS total_unpaid
+//           FROM order_data;
+//         `;
+//       }
+//     }
+
+//     // 🔹 EXPENSE REPORT
+//    else if (type === "expense") {
+//   if (wiseData === "category") {
+//     // 🔹 CATEGORY-WISE EXPENSE REPORT
+//     query = `
+//       SELECT 
+//         c.name AS category_name,
+//         COUNT(e.expense_id) AS total_count,
+//         COALESCE(SUM(e.total_amount), 0) AS total_amount,
+//         COALESCE(SUM(e.paid_amount), 0) AS total_paid,
+//         COALESCE(SUM(e.balance_amount), 0) AS total_balance
+//       FROM tbl_expense e
+//       LEFT JOIN tbl_category c ON e.category_id = c.id
+//       WHERE 
+//         e.zodu_id = $1
+//         AND e.branch_id = $2
+//         AND e.expense_date BETWEEN $3 AND $4
+//       GROUP BY c.name
+//       ORDER BY total_amount DESC;
+//     `;
+
+//   } else if (wiseData === "item") {
+//     // 🔹 ITEM-WISE EXPENSE REPORT
+//     query = `
+//       SELECT 
+//         ei.item_name,
+//         c.name AS category_name,
+//         COALESCE(SUM(ei.qty), 0) AS total_qty,
+//         COALESCE(SUM(ei.total), 0) AS total_value,
+//         COUNT(DISTINCT e.expense_id) AS expense_count
+//       FROM tbl_expense e
+//       LEFT JOIN tbl_expense_items ei ON e.expense_id = ei.expense_id
+//       LEFT JOIN tbl_category c ON e.category_id = c.id
+//       WHERE 
+//         e.zodu_id = $1
+//         AND e.branch_id = $2
+//         AND e.expense_date BETWEEN $3 AND $4
+//       GROUP BY ei.item_name, c.name
+//       ORDER BY total_value DESC;
+//     `;
+
+//   } else {
+//     // 🔹 FULL EXPENSE REPORT (WITH ITEM DETAILS)
+//     query = `
+//       SELECT 
+//         e.expense_id,
+//         e.zodu_id,
+//         e.branch_id,
+//         e.category_id,
+//         e.expense_name,
+//         e.attachment_url,
+//         e.description,
+//         c.name AS category_name,
+//         e.expense_date,
+//         e.total_amount,
+//         e.paid_amount,
+//         e.balance_amount,
+//         e.created_at,
+//         e.updated_at,
+//         COALESCE(
+//           JSON_AGG(
+//             JSON_BUILD_OBJECT(
+//               'item_id', ei.item_id,
+//               'item_name', ei.item_name,
+//               'quantity', ei.qty,
+//               'price', ei.price,
+//               'total', ei.total
+//             )
+//           ) FILTER (WHERE ei.expense_id IS NOT NULL),
+//           '[]'
+//         ) AS items
+//       FROM tbl_expense e
+//       LEFT JOIN tbl_expense_items ei ON e.expense_id = ei.expense_id
+//       LEFT JOIN tbl_category c ON e.category_id = c.id
+//       WHERE 
+//         e.zodu_id = $1
+//         AND e.branch_id = $2
+//         AND e.expense_date BETWEEN $3 AND $4
+//       GROUP BY 
+//         e.expense_id,
+//         e.zodu_id,
+//         e.branch_id,
+//         e.category_id,
+//         e.expense_name,
+//         e.attachment_url,
+//         e.description,
+//         c.name,
+//         e.expense_date,
+//         e.total_amount,
+//         e.paid_amount,
+//         e.balance_amount,
+//         e.created_at,
+//         e.updated_at
+//       ORDER BY e.expense_date DESC;
+//     `;
+//   }
+// }
+
+
+//     // 🔹 INVENTORY REPORT
+// else if (type === "inventory") {
+//   if (wiseData === "category") {
+//     // 🔹 CATEGORY-WISE INVENTORY REPORT
+//     query = `
+//       SELECT 
+//         c.name AS category,
+//         COALESCE(SUM(i.stock_qty * i.purchase_price), 0) AS total_amount,
+//         COUNT(i.inventory_id) AS total_count
+//       FROM tbl_inventory i
+//       LEFT JOIN tbl_category c ON i.category_id = c.id
+//       WHERE i.zodu_id = $1
+//         AND i.branch_id = $2
+//         AND i.last_purchase_date BETWEEN $3 AND $4
+//       GROUP BY c.name
+//       ORDER BY total_amount DESC;
+//     `;
+//   } else if (wiseData === "item") {
+//     // 🔹 ITEM-WISE INVENTORY REPORT
+//     query = `
+//       SELECT 
+//         i.item_name,
+//         c.name AS category,
+//         COALESCE(SUM(i.stock_qty), 0) AS total_qty,
+//         COALESCE(SUM(i.purchase_price * i.stock_qty), 0) AS total_amount,
+//         COUNT(i.inventory_id) AS total_count,
+//         COALESCE(AVG(m.gst_tax::numeric), 0) AS gst_tax
+//       FROM tbl_inventory i
+//       LEFT JOIN tbl_category c ON i.category_id = c.id
+//       LEFT JOIN tbl_menu_item m ON i.item_id = m.menu_id
+//       WHERE i.zodu_id = $1
+//         AND i.branch_id = $2
+//         AND i.last_purchase_date BETWEEN $3 AND $4
+//       GROUP BY i.item_name, c.name
+//       ORDER BY total_amount DESC;
+//     `;
+//   } else {
+//     // 🔹 DEFAULT INVENTORY LIST REPORT (with summary support)
+//     query = `
+//       WITH inventory_data AS (
+//         SELECT 
+//           i.inventory_id,
+//           i.item_name,
+//           c.name AS category,
+//           COALESCE(i.stock_qty, 0) AS stock_qty,
+//           COALESCE(i.purchase_price, 0) AS purchase_price,
+//           COALESCE(i.selling_price, 0) AS selling_price,
+//           i.inventory_type,
+//           i.last_purchase_date,
+//           i.updated_at,
+//           COALESCE(m.gst_tax::numeric, 0) AS gst_tax,
+//           (COALESCE(i.stock_qty, 0) * COALESCE(i.purchase_price, 0)) AS total_value
+//         FROM tbl_inventory i
+//         LEFT JOIN tbl_category c ON i.category_id = c.id
+//         LEFT JOIN tbl_menu_item m ON i.item_id = m.menu_id
+//         WHERE i.zodu_id = $1
+//           AND i.branch_id = $2
+//           AND i.last_purchase_date BETWEEN $3 AND $4
+//       )
+//       SELECT 
+//         JSON_AGG(inventory_data) AS data,
+//         COUNT(*) AS total_count,
+//         COALESCE(SUM(total_value), 0) AS total_amount
+//       FROM inventory_data;
+//     `;
+//   }
+// }
+
+
+
+//     // 🔹 PURCHASE REPORT
+//     else if (type === "purchase") {
+//       if (wiseData === "category") {
+//         query = `
+//           SELECT 
+//             c.name AS category_name,
+//             SUM(p.total_amount) AS total_amount,
+//             SUM(p.balance_amount) AS total_unpaid,
+//             COUNT(p.purchase_id) AS total_count
+//           FROM tbl_purchase p
+//           LEFT JOIN tbl_category c ON p.category_id = c.id
+//           WHERE p.zodu_id = $1
+//             AND p.branch_id = $2
+//             AND p.purchase_date BETWEEN $3 AND $4
+//           GROUP BY c.name
+//           ORDER BY total_amount DESC;
+//         `;
+//       } else if (wiseData === "item") {
+//         query = `
+//           SELECT 
+//             pi.item_name,
+//             SUM(pi.qty) AS total_qty,
+//             SUM(pi.total_price) AS total_amount,
+//             COUNT(pi.item_id) AS total_count,
+//             COALESCE(SUM(p.balance_amount), 0) AS total_unpaid
+//           FROM tbl_purchase p
+//           LEFT JOIN tbl_purchase_items pi ON p.purchase_id = pi.purchase_id
+//           WHERE p.zodu_id = $1
+//             AND p.branch_id = $2
+//             AND p.purchase_date BETWEEN $3 AND $4
+//           GROUP BY pi.item_name
+//           ORDER BY total_amount DESC;
+//         `;
+//       } else {
+//         query = `
+//           WITH purchase_data AS (
+//             SELECT 
+//               p.purchase_id,
+//               p.branch_id,
+//               p.category_id,
+//               p.payment_type,
+//               p.attachment_url,
+//               p.notes,
+//               c.name AS category_name,
+//               p.vendor_id,
+//               v.vendor_name,
+//               v.vendor_phone,
+//               v.vendor_email,
+//               v.company_name,
+//               p.purchase_date,
+//               p.total_amount,
+//               p.paid_amount,
+//               p.balance_amount,
+//               p.created_at,
+//               p.updated_at,
+//               COALESCE(
+//                 JSON_AGG(
+//                   JSON_BUILD_OBJECT(
+//                     'item_id', pi.item_id,
+//                     'item_name', pi.item_name,
+//                     'quantity', pi.qty,
+//                     'unit', pi.unit,
+//                     'price', pi.purchase_price,
+//                     'total', pi.total_price,
+//                     'image', m.menu_image
+//                   )
+//                 ) FILTER (WHERE pi.purchase_id IS NOT NULL),
+//                 '[]'
+//               ) AS items
+//             FROM tbl_purchase p
+//             LEFT JOIN tbl_purchase_items pi ON p.purchase_id = pi.purchase_id
+//             LEFT JOIN tbl_category c ON p.category_id = c.id
+//             LEFT JOIN tbl_vendor v ON p.vendor_id = v.vendor_id
+//             LEFT JOIN tbl_menu_item m ON pi.item_id = m.menu_id
+//             WHERE p.zodu_id = $1
+//               AND p.branch_id = $2
+//               AND p.purchase_date BETWEEN $3 AND $4
+//             GROUP BY 
+//               p.purchase_id, p.branch_id, p.category_id, p.payment_type,
+//               p.attachment_url, p.notes, c.name, p.vendor_id, v.vendor_name,
+//               v.company_name, v.vendor_phone, v.vendor_email,
+//               p.purchase_date, p.total_amount, p.paid_amount, 
+//               p.balance_amount, p.created_at, p.updated_at
+//           )
+//           SELECT 
+//             JSON_AGG(purchase_data) AS data,
+//             COUNT(*) AS total_count,
+//             COALESCE(SUM(total_amount), 0) AS total_amount,
+//             COALESCE(SUM(balance_amount), 0) AS total_unpaid
+//           FROM purchase_data;
+//         `;
+//       }
+//     }
+
+//     // 🔹 Execute query
+//     const result = await conn.query(query, params);
+//     const rows = result.rows || [];
+
+//     // 🔹 Handle JSON aggregate queries (data, summary)
+//     if (rows.length && rows[0].data) {
+//       const { data, total_count, total_amount, total_unpaid } = rows[0];
+//       return {
+//         type,
+//         filter,
+//         wiseData,
+//         summary: {
+//           total_count: parseInt(total_count || 0),
+//           total_amount: parseFloat(total_amount || 0),
+//           total_unpaid: parseFloat(total_unpaid || 0)
+//         },
+//         data
+//       };
+//     }
+
+//     // 🔹 For item/category reports
+//     const total_amount = rows.reduce((sum, r) => sum + (Number(r.total_amount || r.total_value || 0)), 0);
+//     const total_count = rows.reduce((sum, r) => sum + (Number(r.total_count || 0)), 0);
+//     const total_unpaid = rows.reduce((sum, r) => sum + (Number(r.total_unpaid || 0)), 0);
+
+//     return {
+//       type,
+//       filter,
+//       wiseData,
+//       summary: {
+//         total_count,
+//         total_amount,
+//         total_unpaid
+//       },
+//       data: rows
+//     };
+
+//   } catch (error) {
+//     console.error("Report error", error);
+//     throw new Error(`Unable to generate report: ${error.message}`);
+//   }
+// };
 
 
 
