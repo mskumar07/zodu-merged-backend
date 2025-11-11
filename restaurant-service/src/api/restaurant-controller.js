@@ -10,6 +10,7 @@ const multer = require("multer")
 const sharp = require("sharp")
 const upload = multer(); // memory storage
 const mime = require("mime-types");
+const moment = require('moment/moment');
 const { DB_HOSTNAME, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY } = require("../config");
 
 
@@ -590,6 +591,7 @@ router.get("/api/dashboard/:zodu_id/:branch_id",async (req, res) => {
       const {zodu_id, branch_id} = req.params
     const getData = await service.get_dashboard(zodu_id, branch_id);
     if (!getData.success) return res.status(400).json({ message: getData.message });
+
     return res.status(201).json({ message : "Data Get Successfully" , Data: getData.data });
   } catch (error) {
     console.error(error);
@@ -597,36 +599,97 @@ router.get("/api/dashboard/:zodu_id/:branch_id",async (req, res) => {
   }
 })
 
-router.get("/api/report", async (req, res) => {
-  // ✅ Validate query parameters
- const { errors, input } = await RequestValidator(
-        schema.reportSchema,
-        req.query
-      );
-  if (errors) {
-    return res.status(400).json({ success: false, error: errors.details[0].message });
-  }
-
+router.get("/api/restaurant/summary/:zodu_id/:branch_id", async (req, res) => {
   try {
-    console.log("Report Query Params:", input);
+    const { zodu_id, branch_id } = req.params;
+    const { filterType, start_date, end_date } = req.query;
 
-    // ✅ Call service layer
-    const data = await service.get_Report(input);
+    const validFilters = ["today", "week", "month", "year", "custom"];
+
+    // Validate filterType
+    if (filterType && !validFilters.includes(filterType)) {
+      return res.status(400).json({ message: "Invalid filterType" });
+    }
+
+    // Validate dates for custom filter
+    if (filterType === "custom") {
+      if (!start_date || !end_date) {
+        return res.status(400).json({
+          message: "start_date and end_date are required for custom filter",
+        });
+      }
+      if (
+        !moment(start_date, "YYYY-MM-DD", true).isValid() ||
+        !moment(end_date, "YYYY-MM-DD", true).isValid()
+      ) {
+        return res
+          .status(400)
+          .json({ message: "Invalid date format. Use YYYY-MM-DD" });
+      }
+      if (moment(start_date).isAfter(moment(end_date))) {
+        return res
+          .status(400)
+          .json({ message: "start_date cannot be after end_date" });
+      }
+    }
+
+    // Call service
+    const getData = await service.getRestaurantSummary(
+      zodu_id,
+      branch_id,
+      filterType,
+      start_date,
+      end_date
+    );
+
+    if (!getData.success) {
+      return res.status(400).json({ message: getData.message });
+    }
 
     return res.status(200).json({
-      success: true,
-      type: input.type,
-      filter_used: input.filter,
-      data,
+      message: "Restaurant summary fetched successfully",
+      Data: getData.data,
     });
-  } catch (err) {
-    console.error("Error generating report:", err);
-    return res.status(500).json({
-      success: false,
-      message: err.message || "Internal server error",
-    });
+  } catch (error) {
+    console.error("Error in /restaurant/summary:", error);
+    return res.status(500).json({ message: error.message });
   }
 });
+
+
+
+
+
+
+// router.get("/api/report", async (req, res) => {
+//  const { errors, input } = await RequestValidator(
+//         schema.reportSchema,
+//         req.query
+//       );
+//   if (errors) {
+//     return res.status(400).json({ success: false, error: errors.details[0].message });
+//   }
+
+//   try {
+//     console.log("Report Query Params:", input);
+
+//     // ✅ Call service layer
+//     const data = await service.get_Report(input);
+
+//     return res.status(200).json({
+//       success: true,
+//       type: input.type,
+//       filter_used: input.filter,
+//       data,
+//     });
+//   } catch (err) {
+//     console.error("Error generating report:", err);
+//     return res.status(500).json({
+//       success: false,
+//       message: err.message || "Internal server error",
+//     });
+//   }
+// });
 
 router.post("/api/add/inventory", async (req,res)=>{
 

@@ -4,6 +4,7 @@ const Minio = require("minio");
 const sharp = require("sharp");
 const repository = require('../repository/restaurant-repo.js');
 const { PDFDocument } = require('pdf-lib');
+const moment = require('moment/moment');
 const { DB_HOSTNAME, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY, BUCKET_NAME } = require('../config/index.js');
 
 
@@ -252,7 +253,7 @@ async function get_Report(data) {
 
 async function get_dashboard(zodu_id,branch_id) {
    try{
-    const DashboardData= await repository.getDashboard(zodu_id,branch_id)
+    const DashboardData = await repository.getDashboard(zodu_id,branch_id)
  return {
       success: true,
       data: DashboardData,
@@ -265,6 +266,69 @@ async function get_dashboard(zodu_id,branch_id) {
     };
   }
 }
+
+async function getRestaurantSummary(zodu_id, branch_id, filterType, start_date, end_date) {
+  try {
+    let startDate, endDate;
+
+    switch (filterType) {
+      case "today":
+        startDate = moment().startOf("day");
+        endDate = moment().endOf("day");
+        break;
+      case "week":
+        startDate = moment().startOf("week");
+        endDate = moment().endOf("week");
+        break;
+      case "month":
+        startDate = moment().startOf("month");
+        endDate = moment().endOf("month");
+        break;
+      case "year":
+        startDate = moment().startOf("year");
+        endDate = moment().endOf("year");
+        break;
+      case "custom":
+        startDate = moment(start_date).startOf("day");
+        endDate = moment(end_date).endOf("day");
+        break;
+      default:
+        // Last 7 days
+        startDate = moment().subtract(6, "days").startOf("day");
+        endDate = moment().endOf("day");
+    }
+
+    if (!startDate || !endDate) {
+      throw new Error("Date range not calculated properly");
+    }
+
+    // Call repository
+    const reportData = await repository.getRestaurantSummary(
+      zodu_id,
+      branch_id,
+      startDate.format("YYYY-MM-DD"),
+      endDate.format("YYYY-MM-DD")
+    );
+
+    return {
+      success: reportData?.success ?? true,
+      message: reportData?.message || "Summary fetched successfully",
+      dateRange: {
+        start: startDate.format("YYYY-MM-DD"),
+        end: endDate.format("YYYY-MM-DD"),
+        filterType: filterType || "last_7_days",
+      },
+      data: reportData?.data || {},
+    };
+  } catch (error) {
+    console.error("Service Error (getRestaurantSummary):", error);
+    return {
+      success: false,
+      message: error.message || "Unable to fetch restaurant summary",
+    };
+  }
+}
+
 
 async function getVendorData(branch_id) {
   try {
@@ -785,6 +849,7 @@ module.exports = {
   addin_Inventory,
   update_Final_payment,
   get_dashboard,
+  getRestaurantSummary,
   getExpenseCategoryData,
   addHoldMenu,
   getHoldData
