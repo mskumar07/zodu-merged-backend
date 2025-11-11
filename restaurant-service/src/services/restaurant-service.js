@@ -201,6 +201,22 @@ async function getCategoryData(branch_id) {
   }
 }
 
+async function getHoldData(branch_id) {
+  try {
+    const allCategoryData = await repository.getHold(branch_id);
+    return {
+      success: true,
+      data: allCategoryData,
+    };
+  } catch (error) {
+    console.error("Category Data getting Error", error);
+    return {
+      success: false,
+      message: err.message
+    };
+  }
+}
+
 async function getExpenseCategoryData(branch_id) {
   try {
     const allCategoryData = await repository.get_expense_category_data(branch_id);
@@ -308,7 +324,6 @@ async function addin_Inventory(data) {
 
 async function addHoldMenu(data) {
   try {
-
     const {
       zodu_id,
       branch_id,
@@ -771,5 +786,6 @@ module.exports = {
   update_Final_payment,
   get_dashboard,
   getExpenseCategoryData,
-  addHoldMenu
+  addHoldMenu,
+  getHoldData
 };

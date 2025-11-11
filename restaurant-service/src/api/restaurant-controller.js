@@ -469,6 +469,7 @@ router.get("/get/category/:branch_id", async (req, res) => {
   }
 });
 
+
 router.get("/get/expense-category/:branch_id", async (req, res) => {
   
   try {
@@ -657,7 +658,7 @@ router.post("/api/add/inventory", async (req,res)=>{
 })
 
 router.post("/add/hold_menu", async (req, res) => {
-
+console.log(req.body)
   try {
          const { errors, input } = await RequestValidator(
         schema.holdSchema,
@@ -679,5 +680,19 @@ router.post("/add/hold_menu", async (req, res) => {
     res.status(500).json({ error: "Failed to save hold" });
   } 
 });
+
+router.get("/get/hold-orders/:branch_id", async (req, res) => {
+  
+  try {
+     const { branch_id } = req.params;
+    const getHoldData = await service.getHoldData(branch_id);
+    if (!getHoldData.success) return res.status(400).json({ message: getHoldData.message });
+    return res.status(201).json({       message: "Holds fetched successfully",Data: getHoldData.data });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 
 module.exports = router;
