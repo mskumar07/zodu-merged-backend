@@ -5,18 +5,19 @@ const sharp = require("sharp");
 const repository = require('../repository/restaurant-repo.js');
 const { PDFDocument } = require('pdf-lib');
 const moment = require('moment/moment');
-
+const { DB_HOSTNAME, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY, BUCKET_NAME } = require('../config/index.js');
+const {getDateRange} = require("../utils/date_Validators/getDate.js")
 
 
 const minioClient = new Minio.Client({
-  endPoint: "72.60.206.59", // e.g. 123.45.67.89
-  port: 9000,
+  endPoint: DB_HOSTNAME, // e.g. 123.45.67.89
+  port: MINIO_PORT,
   useSSL: false,
-  accessKey: "zoduminio",
-  secretKey: "zodu@2025"
+  accessKey: MINIO_ACCESSKEY,
+  secretKey: MINIO_SECRETKEY
 });
 
-const bucketName = "zodu";
+const bucketName = BUCKET_NAME;
 
 async function createCompanyService(companyData) {
   // 1. Validate data using Joi schema
@@ -122,7 +123,7 @@ async function uploadImg(file) {
 
     const fileUrl = `https://api.zodusolutions.cloud/restaurant/file/${objectName}`;
     console.log("✅ File uploaded successfully:", fileUrl);
-    return fileUrl;
+    return {success:true ,fileUrl:fileUrl};
 
   } catch (err) {
     console.error("Upload failed:", err);
@@ -201,6 +202,22 @@ async function getCategoryData(branch_id) {
   }
 }
 
+async function getExpenseCategoryData(branch_id) {
+  try {
+    const allCategoryData = await repository.get_expense_category_data(branch_id);
+    return {
+      success: true,
+      data: allCategoryData,
+    };
+  } catch (error) {
+    console.error("Category Data getting Error", error);
+    return {
+      success: false,
+      message: err.message
+    };
+  }
+}
+
 async function get_Report(data) {
   try{
     const ReportData= await repository.getReport(data)
@@ -234,67 +251,74 @@ async function get_dashboard(zodu_id,branch_id) {
   }
 }
 
-async function getRestaurantSummary(zodu_id, branch_id, filterType, start_date, end_date) {
+// --- Orders Summary ---
+async function getOrdersSummary(zodu_id, branch_id, filterType, start_date, end_date) {
   try {
-    let startDate, endDate;
-
-    switch (filterType) {
-      case "today":
-        startDate = moment().startOf("day");
-        endDate = moment().endOf("day");
-        break;
-      case "week":
-        startDate = moment().startOf("week");
-        endDate = moment().endOf("week");
-        break;
-      case "month":
-        startDate = moment().startOf("month");
-        endDate = moment().endOf("month");
-        break;
-      case "year":
-        startDate = moment().startOf("year");
-        endDate = moment().endOf("year");
-        break;
-      case "custom":
-        startDate = moment(start_date).startOf("day");
-        endDate = moment(end_date).endOf("day");
-        break;
-      default:
-        // Last 7 days
-        startDate = moment().subtract(6, "days").startOf("day");
-        endDate = moment().endOf("day");
-    }
-
-    if (!startDate || !endDate) {
-      throw new Error("Date range not calculated properly");
-    }
-
-    // Call repository
-    const reportData = await repository.getRestaurantSummary(
-      zodu_id,
-      branch_id,
-      startDate.format("YYYY-MM-DD"),
-      endDate.format("YYYY-MM-DD")
-    );
+    const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
+    const reportData = await repository.getOrdersSummary(zodu_id, branch_id, startDate, endDate);
 
     return {
       success: reportData?.success ?? true,
-      message: reportData?.message || "Summary fetched successfully",
-      dateRange: {
-        start: startDate.format("YYYY-MM-DD"),
-        end: endDate.format("YYYY-MM-DD"),
-        filterType: filterType || "last_7_days",
-      },
+      message: reportData?.message || "Orders summary fetched successfully",
       data: reportData?.data || {},
     };
   } catch (error) {
-    console.error("Service Error (getRestaurantSummary):", error);
-    return {
-      success: false,
-      message: error.message || "Unable to fetch restaurant summary",
-    };
+    console.error("Service Error (getOrdersSummary):", error);
+    return { success: false, message: error.message };
   }
 }
+
+// --- Purchase Summary ---
+async function getPurchaseSummary(zodu_id, branch_id, filterType, start_date, end_date) {
+  try {
+    const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
+    const reportData = await repository.getPurchaseSummary(zodu_id, branch_id, startDate, endDate);
+
+    return {
+      success: reportData?.success ?? true,
+      message: reportData?.message || "Purchase summary fetched successfully",
+      data: reportData?.data || {},
+    };
+  } catch (error) {
+    console.error("Service Error (getPurchaseSummary):", error);
+    return { success: false, message: error.message };
+  }
+}
+
+// --- Expense Summary ---
+async function getExpenseSummary(zodu_id, branch_id, filterType, start_date, end_date) {
+  try {
+    const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
+    const reportData = await repository.getExpenseSummary(zodu_id, branch_id, startDate, endDate);
+
+    return {
+      success: reportData?.success ?? true,
+      message: reportData?.message || "Expense summary fetched successfully",
+      data: reportData?.data || {},
+    };
+  } catch (error) {
+    console.error("Service Error (getExpenseSummary):", error);
+    return { success: false, message: error.message };
+  }
+}
+
+// --- Inventory Summary ---
+async function getInventorySummary(zodu_id, branch_id, filterType, start_date, end_date) {
+  try {
+    const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
+    const reportData = await repository.getInventorySummary(zodu_id, branch_id, startDate, endDate);
+
+    return {
+      success: reportData?.success ?? true,
+      message: reportData?.message || "Inventory summary fetched successfully",
+      data: reportData?.data || {},
+    };
+  } catch (error) {
+    console.error("Service Error (getInventorySummary):", error);
+    return { success: false, message: error.message };
+  }
+}
+
 
 
 async function getVendorData(branch_id) {
@@ -352,6 +376,51 @@ async function addin_Inventory(data) {
     };
   }
 }
+
+async function addHoldMenu(data) {
+  try {
+
+    const {
+      zodu_id,
+      branch_id,
+      orderType,
+      table_no,
+      customerName,
+      customerPhone,
+      items
+    } = data;
+
+    // 1️⃣ Create new hold
+    const hold_id = await repository.createHold(
+      zodu_id,
+      branch_id,
+      orderType,
+      table_no,
+      customerName,
+      customerPhone
+    );
+
+    // 2️⃣ Insert all hold items
+    for (const item of items) {
+      await repository.insertHoldItem(hold_id, zodu_id, branch_id, item);
+    }
+
+
+    return {
+      success: true,
+      message: "Hold saved successfully",
+      hold_id,
+    };
+
+  } catch (error) {
+    console.error("❌ Hold Add Failed:", error);
+    return {
+      success: false,
+      message: error.message,
+    };
+  } 
+}
+
 
 async function getPurchaseListData(branch_id) {
   try {
@@ -624,16 +693,12 @@ async function createMenuItem(menuData) {
 async function createOrder(orderData) {
 
   try {
-
-     if (!orderData.order_id || orderData.order_id.trim() === "" || orderData.order_id === "null") {
-      const nextOrderId = await repository.getNextOrderId(orderData.branch_id);
-      orderData.order_id = `${orderData.branch_id}-O${nextOrderId}`;
-    }
-
 const newOrder = await repository.createOrder(orderData);
 const neworderItem=await repository.createOrderedItems(orderData);
-const newKot = await repository.createKOT(orderData);
-
+    let newKot = null;
+if(orderData.order_type==="Dine-In"){
+ newKot = await repository.createKOT(orderData);
+}
 return {
       success: true,
       message: "Order created successfully",
@@ -687,7 +752,6 @@ async function createPurchaseOrder(purchaseOrderData) {
     // ✅ Step 3: Upload image (Stop if fails)
     const imgResult = await uploadImg(purchaseOrderData.attachment_url);
     if (!imgResult.success) {
-      // ❌ Stop execution and throw error with the image upload message
       throw new Error(imgResult.message || "Image upload failed");
     }
     purchaseOrderData.attachment_url = imgResult.url; // assuming uploadImg returns { success, url, message }
@@ -727,7 +791,8 @@ async function createPurchaseOrder(purchaseOrderData) {
 
 async function createExpense(expenseData) {
   try {
-      const CategoryCreate = await repository.createCategory(
+    console.log(expenseData)
+      const CategoryCreate = await repository.createExpenseCategory(
       expenseData.zodu_id,
       expenseData.branch_id,
       expenseData.category
@@ -776,5 +841,10 @@ module.exports = {
   addin_Inventory,
   update_Final_payment,
   get_dashboard,
-  getRestaurantSummary
+  getOrdersSummary,
+  getPurchaseSummary,
+  getExpenseSummary,
+  getInventorySummary,
+  getExpenseCategoryData,
+  addHoldMenu
 };
