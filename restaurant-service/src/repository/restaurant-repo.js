@@ -1966,7 +1966,6 @@ exports.getOrdersSummary = async (
 };
 
 
-
 exports.getPurchaseSummary = async (
   zodu_id,
   branch_id,
