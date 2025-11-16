@@ -4,6 +4,9 @@ const Minio = require("minio");
 const sharp = require("sharp");
 const repository = require('../repository/restaurant-repo.js');
 const { PDFDocument } = require('pdf-lib');
+const moment = require('moment/moment');
+const { DB_HOSTNAME, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY, BUCKET_NAME } = require('../config/index.js');
+const {getDateRange} = require("../utils/Date_Folder/getDate.js");
 const { DB_HOSTNAME, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY, BUCKET_NAME } = require('../config/index.js');
 
 
@@ -252,7 +255,7 @@ async function get_Report(data) {
 
 async function get_dashboard(zodu_id,branch_id) {
    try{
-    const DashboardData= await repository.getDashboard(zodu_id,branch_id)
+    const DashboardData = await repository.getDashboard(zodu_id,branch_id)
  return {
       success: true,
       data: DashboardData,
@@ -265,6 +268,82 @@ async function get_dashboard(zodu_id,branch_id) {
     };
   }
 }
+
+// --- Orders Summary ---
+
+
+
+// --- Purchase Summary ---
+async function getPurchaseSummary(zodu_id, branch_id, filterType, start_date, end_date, page = 1, limit = 5) {
+  try {
+    const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
+    const reportData = await repository.getPurchaseSummary(zodu_id, branch_id, startDate, endDate);
+
+    const data = reportData?.data || {};
+    const topItems = Array.isArray(data.top_purchase_items) ? data.top_purchase_items : [];
+
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+    const paginatedTopItems = topItems.slice(skip, skip + limitNum);
+
+    return {
+      success: true,
+      message: reportData?.message || "Purchase summary fetched successfully",
+      data: {
+        ...data,
+        top_purchase_items: paginatedTopItems,
+      },
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total: topItems.length,
+        totalPages: Math.ceil(topItems.length / limitNum),
+      },
+    };
+  } catch (error) {
+    console.error("Service Error (getPurchaseSummary):", error);
+    return { success: false, message: error.message };
+  }
+}
+
+
+
+// --- Expense Summary ---
+async function getExpenseSummary(zodu_id, branch_id, filterType, start_date, end_date) {
+  try {
+    const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
+    const reportData = await repository.getExpenseSummary(zodu_id, branch_id, startDate, endDate);
+
+    return {
+      success: reportData?.success ?? true,
+      message: reportData?.message || "Expense summary fetched successfully",
+      data: reportData?.data || {},
+    };
+  } catch (error) {
+    console.error("Service Error (getExpenseSummary):", error);
+    return { success: false, message: error.message };
+  }
+}
+
+// --- Inventory Summary ---
+async function getInventorySummary(zodu_id, branch_id, filterType, start_date, end_date) {
+  try {
+    const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
+    const reportData = await repository.getInventorySummary(zodu_id, branch_id, startDate, endDate);
+
+    return {
+      success: reportData?.success ?? true,
+      message: reportData?.message || "Inventory summary fetched successfully",
+      data: reportData?.data || {},
+    };
+  } catch (error) {
+    console.error("Service Error (getInventorySummary):", error);
+    return { success: false, message: error.message };
+  }
+}
+
+
 
 async function getVendorData(branch_id) {
   try {
@@ -324,6 +403,7 @@ async function addin_Inventory(data) {
 
 async function addHoldMenu(data) {
   try {
+
     const {
       zodu_id,
       branch_id,
@@ -756,8 +836,278 @@ async function createExpense(expenseData) {
       success: false,
       message: err.message,
     };
+  };
+
+}
+
+
+async function getOrdersSummary(zodu_id, branch_id, filterType, start_date, end_date, options = {}) {
+  try {
+    // --- Calculate proper date range ---
+    const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
+
+    const {
+      page = 1,
+      limit = 10,
+      sortBy = "order_date",
+      sortOrder = "desc",
+      top = 5,
+      summaryType = "all"   // all | item | category
+    } = options;
+
+    // --- Fetch from repository ---
+    const reportData = await repository.getOrdersSummary(
+      zodu_id,
+      branch_id,
+      startDate,
+      endDate,
+      { page, limit, sortBy, sortOrder, top, summaryType }
+    );
+
+    if (!reportData?.success) {
+      return { success: false, message: reportData?.message || "No data found" };
+    }
+
+    // --- Build response based on summaryType ---
+    let responseData = {};
+
+    switch(summaryType) {
+      case "item":
+        responseData = {
+          item_wise_summary: reportData.data.item_wise_summary || [],
+          top_orders: reportData.data.top_orders || []
+        };
+        break;
+
+      case "category":
+        responseData = {
+          category_wise_summary: reportData.data.category_wise_summary || []
+        };
+        break;
+
+      case "all":
+      default:
+        responseData = {
+          total_orders: reportData.data.total_orders || 0,
+          total_amount: reportData.data.total_amount || 0,
+          total_quantity: reportData.data.total_quantity || 0,
+          orders: reportData.data.orders || [],
+          top_orders: reportData.data.top_orders || [],
+          item_wise_summary: reportData.data.item_wise_summary || [],
+          category_wise_summary: reportData.data.category_wise_summary || []
+        };
+        break;
+    }
+
+    return {
+      success: true,
+      message: "Orders summary fetched successfully",
+      data: responseData,
+      pagination: reportData.pagination || {}
+    };
+
+  } catch (error) {
+    console.error("Service Error (getOrdersSummary):", error);
+    return { success: false, message: error.message };
   }
 }
+
+// ============================
+// PURCHASE SUMMARY SERVICE
+// ============================
+async function getPurchaseSummary(
+  zodu_id,
+  branch_id,
+  filterType,
+  start_date,
+  end_date,
+  options = {}
+) {
+  try {
+    const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
+
+    const {
+      page = 1,
+      limit = 10,
+      sortBy = "purchase_date",
+      sortOrder = "desc",
+      top = 5,
+      summaryType = "all"   // <-- add this
+    } = options;
+
+    const reportData = await repository.getPurchaseSummary(
+      zodu_id,
+      branch_id,
+      startDate,
+      endDate,
+      { page, limit, sortBy, sortOrder, top, summaryType }
+    );
+
+    if (!reportData?.success) {
+      return { success: false, message: reportData?.message || "No data found" };
+    }
+
+    // --- return based on mode ---
+    let responseData = {};
+
+    if (summaryType === "all") {
+      responseData = {
+        total_purchase_count: reportData.data.total_purchase_count || 0,
+        total_amount: reportData.data.total_amount || 0,
+        total_paid: reportData.data.total_paid || 0,
+        total_balance: reportData.data.total_balance || 0,
+        top_items: reportData.data.top_items || [],
+        top_vendors: reportData.data.top_vendors || [],
+        purchases: reportData.data.purchases || []
+      };
+    }
+
+    if (summaryType === "items") {
+      responseData = {
+        item_wise_summary: reportData.data.item_wise_summary || [],
+        top_items: reportData.data.top_items || []
+      };
+    }
+
+    if (summaryType === "category") {
+      responseData = {
+        category_wise_summary: reportData.data.category_wise_summary || []
+      };
+    }
+
+    return {
+      success: true,
+      message: "Purchase summary fetched successfully",
+      data: responseData,
+      pagination: reportData.pagination || {}
+    };
+
+  } catch (error) {
+    console.error("Service Error (getPurchaseSummary):", error);
+    return { success: false, message: error.message };
+  }
+}
+
+async function getExpenseSummary(zodu_id, branch_id, filterType, start_date, end_date, options = {}) {
+  try {
+    // --- Calculate proper date range ---
+    const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
+
+    // --- Fetch from repository ---
+    const reportData = await repository.getExpenseSummary(zodu_id, branch_id, startDate, endDate, options);
+
+    if (!reportData?.success) {
+      return { success: false, message: reportData?.message || "No data found" };
+    }
+
+    // --- Filter response based on summaryType ---
+    const { summaryType = "all" } = options;
+    let responseData = {};
+
+    switch(summaryType) {
+      case "item":
+        responseData = {
+          item_wise_summary: reportData.data.item_wise_summary || [],
+          top_expenses: reportData.data.top_expenses || []
+        };
+        break;
+      case "category":
+        responseData = { category_wise_summary: reportData.data.category_wise_summary || [] };
+        break;
+      case "all":
+      default:
+        responseData = {
+          total_expense_count: parseInt(reportData.data.total_expense_count || 0),
+          total_amount: reportData.data.total_amount || 0,
+          total_paid: reportData.data.total_paid || 0,
+          total_balance: reportData.data.total_balance || 0,
+          expenses: reportData.data.expenses || [],
+          top_expenses: reportData.data.top_expenses || [],
+          item_wise_summary: reportData.data.item_wise_summary || [],
+          category_wise_summary: reportData.data.category_wise_summary || []
+        };
+        break;
+    }
+
+    return {
+      success: true,
+      message: "Expense summary fetched successfully",
+      data: responseData,
+      pagination: reportData.pagination || {}
+    };
+
+  } catch (error) {
+    console.error("Service Error (getExpenseSummary):", error);
+    return { success: false, message: error.message };
+  }
+}
+
+async function getInventorySummary(zodu_id, branch_id, filterType, start_date, end_date, options = {}) {
+  try {
+    // --- Calculate proper date range ---
+    const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
+
+    // --- Fetch from repository ---
+    const reportData = await repository.getInventorySummary(zodu_id, branch_id, startDate, endDate, options);
+
+    if (!reportData?.success) {
+      return { success: false, message: reportData?.message || "No inventory data found" };
+    }
+
+    // --- Filter response based on summaryType ---
+    const { summaryType = "all" } = options;
+    let responseData = {};
+
+    switch(summaryType) {
+      case "item":
+        responseData = {
+          low_stock_items: reportData.data.low_stock_items || [],
+          recently_updated_items: reportData.data.recently_updated_items || []
+        };
+        break;
+      case "category":
+        responseData = {
+          category_wise_summary: reportData.data.category_wise_summary || []
+        };
+        break;
+      case "all":
+      default:
+        responseData = {
+          total_items: parseInt(reportData.data.total_items || 0),
+          total_stock_qty: parseFloat(reportData.data.total_stock_qty || 0),
+          total_stock_value: parseFloat(reportData.data.total_stock_value || 0),
+          low_stock_items: reportData.data.low_stock_items || [],
+          recently_updated_items: reportData.data.recently_updated_items || [],
+          category_wise_summary: reportData.data.category_wise_summary || [],
+          inventory_list: reportData.data.inventory_list || []
+        };
+        break;
+    }
+
+    return {
+      success: true,
+      message: "Inventory summary fetched successfully",
+      data: responseData,
+      pagination: reportData.pagination || {}
+    };
+
+  } catch (error) {
+    console.error("Service Error (getInventorySummary):", error);
+    return { success: false, message: error.message };
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
 
 // Export all functions
 module.exports = {
@@ -785,6 +1135,12 @@ module.exports = {
   addin_Inventory,
   update_Final_payment,
   get_dashboard,
+  getOrdersSummary,
+  getPurchaseSummary,
+  getExpenseSummary,
+  getInventorySummary,
+  getExpenseCategoryData,
+  addHoldMenu
   getExpenseCategoryData,
   addHoldMenu,
   getHoldData

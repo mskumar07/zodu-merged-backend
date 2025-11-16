@@ -10,7 +10,9 @@ const multer = require("multer")
 const sharp = require("sharp")
 const upload = multer(); // memory storage
 const mime = require("mime-types");
+const moment = require('moment/moment');
 const { DB_HOSTNAME, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY } = require("../config");
+const { validateDateFilter } = require("../utils/Date_Folder/valaidator");
 
 
 const router = express.Router();
@@ -590,6 +592,7 @@ router.get("/api/dashboard/:zodu_id/:branch_id",async (req, res) => {
       const {zodu_id, branch_id} = req.params
     const getData = await service.get_dashboard(zodu_id, branch_id);
     if (!getData.success) return res.status(400).json({ message: getData.message });
+
     return res.status(201).json({ message : "Data Get Successfully" , Data: getData.data });
   } catch (error) {
     console.error(error);
@@ -597,36 +600,36 @@ router.get("/api/dashboard/:zodu_id/:branch_id",async (req, res) => {
   }
 })
 
-router.get("/api/report", async (req, res) => {
-  // ✅ Validate query parameters
- const { errors, input } = await RequestValidator(
-        schema.reportSchema,
-        req.query
-      );
-  if (errors) {
-    return res.status(400).json({ success: false, error: errors.details[0].message });
-  }
 
-  try {
-    console.log("Report Query Params:", input);
+// router.get("/api/report", async (req, res) => {
+//  const { errors, input } = await RequestValidator(
+//         schema.reportSchema,
+//         req.query
+//       );
+//   if (errors) {
+//     return res.status(400).json({ success: false, error: errors.details[0].message });
+//   }
 
-    // ✅ Call service layer
-    const data = await service.get_Report(input);
+//   try {
+//     console.log("Report Query Params:", input);
 
-    return res.status(200).json({
-      success: true,
-      type: input.type,
-      filter_used: input.filter,
-      data,
-    });
-  } catch (err) {
-    console.error("Error generating report:", err);
-    return res.status(500).json({
-      success: false,
-      message: err.message || "Internal server error",
-    });
-  }
-});
+//     // ✅ Call service layer
+//     const data = await service.get_Report(input);
+
+//     return res.status(200).json({
+//       success: true,
+//       type: input.type,
+//       filter_used: input.filter,
+//       data,
+//     });
+//   } catch (err) {
+//     console.error("Error generating report:", err);
+//     return res.status(500).json({
+//       success: false,
+//       message: err.message || "Internal server error",
+//     });
+//   }
+// });
 
 router.post("/api/add/inventory", async (req,res)=>{
 
@@ -655,7 +658,99 @@ router.post("/api/add/inventory", async (req,res)=>{
     })
   }
 
-})
+});
+
+router.get("/api/restaurant/summary/:type/:zodu_id/:branch_id", async (req, res) => {
+  try {
+    const { type, zodu_id, branch_id } = req.params;
+    const {
+      filterType = "year",
+      start_date,
+      end_date,
+      summaryType = "all",   
+      page = 2,
+      limit = 10,
+      sortBy = "order_date",
+      sortOrder = "desc",
+      top = 0,
+    } = req.query;
+
+    const validTypes = ["restaurant", "orders", "purchase", "expense", "inventory"];
+    const validFilters = ["today", "week", "month", "year", "custom"];
+    const validReportTypes = ["all", "item", "category"];  
+
+    // Validate report type
+    if (!validTypes.includes(type)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid type. Must be restaurant, orders, purchase, expense, inventory."
+      });
+    }
+
+    if (!validReportTypes.includes(summaryType)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid reportType. Must be all, item, or category."
+      });
+    }
+
+    // Validate date filter
+    const validation = validateDateFilter(filterType, start_date, end_date);
+    if (!validation.valid) {
+      return res.status(400).json({ success: false, message: validation.message });
+    }
+
+    const serviceMap = {
+      orders: service.getOrdersSummary,
+      purchase: service.getPurchaseSummary,
+      expense: service.getExpenseSummary,
+      inventory: service.getInventorySummary,
+    };
+
+    const getDataFn = serviceMap[type];
+
+
+    const getData = await getDataFn(
+      zodu_id,
+      branch_id,
+      filterType,
+      start_date,
+      end_date,
+      {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        sortBy,
+        sortOrder,
+        top: parseInt(top),
+        summaryType  
+      }
+    );
+
+
+    if (!getData?.success) {
+      return res.status(400).json({
+        success: false,
+        message: getData?.message || "Failed to fetch data",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `${type} summary fetched successfully`,
+      data: getData.data,
+      pagination: getData.pagination || {},
+    });
+
+  } catch (error) {
+    console.error("Error in /api/restaurant/summary:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Internal Server Error",
+    });
+  }
+});
+
+
 
 router.post("/add/hold_menu", async (req, res) => {
 console.log(req.body)
