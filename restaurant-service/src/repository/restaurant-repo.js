@@ -1826,6 +1826,146 @@ LIMIT 30;
   }
 };
 
+exports.getOrdersSummary = async (
+  zodu_id,
+  branch_id,
+  start_date,
+  end_date,
+  options = {}
+) => {
+  const {
+    page = 1,
+    limit = 10,
+    sortBy = "order_date",
+    sortOrder = "desc",
+    top = 5,
+    summaryType = "all",
+  } = options;
+
+
+  const offset = (page - 1) * limit;
+
+
+  const query = `
+    WITH summary AS (
+      SELECT
+        COUNT(*) AS total_orders,
+        COALESCE(SUM(total_amt), 0) AS total_amount,
+        COALESCE(SUM(no_of_items), 0) AS total_quantity
+      FROM tbl_orders
+      WHERE zodu_id = $1
+        AND branch_id = $2
+        AND final_payment = TRUE
+        AND order_date BETWEEN $3 AND $4
+    ),
+
+
+    order_list AS (
+      SELECT
+        order_id,
+        customer_name,
+        total_amt,
+        payment_type,
+        order_date,
+        order_time,
+        order_type,
+        table_no
+      FROM tbl_orders
+      WHERE zodu_id = $1
+        AND branch_id = $2
+        AND final_payment = TRUE
+        AND order_date BETWEEN $3 AND $4
+      ORDER BY ${sortBy} ${sortOrder}
+      LIMIT $5 OFFSET $6
+    ),
+
+
+    top_orders AS (
+      SELECT
+        order_id,
+        customer_name,
+        total_amt,
+        payment_type,
+        order_date,
+        order_time
+      FROM tbl_orders
+      WHERE zodu_id = $1
+        AND branch_id = $2
+        AND final_payment = TRUE
+        AND order_date BETWEEN $3 AND $4
+      ORDER BY total_amt DESC
+      LIMIT CASE WHEN $7 > 0 THEN $7 ELSE 5 END
+    ),
+
+
+    item_wise_summary AS (
+      SELECT
+        oi.item_name,
+        SUM(oi.qty) AS total_qty,
+        SUM(oi.qty * oi.price) AS total_amount
+      FROM tbl_ordered_items oi
+      JOIN tbl_orders o ON o.order_id = oi.order_id
+      WHERE o.zodu_id = $1
+        AND o.branch_id = $2
+        AND o.final_payment = TRUE
+        AND o.order_date BETWEEN $3 AND $4
+      GROUP BY oi.item_name
+      ORDER BY total_amount DESC
+    )
+
+
+   
+
+
+    SELECT
+      s.*,
+      COALESCE((SELECT json_agg(ol) FROM order_list ol), '[]') AS orders,
+      COALESCE((SELECT json_agg(toq) FROM top_orders toq), '[]') AS top_orders,
+      COALESCE((SELECT json_agg(iws) FROM item_wise_summary iws), '[]') AS item_wise_summary
+    FROM summary s;
+  `;
+
+
+  const result = await conn.query(query, [
+    zodu_id,
+    branch_id,
+    start_date,
+    end_date,
+    limit,
+    offset,
+    top,
+  ]);
+
+
+  // ---- Pagination ----
+  const countQuery = `
+    SELECT COUNT(*) AS total
+    FROM tbl_orders
+    WHERE zodu_id = $1
+      AND branch_id = $2
+      AND final_payment = TRUE
+      AND order_date BETWEEN $3 AND $4
+  `;
+  const countResult = await conn.query(countQuery, [
+    zodu_id,
+    branch_id,
+    start_date,
+    end_date,
+  ]);
+
+
+  const total = parseInt(countResult.rows[0]?.total || 0);
+  const totalPages = Math.ceil(total / limit);
+
+
+  return {
+    success: true,
+    data: result.rows[0],
+    pagination: { page, limit, total, totalPages },
+  };
+};
+
+
 
 exports.getPurchaseSummary = async (
   zodu_id,

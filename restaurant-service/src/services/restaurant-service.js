@@ -1140,7 +1140,7 @@ module.exports = {
   getExpenseSummary,
   getInventorySummary,
   getExpenseCategoryData,
-  addHoldMenu
+  addHoldMenu,
   getExpenseCategoryData,
   addHoldMenu,
   getHoldData
