@@ -1825,7 +1825,6 @@ LIMIT 30;
     throw new Error(`Unable to fetch dashboard data: ${error.message}`);
   }
 };
-
 exports.getOrdersSummary = async (
   zodu_id,
   branch_id,
