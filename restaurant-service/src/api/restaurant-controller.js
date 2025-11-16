@@ -12,6 +12,7 @@ const upload = multer(); // memory storage
 const mime = require("mime-types");
 const moment = require('moment/moment');
 const { DB_HOSTNAME, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY } = require("../config");
+const { validateDateFilter } = require("../utils/Date_Folder/valaidator");
 
 
 const router = express.Router();
@@ -583,67 +584,6 @@ router.get("/api/dashboard/:zodu_id/:branch_id",async (req, res) => {
   }
 })
 
-router.get("/api/restaurant/summary/:zodu_id/:branch_id", async (req, res) => {
-  try {
-    const { zodu_id, branch_id } = req.params;
-    const { filterType, start_date, end_date } = req.query;
-
-    const validFilters = ["today", "week", "month", "year", "custom"];
-
-    // Validate filterType
-    if (filterType && !validFilters.includes(filterType)) {
-      return res.status(400).json({ message: "Invalid filterType" });
-    }
-
-    // Validate dates for custom filter
-    if (filterType === "custom") {
-      if (!start_date || !end_date) {
-        return res.status(400).json({
-          message: "start_date and end_date are required for custom filter",
-        });
-      }
-      if (
-        !moment(start_date, "YYYY-MM-DD", true).isValid() ||
-        !moment(end_date, "YYYY-MM-DD", true).isValid()
-      ) {
-        return res
-          .status(400)
-          .json({ message: "Invalid date format. Use YYYY-MM-DD" });
-      }
-      if (moment(start_date).isAfter(moment(end_date))) {
-        return res
-          .status(400)
-          .json({ message: "start_date cannot be after end_date" });
-      }
-    }
-
-    // Call service
-    const getData = await service.getRestaurantSummary(
-      zodu_id,
-      branch_id,
-      filterType,
-      start_date,
-      end_date
-    );
-
-    if (!getData.success) {
-      return res.status(400).json({ message: getData.message });
-    }
-
-    return res.status(200).json({
-      message: "Restaurant summary fetched successfully",
-      Data: getData.data,
-    });
-  } catch (error) {
-    console.error("Error in /restaurant/summary:", error);
-    return res.status(500).json({ message: error.message });
-  }
-});
-
-
-
-
-
 
 // router.get("/api/report", async (req, res) => {
 //  const { errors, input } = await RequestValidator(
@@ -702,6 +642,98 @@ router.post("/api/add/inventory", async (req,res)=>{
     })
   }
 
-})
+});
+
+router.get("/api/restaurant/summary/:type/:zodu_id/:branch_id", async (req, res) => {
+  try {
+    const { type, zodu_id, branch_id } = req.params;
+    const {
+      filterType = "year",
+      start_date,
+      end_date,
+      summaryType = "all",   
+      page = 2,
+      limit = 10,
+      sortBy = "order_date",
+      sortOrder = "desc",
+      top = 0,
+    } = req.query;
+
+    const validTypes = ["restaurant", "orders", "purchase", "expense", "inventory"];
+    const validFilters = ["today", "week", "month", "year", "custom"];
+    const validReportTypes = ["all", "item", "category"];  
+
+    // Validate report type
+    if (!validTypes.includes(type)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid type. Must be restaurant, orders, purchase, expense, inventory."
+      });
+    }
+
+    if (!validReportTypes.includes(summaryType)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid reportType. Must be all, item, or category."
+      });
+    }
+
+    // Validate date filter
+    const validation = validateDateFilter(filterType, start_date, end_date);
+    if (!validation.valid) {
+      return res.status(400).json({ success: false, message: validation.message });
+    }
+
+    const serviceMap = {
+      orders: service.getOrdersSummary,
+      purchase: service.getPurchaseSummary,
+      expense: service.getExpenseSummary,
+      inventory: service.getInventorySummary,
+    };
+
+    const getDataFn = serviceMap[type];
+
+
+    const getData = await getDataFn(
+      zodu_id,
+      branch_id,
+      filterType,
+      start_date,
+      end_date,
+      {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        sortBy,
+        sortOrder,
+        top: parseInt(top),
+        summaryType  
+      }
+    );
+
+
+    if (!getData?.success) {
+      return res.status(400).json({
+        success: false,
+        message: getData?.message || "Failed to fetch data",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `${type} summary fetched successfully`,
+      data: getData.data,
+      pagination: getData.pagination || {},
+    });
+
+  } catch (error) {
+    console.error("Error in /api/restaurant/summary:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Internal Server Error",
+    });
+  }
+});
+
+
 
 module.exports = router;
