@@ -359,6 +359,8 @@ router.post(
         expenseData.attachment_url = req.file; // multer stores file in req.file
       }
       expenseData.items = JSON.parse(expenseData.items);
+
+      console.log(expenseData.items)
      
       await conn.query("BEGIN");
       const { errors, input } = await RequestValidator(
@@ -461,6 +463,20 @@ router.get("/get/category/:branch_id", async (req, res) => {
   try {
      const { branch_id } = req.params;
     const getCategoryData = await service.getCategoryData(branch_id);
+    if (!getCategoryData.success) return res.status(400).json({ message: getCategoryData.message });
+    return res.status(201).json({ message : "Data Get Successfully" , Data: getCategoryData.data });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+
+router.get("/get/expense-category/:branch_id", async (req, res) => {
+  
+  try {
+     const { branch_id } = req.params;
+    const getCategoryData = await service.getExpenseCategoryData(branch_id);
     if (!getCategoryData.success) return res.status(400).json({ message: getCategoryData.message });
     return res.status(201).json({ message : "Data Get Successfully" , Data: getCategoryData.data });
   } catch (error) {
@@ -734,6 +750,44 @@ router.get("/api/restaurant/summary/:type/:zodu_id/:branch_id", async (req, res)
   }
 });
 
+
+
+router.post("/add/hold_menu", async (req, res) => {
+console.log(req.body)
+  try {
+         const { errors, input } = await RequestValidator(
+        schema.holdSchema,
+        req.body
+      );
+  if (errors) {
+    return res.status(400).json({ success: false, error: errors });
+  }
+     const data = await service.addHoldMenu(input);
+
+      if (!data.success) {
+        return res.status(400).json({ message: data.message });
+      }
+
+      return res.status(201).json({ data });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Error adding hold:", error);
+    res.status(500).json({ error: "Failed to save hold" });
+  } 
+});
+
+router.get("/get/hold-orders/:branch_id", async (req, res) => {
+  
+  try {
+     const { branch_id } = req.params;
+    const getHoldData = await service.getHoldData(branch_id);
+    if (!getHoldData.success) return res.status(400).json({ message: getHoldData.message });
+    return res.status(201).json({       message: "Holds fetched successfully",Data: getHoldData.data });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
 
 
 module.exports = router;

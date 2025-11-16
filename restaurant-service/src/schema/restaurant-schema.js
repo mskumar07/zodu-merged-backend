@@ -103,17 +103,18 @@ const itemSchema = Joi.object({
   image: Joi.string().allow(null, ''),
   tax: Joi.number().precision(2).min(0).required(),
   menu_unit: Joi.string().max(50).optional(),
-  variantName: Joi.string().max(100).optional().allow(null, ''),
+  variant_name: Joi.string().max(100).optional().allow(null, ''),
   variant_id: Joi.string().max(100).optional().allow(null, ''),
 });
 // order schema
  const order_create = Joi.object({
   zodu_id: Joi.string().max(50).required(),
   branch_id: Joi.string().max(50).required(),
-  table_no: Joi.number().integer().required(),
-  kot_no:Joi.string().required(),
+  table_no: Joi.number().integer().allow('',null),
+  kot_no:Joi.string(),
   no_of_items:Joi.number().integer().required(),
   order_type: Joi.string().valid('Dine-In', 'Takeaway', 'Delivery').required(),
+  payment_type:Joi.string().allow('',null),
   order_id:Joi.string().max(50),
   customer_name: Joi.string().max(100).allow('', null),
   customer_phone: Joi.string()
@@ -155,8 +156,8 @@ const purchase_order_create = Joi.object({
         qty: Joi.number().min(1).required(),
         unit: Joi.string().max(50).required(),
         purchase_price: Joi.number().precision(2).min(0).required(),
-        selling_price: Joi.number().precision(2).min(0).required(),
-        gst_tax: Joi.number().min(0).required(),
+        selling_price: Joi.number().precision(2).min(0),
+        gst_tax: Joi.number().min(0),
         total_price: Joi.number().precision(2).min(0).required(),
       })
     )
@@ -181,7 +182,7 @@ const expense_data = Joi.object({
   items: Joi.array()
     .items(
       Joi.object({
-        // id: Joi.string().required(),
+        id: Joi.string().required(),
         name: Joi.string().required(),
         qty: Joi.number().min(1).required(),
         purchase_price: Joi.number().precision(2).min(0).required(),
@@ -261,6 +262,29 @@ const vendor_create = Joi.object({
         last_purchase_date: Joi.date().required(),
   })
 
+  const holdSchema = Joi.object({
+  zodu_id: Joi.string().max(100).required(),
+  branch_id: Joi.string().max(100).required(),
+  orderType: Joi.string().max(100).required(),
+  table_no: Joi.string().max(20).allow(null, ""),
+  customerName: Joi.string().max(150).allow(null, ""),
+  customerPhone: Joi.string().max(13).allow(null, ""),
+  items: Joi.array()
+    .items(
+      Joi.object({
+        item_name: Joi.string().max(100).required(),
+        item_id: Joi.string().max(100).required(),
+        item_unit: Joi.string().max(20).allow(null, ""),
+        qty: Joi.number().precision(2).min(0).required(),
+        price: Joi.number().precision(2).min(0).required(),
+        variant_name: Joi.string().max(100).allow(null, ""),
+        variant_id: Joi.string().max(100).allow(null, "")
+      })
+    )
+    .min(1)
+    .required()
+});
+
 
 module.exports = {
   company_create,
@@ -273,5 +297,6 @@ module.exports = {
   expense_data,
   inventorySchema,
   reportSchema,
-  Inventory
+  Inventory,
+  holdSchema
 };

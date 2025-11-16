@@ -7,6 +7,8 @@ const { PDFDocument } = require('pdf-lib');
 const moment = require('moment/moment');
 const { DB_HOSTNAME, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY, BUCKET_NAME } = require('../config/index.js');
 const {getDateRange} = require("../utils/Date_Folder/getDate.js");
+const { DB_HOSTNAME, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY, BUCKET_NAME } = require('../config/index.js');
+
 
 
 const minioClient = new Minio.Client({
@@ -189,6 +191,22 @@ async function getData(zudo_id) {
 async function getCategoryData(branch_id) {
   try {
     const allCategoryData = await repository.get_category_data(branch_id);
+    return {
+      success: true,
+      data: allCategoryData,
+    };
+  } catch (error) {
+    console.error("Category Data getting Error", error);
+    return {
+      success: false,
+      message: err.message
+    };
+  }
+}
+
+async function getHoldData(branch_id) {
+  try {
+    const allCategoryData = await repository.getHold(branch_id);
     return {
       success: true,
       data: allCategoryData,
@@ -1123,4 +1141,7 @@ module.exports = {
   getInventorySummary,
   getExpenseCategoryData,
   addHoldMenu
+  getExpenseCategoryData,
+  addHoldMenu,
+  getHoldData
 };
