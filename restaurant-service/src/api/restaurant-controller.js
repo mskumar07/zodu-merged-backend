@@ -8,7 +8,10 @@ const conn = require("../database/connection");
 const Minio = require("minio");
 const multer = require("multer")
 const sharp = require("sharp")
-const upload = multer(); // memory storage
+const upload = multer({
+  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB
+});
+ // memory storage
 const mime = require("mime-types");
 const moment = require('moment/moment');
 const { DB_HOSTNAME, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY } = require("../config");
@@ -135,6 +138,23 @@ router.post("/upload", upload.single("file"), async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+router.post("/upload/multiple", upload.array("files", 20), async (req, res) => {
+  try {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ error: "No files uploaded" });
+    }
+
+    const result = await service.uploadMultiple(req.files);
+
+    console.log(result);
+
+    return res.status(200).json({ success: true, files: result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 router.get("/file/:name", async (req, res) => {
   try {
@@ -304,17 +324,22 @@ router.post(
 );
 
 router.post(
-  "/api/add/purchase_orders", upload.single("attachment_url"),
+  "/api/add/purchase_orders", upload.array("attachment_url", 10),
   async (req, res) => {
     try {
       const purchaseOrderData = req.body;
 
-      console.log("test",purchaseOrderData)
 
-      if (req.file) {
-        purchaseOrderData.attachment_url = req.file; // multer stores file in req.file
+       if (req.files && req.files.length > 0) {
+        purchaseOrderData.attachment_url = req.files.map(file => ({
+          filename: file.originalname,
+          mimetype: file.mimetype,
+          path: file.path,
+          size: file.size
+        }));
       }
-      purchaseOrderData.items = JSON.parse(purchaseOrderData.items);
+      purchaseOrderData.items = typeof purchaseOrderData.items === "string" ? JSON.parse(purchaseOrderData.items) : purchaseOrderData.items;
+
      
       await conn.query("BEGIN");
       const { errors, input } = await RequestValidator(
@@ -357,9 +382,12 @@ router.post(
       if (req.file) {
         expenseData.attachment_url = req.file; // multer stores file in req.file
       }
-      expenseData.items = JSON.parse(expenseData.items);
+expenseData.items = Array.isArray(expenseData.items)
+  ? expenseData.items
+  : expenseData.items
+  ? JSON.parse(expenseData.items)
+  : [];
 
-      console.log(expenseData.items)
      
       await conn.query("BEGIN");
       const { errors, input } = await RequestValidator(
@@ -467,6 +495,22 @@ router.get("/get/category/:branch_id", async (req, res) => {
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: error.message });
+  }
+});
+
+router.delete("/delete/file/:name", async (req, res) => {
+  try {
+    const fileName = req.params.name;
+
+    const result = await service.deleteFileFromMinIO(fileName);
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    res.json({ success: true, message: "File deleted" });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 

@@ -107,11 +107,14 @@ exports.get_category_data = async (branch_id) => {
 exports.get_expense_category_data = async (branch_id) => {
   try {
     const query = `
-      SELECT name, zodu_id, branch_id, active
-      FROM tbl_expense_category
-      WHERE branch_id = $1
-    `;
+  SELECT category_name AS name, zodu_id, branch_id
+  FROM tbl_expense_category
+  WHERE branch_id = $1
+`;
+
     const result = await conn.query(query, [branch_id]);
+        console.log("check",result);
+
     return result.rows;
   } catch (err) {
     throw new Error("Unable to fetch category data: " + err.message);
@@ -140,7 +143,7 @@ exports.get_inventory_list = async (branch_id,type) => {
 
 exports.get_purchase = async (branch_id) => {
   try {
-    const query = `
+ const query = `
       WITH purchase_data AS (
         SELECT 
           p.purchase_id,
@@ -170,7 +173,7 @@ exports.get_purchase = async (branch_id) => {
                 'unit', pi.unit,
                 'price', pi.purchase_price,
                 'total', pi.total_price,
-                'image', m.menu_image  -- added menu image
+                'image', m.menu_image
               )
             ) FILTER (WHERE pi.purchase_id IS NOT NULL), 
             '[]'
@@ -179,7 +182,7 @@ exports.get_purchase = async (branch_id) => {
         LEFT JOIN tbl_purchase_items pi ON p.purchase_id = pi.purchase_id
         LEFT JOIN tbl_category c ON p.category_id = c.id
         LEFT JOIN tbl_vendor v ON p.vendor_id = v.vendor_id
-        LEFT JOIN tbl_menu_item m ON pi.item_id = m.menu_id  -- join menu table to get image
+        LEFT JOIN tbl_menu_item m ON pi.item_id = m.menu_id
         WHERE p.branch_id = $1::text
         GROUP BY 
           p.purchase_id, 
@@ -204,7 +207,17 @@ exports.get_purchase = async (branch_id) => {
       SELECT 
         JSON_AGG(purchase_data) AS purchases,
         COUNT(*) AS total_purchase_count,
-        COALESCE(SUM(paid_amount), 0) AS total_spent_amount
+        COALESCE(SUM(paid_amount), 0) AS total_spent_amount,
+        COALESCE(SUM(paid_amount), 0) AS total_paid_amount,
+        COALESCE(SUM(balance_amount), 0) AS total_unpaid_amount,
+        -- 🔹 This Month Spent (based on purchase_date)
+        COALESCE(SUM(CASE 
+          WHEN DATE_TRUNC('month', purchase_date) = DATE_TRUNC('month', CURRENT_DATE)
+          THEN paid_amount ELSE 0 END), 0) AS this_month_spent,
+        -- 🔹 Last Month Spent
+        COALESCE(SUM(CASE 
+          WHEN DATE_TRUNC('month', purchase_date) = DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')
+          THEN paid_amount ELSE 0 END), 0) AS last_month_spent
       FROM purchase_data;
     `;
 
@@ -239,11 +252,12 @@ exports.get_Expense = async (branch_id) => {
           e.expense_id,
           e.branch_id,
           e.category_id,
-          e.expense_name,
+          c.category_name AS expense_name,
           e.attachment_url,
           e.description,
-          c.name AS category_name,
+          c.category_name AS category_name,
           e.expense_date,
+          e.payment_type,
           e.total_amount,
           e.paid_amount,
           e.balance_amount,
@@ -263,16 +277,16 @@ exports.get_Expense = async (branch_id) => {
           ) AS items
         FROM tbl_expense e
         LEFT JOIN tbl_expense_items ei ON e.expense_id = ei.expense_id
-        LEFT JOIN tbl_category c ON e.category_id = c.id
+        LEFT JOIN tbl_expense_category c ON e.category_id = c.id
         WHERE e.branch_id = $1::text
         GROUP BY 
           e.expense_id,
           e.branch_id,
-          e.expense_name,
           e.category_id,
           e.attachment_url,
           e.description,
-          c.name,
+          c.category_name,
+          e.payment_type,
           e.expense_date,
           e.total_amount,
           e.paid_amount,
@@ -282,15 +296,13 @@ exports.get_Expense = async (branch_id) => {
       ) AS expense_data;
     `;
 
-    // Execute query with branch_id as parameter
     const result = await conn.query(query, [branch_id]);
-
-    // Return the first row (JSON object)
     return result.rows[0];
   } catch (err) {
     throw new Error("Unable to fetch expense data: " + err.message);
   }
 };
+
 
 
 
@@ -1440,6 +1452,8 @@ exports.addInventory = async (items, branch_id, zodu_id, purchase_date, category
 
 
 exports.addExpense = async (orderData) => {
+
+  console.log("new",orderData)
   try {
     await conn.query('BEGIN');
 
@@ -1497,22 +1511,23 @@ exports.addExpense = async (orderData) => {
         ]
       );
     } else {
+      console.log("ss",orderData);
       // 🆕 Insert new expense
       await conn.query(
         `INSERT INTO tbl_expense 
-          (zodu_id, branch_id, category_id, expense_id, expense_name, expense_date, total_amount, paid_amount, description, attachment_url, created_at)
+          (zodu_id, branch_id, category_id, expense_id, expense_date, total_amount, paid_amount, description, attachment_url, payment_type, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
         [
           orderData.zodu_id,
           orderData.branch_id,
           orderData.category,
           orderData.expense_id,
-          orderData.expense_name,
           orderData.expense_date,
           orderData.total_amount,
           orderData.paid_amount || 0,
           `Purchase Order ${orderData.expense_id}`,
           orderData.attachment_url || null,
+          orderData.payment_type || "Cash"
         ]
       );
     }
@@ -1770,7 +1785,7 @@ const top_items = topItemsRes.rows.map((r, index) => ({
   const expenseQuery = `
 SELECT 
   e.expense_id,
-  e.expense_name,
+  c.name AS expense_name,
   c.name AS category_name,           
   e.total_amount,
   e.balance_amount,
@@ -1785,7 +1800,6 @@ WHERE e.zodu_id = $1
   AND e.branch_id = $2
 GROUP BY 
   e.expense_id, 
-  e.expense_name, 
   c.name, 
   e.total_amount, 
   e.balance_amount, 
@@ -1800,7 +1814,7 @@ LIMIT 30;
     const expenses = expenseRes.rows.map((e) => ({
       
       id: e.expense_id,
-      title: e.expense_name,
+      title: e.category_name ,
       category: e.category_name,
       amount: e.total_amount,
       due:e.balance_amount,

@@ -2,6 +2,7 @@ const multer = require('multer');
 const { consumeEvents } = require('../consumer/consumer');
 const Minio = require("minio");
 const sharp = require("sharp");
+
 const repository = require('../repository/restaurant-repo.js');
 const { PDFDocument } = require('pdf-lib');
 const moment = require('moment/moment');
@@ -64,72 +65,61 @@ async function createCompanyService(companyData) {
 }
 
 async function uploadImg(file) {
-  console.log(file)
   try {
-    const MAX_SIZE = 5 * 1024 * 1024; // 5 MB limit
+    if (!file || !file.buffer)
+      throw new Error("Invalid file input");
 
-    if (!file || !file.buffer || file.size === 0) {
-      throw new Error("Invalid file input or empty file");
-    }
+    const MAX_SIZE = 10 * 1024 * 1024; // 10 MB
 
-    if (file.size > MAX_SIZE) {
-      throw new Error("File size exceeds 5MB limit");
-    }
+    if (file.size > MAX_SIZE)
+      throw new Error("File exceeds 10MB limit");
 
-    const originalExt = file.originalname.split(".").pop().toLowerCase();
-    const baseName = file.originalname.replace(/\.[^/.]+$/, "");
-    let optimizedBuffer;
-    let objectName;
+    const ext = file.originalname.split(".").pop().toLowerCase();
 
-    // 🖼️ Image optimization
-    if (file.mimetype.startsWith("image/")) {
-      // Optional: keep original format
-      const format = originalExt === "png" || originalExt === "jpg" || originalExt === "jpeg"
-        ? originalExt
-        : "webp";
+    let buffer = file.buffer;
+    let outputName = `${Date.now()}-${file.originalname}`;
 
-      optimizedBuffer = await sharp(file.buffer)
-        .resize({ width: 1920, withoutEnlargement: true, fastShrinkOnLoad: true })
-        .toFormat(format, { quality: 80 })
+    // ✔ Optimize only images
+    if (["jpg", "jpeg", "png", "webp"].includes(ext)) {
+      buffer = await sharp(file.buffer)
+        .resize({ width: 1800, withoutEnlargement: true })
+        .toFormat("webp", { quality: 80 })
         .toBuffer();
 
-      objectName = `${Date.now()}-${baseName}.${format}`;
+      outputName = `${Date.now()}-${file.originalname.replace(/\.[^/.]+$/, "")}.webp`;
     }
-    // 📄 PDF optimization
-    else if (originalExt === "pdf") {
+
+    // ✔ PDFs (compress)
+    else if (ext === "pdf") {
       const pdfDoc = await PDFDocument.load(file.buffer);
-      const compressedPdf = await pdfDoc.save({ useObjectStreams: true, addDefaultPage: false });
-      optimizedBuffer = Buffer.from(compressedPdf);
-      objectName = `${Date.now()}-${file.originalname}`;
+      const compressed = await pdfDoc.save({ useObjectStreams: true });
+      buffer = Buffer.from(compressed);
     }
-    // 📃 Other files (no processing)
+
+    // ✔ OFFICE DOCS, CSV, TXT — do not modify
     else {
-      optimizedBuffer = Buffer.isBuffer(file.buffer) ? file.buffer : Buffer.from(file.buffer);
-      objectName = `${Date.now()}-${file.originalname}`;
+      buffer = Buffer.from(file.buffer);
     }
 
-    if (!Buffer.isBuffer(optimizedBuffer)) {
-      throw new Error("File data is not a valid Buffer");
-    }
-
-    // ✅ Upload to MinIO
+    // Upload to MinIO
     await minioClient.putObject(
       bucketName,
-      objectName,
-      optimizedBuffer,
-      optimizedBuffer.length,
+      outputName,
+      buffer,
+      buffer.length,
       { "Content-Type": file.mimetype }
     );
 
-    const fileUrl = `https://api.zodusolutions.cloud/restaurant/file/${objectName}`;
-    console.log("✅ File uploaded successfully:", fileUrl);
-    return {success:true ,fileUrl:fileUrl};
+    const url = `https://api.zodusolutions.cloud/restaurant/file/${outputName}`;
+
+    return { success: true, fileUrl: url };
 
   } catch (err) {
     console.error("Upload failed:", err);
-    return { success: false, error: err.message };
+    return { success: false, message: err.message };
   }
 }
+
 
 async function updateCompanyService(zodu_id, updateData) {
   try {
@@ -156,6 +146,39 @@ async function updateMenuFav(menu_id,favorite){
     return { success: false, message: err.message };
   }
 }
+
+async function uploadMultiple(files) {
+  if (!Array.isArray(files) || files.length === 0) {
+    throw new Error("No files received");
+  }
+
+  const results = [];
+
+  for (const file of files) {
+    // Validate file
+    if (!file || !file.buffer) {
+      throw new Error("Invalid file received");
+    }
+
+    const uploaded = await uploadImg(file);
+
+    if (!uploaded.success) {
+      throw new Error(uploaded.message || "One or more file uploads failed");
+    }
+
+    results.push({
+      id: Date.now() + "-" + Math.floor(Math.random() * 1000000),
+      filename: file.originalname || `file-${Date.now()}`, // safe fallback
+      url: uploaded.fileUrl,
+      size: file.size || 0,
+      mimetype: file.mimetype ?? "application/octet-stream",
+    });
+  }
+
+  return results;
+}
+
+
 
 async function updateMenustaus(menu_id,active){
   try{
@@ -229,10 +252,25 @@ async function getExpenseCategoryData(branch_id) {
     console.error("Category Data getting Error", error);
     return {
       success: false,
-      message: err.message
+      message: error.message
     };
   }
 }
+
+async function deleteFileFromMinIO(fileName) {
+  try {
+    if (!fileName) throw new Error("File name required");
+
+    await minioClient.removeObject(bucketName, fileName);
+
+    return { success: true, message: "File deleted successfully" };
+
+  } catch (err) {
+    console.error("MinIO Delete Error:", err);
+    return { success: false, message: err.message };
+  }
+};
+
 
 async function get_Report(data) {
   try{
@@ -662,7 +700,10 @@ async function createMenuItem(menuData) {
 
     if(menuData.menu_image){
       const imgResult = await uploadImg(menuData.menu_image);
-      menuData.menu_image = imgResult;
+      if (!imgResult.success) {
+      throw new Error(imgResult.message || "Image upload failed");
+    }
+      menuData.menu_image = imgResult.fileUrl;
     }
 
     const CategoryCreate = await repository.createCategory(
@@ -741,7 +782,9 @@ async function createVendor(vendorData) {
 
 async function createPurchaseOrder(purchaseOrderData) {
   try {
-    // ✅ Step 1: Create category
+    // -------------------------------------------
+    // Step 1: Create category
+    // -------------------------------------------
     const CategoryCreate = await repository.createCategory(
       purchaseOrderData.zodu_id,
       purchaseOrderData.branch_id,
@@ -749,7 +792,9 @@ async function createPurchaseOrder(purchaseOrderData) {
     );
     purchaseOrderData.category = CategoryCreate.id;
 
-    // ✅ Step 2: Get vendor ID
+    // -------------------------------------------
+    // Step 2: Get vendor ID
+    // -------------------------------------------
     const getVendor = await repository.getVendorId(
       purchaseOrderData.zodu_id,
       purchaseOrderData.branch_id,
@@ -757,20 +802,24 @@ async function createPurchaseOrder(purchaseOrderData) {
     );
     purchaseOrderData.vendor = getVendor.vendor_id;
 
-    // ✅ Step 3: Upload image (Stop if fails)
-    const imgResult = await uploadImg(purchaseOrderData.attachment_url);
-    if (!imgResult.success) {
-      throw new Error(imgResult.message || "Image upload failed");
-    }
-    purchaseOrderData.attachment_url = imgResult.url; // assuming uploadImg returns { success, url, message }
+    // -------------------------------------------
+    // Step 4: Generate Purchase ID
+    // -------------------------------------------
+    const nextPurchaseId = await repository.getNextPurchaseId(
+      purchaseOrderData.branch_id
+    );
 
-    // ✅ Step 4: Generate Purchase ID
-    const nextPurchaseId = await repository.getNextPurchaseId(purchaseOrderData.branch_id);
     purchaseOrderData.purchase_id = `${purchaseOrderData.branch_id}-PO${nextPurchaseId}`;
 
-    // ✅ Step 5: Create purchase order and related data
+    // -------------------------------------------
+    // Step 5: Save purchase order + items
+    // -------------------------------------------
     await repository.createPurchaseOrder(purchaseOrderData);
-    await repository.insertPurchaseItems(purchaseOrderData.purchase_id, purchaseOrderData.items);
+
+    await repository.insertPurchaseItems(
+      purchaseOrderData.purchase_id,
+      purchaseOrderData.items
+    );
 
     await repository.addInventory(
       purchaseOrderData.items,
@@ -778,8 +827,10 @@ async function createPurchaseOrder(purchaseOrderData) {
       purchaseOrderData.zodu_id,
       purchaseOrderData.purchase_date,
       purchaseOrderData.category,
-      purchaseOrderData.purchase_type // include purchase_type for inventory_type logic
+      purchaseOrderData.purchase_type
     );
+
+    purchaseOrderData.expense_date = purchaseOrderData.purchase_date;
 
     await repository.addExpense(purchaseOrderData);
 
@@ -799,15 +850,14 @@ async function createPurchaseOrder(purchaseOrderData) {
 
 async function createExpense(expenseData) {
   try {
-    console.log(expenseData)
+    console.log("testr",expenseData)
       const CategoryCreate = await repository.createExpenseCategory(
       expenseData.zodu_id,
       expenseData.branch_id,
       expenseData.category
     );
     expenseData.category = CategoryCreate.id;
-      const imgResult = await uploadImg(expenseData.attachment_url);
-    expenseData.attachment_url = imgResult;
+      
     await repository.addExpense(expenseData);
 
     return {
@@ -852,5 +902,7 @@ module.exports = {
   getRestaurantSummary,
   getExpenseCategoryData,
   addHoldMenu,
-  getHoldData
+  getHoldData,
+  uploadMultiple,
+  deleteFileFromMinIO
 };
