@@ -8,7 +8,6 @@ const { PDFDocument } = require('pdf-lib');
 const moment = require('moment/moment');
 const { DB_HOSTNAME, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY, BUCKET_NAME } = require('../config/index.js');
 const {getDateRange} = require("../utils/Date_Folder/getDate.js");
-const { DB_HOSTNAME, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY, BUCKET_NAME } = require('../config/index.js');
 
 
 
@@ -1185,11 +1184,13 @@ module.exports = {
   addin_Inventory,
   update_Final_payment,
   get_dashboard,
-<<<<<<<<< Temporary merge branch 1
-  getRestaurantSummary
-=========
+getInventorySummary,
+  getPurchaseSummary,
   getExpenseCategoryData,
   addHoldMenu,
-  getHoldData
->>>>>>>>> Temporary merge branch 2
+  getHoldData,
+  uploadMultiple,
+  deleteFileFromMinIO,
+  getOrdersSummary,
+  getExpenseSummary
 };
