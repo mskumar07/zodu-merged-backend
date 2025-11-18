@@ -1,5 +1,5 @@
 const moment = require('moment/moment');
-const { get } = require('../api/restaurant-controller');
+const { get, search } = require('../api/restaurant-controller');
 const conn = require('../database/connection');
 
 // ========== Company Repository Functions ==========
@@ -336,43 +336,67 @@ exports.get_Expense = async (branch_id) => {
 // );
 // }
 
-exports.get_menuItem_data = async (branch_id) =>  {
-  return await conn.query(
-    `SELECT 
-        c.name,
-        COALESCE(
-          json_agg(
-            json_build_object(
-                'zodu_id', m.zodu_id,
-                'branch_id', m.branch_id,
-                'menu_name', m.menu_name,
-                'variants', m.variants,
-                'sell_price', m.sell_price,
-                'purchase_price', m.purchase_price,
-                'hsn_code', m.hsn_code,
-                'gst_tax', m.gst_tax,
-                'active', m.active,
-                'food_type', m.food_type,
-                'tax_include_or_exclude', m.tax_include_or_exclude,
-                'count', 10,
-                'menu_image', m.menu_image,
-                'menu_type', m.menu_type,
-                'menu_unit', m.menu_unit,
-                'favorites', m.favorites,
-                'menu_id', m.menu_id,
-                'category', c.name
-            )
-          ) FILTER (WHERE m.id IS NOT NULL), '[]'
-        ) AS items
-    FROM tbl_category c
-    LEFT JOIN tbl_menu_item m 
-      ON c.id = m.menu_category_id 
-     AND m.branch_id = $1
-    WHERE c.branch_id = $1
-    GROUP BY c.name`,
-    [branch_id]
+exports.get_menuItem_data = async (branch_id, page, limit, search) => {
+  const offset = (page - 1) * limit;
+
+  // -------------------------
+  // 1) TOTAL COUNT QUERY (menu items)
+  // -------------------------
+  const totalCountResult = await conn.query(
+    `SELECT COUNT(*) AS total
+     FROM tbl_menu_item m
+     JOIN tbl_category c ON c.id = m.menu_category_id
+     WHERE m.branch_id = $1
+       AND (m.menu_name ILIKE '%' || $2 || '%' OR c.name ILIKE '%' || $2 || '%')`,
+    [branch_id, search]
   );
-}
+
+  const total_count = Number(totalCountResult.rows[0].total);
+  const total_pages = Math.ceil(total_count / limit);
+
+  // -------------------------
+  // 2) PAGINATED DATA QUERY (menu items with category)
+  // -------------------------
+  const dataResult = await conn.query(
+    `SELECT 
+        m.zodu_id,
+        m.branch_id,
+        m.menu_name,
+        m.variants,
+        m.sell_price,
+        m.purchase_price,
+        m.hsn_code,
+        m.gst_tax,
+        m.active,
+        m.food_type,
+        m.tax_include_or_exclude,
+        10 AS count,
+        m.menu_image,
+        m.menu_type,
+        m.menu_unit,
+        m.favorites,
+        m.menu_id,
+        c.name AS category
+     FROM tbl_menu_item m
+     JOIN tbl_category c ON c.id = m.menu_category_id
+     WHERE m.branch_id = $1
+       AND (m.menu_name ILIKE '%' || $2 || '%' OR c.name ILIKE '%' || $2 || '%')
+     ORDER BY c.name, m.menu_name
+     LIMIT $3 OFFSET $4`,
+    [branch_id, search, limit, offset]
+  );
+
+  return {
+    total_count,
+    total_pages,
+    current_page: Number(page),
+    limit: Number(limit),
+    rows: dataResult.rows
+  };
+};
+
+
+
 
 exports.updateFinalPayment = async (data) => {
   try {

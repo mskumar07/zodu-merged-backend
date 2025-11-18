@@ -545,11 +545,26 @@ async function update_Inventory(data){
   }
 }
 
-async function get_menuItem_data(branch_id) {
+async function get_menuItem_data(branch_id, page, limit, search) {
   try {
-    const allMenuItemData = await repository.get_menuItem_data(branch_id);
-    // ✅ Ensure structure is categories with items
-    const categories = (allMenuItemData.rows || []).map((category) => {
+    const allMenuItemData = await repository.get_menuItem_data(
+      branch_id,
+      page,
+      limit,
+      search
+    );
+
+    // Extract pagination info from repository response
+    const {
+      total_count,
+      total_pages,
+      current_page,
+      limit: pageLimit,
+      rows,
+    } = allMenuItemData;
+
+    // ---- Process categories + item variants ----
+    const categories = (rows || []).map((category) => {
       const items = (category.items || []).map((item) => {
         let variants = item.variants;
 
@@ -558,34 +573,35 @@ async function get_menuItem_data(branch_id) {
             variants = JSON.parse(variants);
           }
         } catch (err) {
-          console.warn(`Invalid JSON in variants for menu_id ${item.menu_id}`, err);
-          variants = []; // fallback
+          variants = [];
         }
 
-        return {
-          ...item,
-          variants,
-        };
+        return { ...item, variants };
       });
 
-      return {
-        ...category,
-        items,
-      };
+      return { ...category, items };
     });
 
+    // ---- Return pagination + data ----
     return {
       success: true,
+      pagination: {
+        total_count,
+        total_pages,
+        current_page,
+        limit: pageLimit,
+      },
       data: categories,
     };
   } catch (error) {
-    console.error("Menu Item Data getting Error", error);
-    return {
-      success: false,
-      message: error.message,
-    };
+    return { success: false, message: error.message };
   }
 }
+
+
+
+
+
 
 
 async function get_ordered_data(data) {

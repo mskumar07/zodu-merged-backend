@@ -14,7 +14,6 @@ const upload = multer({
  // memory storage
 const mime = require("mime-types");
 const moment = require('moment/moment');
-const { DB_HOSTNAME, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY } = require("../config");
 const { validateDateFilter } = require("../utils/Date_Folder/valaidator");
 
 
@@ -585,17 +584,34 @@ router.get("/get/vendor/:branch_id", async (req, res) => {
 });
 
 router.get("/get/menu_item/:branch_id", async (req, res) => {
-
   try {
-      const {branch_id} = req.params
-    const getMenuItemData = await service.get_menuItem_data(branch_id);
-    if (!getMenuItemData.success) return res.status(201).json({ message: getMenuItemData.message });
-    return res.status(201).json({ message : "Data Get Successfully" , Data: getMenuItemData.data });
+    const { branch_id } = req.params;
+    const { page = 1, limit = 10, search = "" } = req.query;
+
+    const result = await service.get_menuItem_data(
+      branch_id,
+      page,
+      limit,
+      search
+    );
+
+    if (!result.success) {
+      return res.status(400).json({ message: result.message });
+    }
+
+    return res.status(200).json({
+      message: "Data Get Successfully",
+      pagination: result.pagination,   // <-- ADD THIS
+      data: result.data                // <-- ADD THIS
+    });
+
   } catch (error) {
-    console.error(error);
+    console.error("Get Menu API Error =>", error);
     return res.status(500).json({ error: error.message });
   }
 });
+
+
 
 router.get("/get/orders/:branch_id", async (req, res) => {
 
