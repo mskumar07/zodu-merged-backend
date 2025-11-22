@@ -119,6 +119,24 @@ exports.get_expense_category_data = async (branch_id) => {
   } catch (err) {
     throw new Error("Unable to fetch category data: " + err.message);
   }
+  
+}
+
+exports.get_purchase_category_data = async (branch_id) => {
+  try {
+    const query = `
+  SELECT category_name AS name, zodu_id, branch_id
+  FROM tbl_purchase_category
+  WHERE branch_id = $1
+`;
+
+    const result = await conn.query(query, [branch_id]);
+        console.log("check",result);
+
+    return result.rows;
+  } catch (err) {
+    throw new Error("Unable to fetch category data: " + err.message);
+  }
 }
 
 exports.get_inventory_list = async (branch_id,type) => {
@@ -139,7 +157,6 @@ exports.get_inventory_list = async (branch_id,type) => {
     throw new Error("Unable to fetch inventory data: " + err.message);
   }
 };
-
 
 exports.get_purchase = async (branch_id) => {
   try {
@@ -228,26 +245,59 @@ exports.get_purchase = async (branch_id) => {
   }
 };
 
-
-exports.get_Expense = async (branch_id) => {
+exports.get_Expense = async ({
+  branch_id,
+  page = 1,
+  limit = 10,
+  search = "",
+  filter = "All",
+  start_date,
+  end_date,
+  category_id
+}) => {
   try {
+    const offset = (page - 1) * limit;
+    const searchQuery = `%${search}%`;
+
+    let filterConditions = [];
+    filterConditions.push(`e.branch_id = $1`);
+
+    filterConditions.push(`
+      (
+         c.category_name ILIKE $2
+      OR e.description ILIKE $2
+      OR ei.item_name ILIKE $2
+      OR e.expense_id::text ILIKE $2
+      )
+    `);
+
+    if (category_id) filterConditions.push(`e.category_id = '${category_id}'`);
+
+    if (filter === "Paid") filterConditions.push(`e.balance_amount = 0`);
+    if (filter === "Unpaid") filterConditions.push(`e.balance_amount > 0`);
+
+    if (start_date && end_date) {
+      filterConditions.push(`
+        e.expense_date::date BETWEEN '${start_date}' AND '${end_date}'
+      `);
+    }
+
+    const whereClause = filterConditions.join(" AND ");
+
     const query = `
-      SELECT 
-        JSON_AGG(expense_data ORDER BY expense_date DESC) AS expenses,
-        (SELECT COALESCE(SUM(paid_amount),0) FROM tbl_expense WHERE branch_id = $1::text) AS total_paid_all,
-        (SELECT COALESCE(SUM(paid_amount) FILTER (
-             WHERE DATE_TRUNC('month', expense_date) = DATE_TRUNC('month', CURRENT_DATE)
-        ),0) FROM tbl_expense WHERE branch_id = $1::text) AS total_paid_this_month,
-        (SELECT COALESCE(SUM(paid_amount) FILTER (
-             WHERE DATE_TRUNC('month', expense_date) = DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')
-        ),0) FROM tbl_expense WHERE branch_id = $1::text) AS total_paid_last_month,
-        (SELECT COALESCE(SUM(paid_amount) FILTER (
-             WHERE DATE_TRUNC('week', expense_date) = DATE_TRUNC('week', CURRENT_DATE)
-        ),0) FROM tbl_expense WHERE branch_id = $1::text) AS total_paid_this_week,
-        (SELECT COALESCE(SUM(paid_amount) FILTER (
-             WHERE expense_date::date = CURRENT_DATE
-        ),0) FROM tbl_expense WHERE branch_id = $1::text) AS total_paid_today
-      FROM (
+      WITH filtered_expenses AS (
+        SELECT DISTINCT e.expense_id
+        FROM tbl_expense e
+        LEFT JOIN tbl_expense_items ei ON e.expense_id = ei.expense_id
+        LEFT JOIN tbl_expense_category c ON e.category_id = c.id
+        WHERE ${whereClause}
+      ),
+
+      total_count AS (
+        SELECT COUNT(*) AS count FROM filtered_expenses
+      ),
+
+      expense_data AS (
         SELECT 
           e.expense_id,
           e.branch_id,
@@ -255,7 +305,6 @@ exports.get_Expense = async (branch_id) => {
           c.category_name AS expense_name,
           e.attachment_url,
           e.description,
-          c.category_name AS category_name,
           e.expense_date,
           e.payment_type,
           e.total_amount,
@@ -263,6 +312,7 @@ exports.get_Expense = async (branch_id) => {
           e.balance_amount,
           e.created_at,
           e.updated_at,
+
           COALESCE(
             JSON_AGG(
               JSON_BUILD_OBJECT(
@@ -272,32 +322,81 @@ exports.get_Expense = async (branch_id) => {
                 'price', ei.price,
                 'total', ei.total
               )
-            ) FILTER (WHERE ei.expense_id IS NOT NULL), 
-            '[]'
+            ) FILTER (WHERE ei.expense_id IS NOT NULL), '[]'
           ) AS items
-        FROM tbl_expense e
+
+        FROM filtered_expenses fe
+        JOIN tbl_expense e ON fe.expense_id = e.expense_id
         LEFT JOIN tbl_expense_items ei ON e.expense_id = ei.expense_id
         LEFT JOIN tbl_expense_category c ON e.category_id = c.id
-        WHERE e.branch_id = $1::text
+
         GROUP BY 
           e.expense_id,
-          e.branch_id,
           e.category_id,
+          c.category_name,
           e.attachment_url,
           e.description,
-          c.category_name,
-          e.payment_type,
           e.expense_date,
+          e.payment_type,
           e.total_amount,
           e.paid_amount,
           e.balance_amount,
           e.created_at,
           e.updated_at
-      ) AS expense_data;
+
+        ORDER BY e.expense_date DESC
+        LIMIT ${limit} OFFSET ${offset}
+      )
+
+      SELECT
+        (SELECT JSON_AGG(ed) FROM expense_data ed) AS expenses,
+        (SELECT count FROM total_count) AS total_count,
+
+        -- summaries
+        (SELECT COALESCE(SUM(total_amount), 0)
+         FROM tbl_expense 
+         WHERE branch_id = $1) AS total_expense,
+
+        (SELECT COALESCE(SUM(paid_amount), 0)
+         FROM tbl_expense 
+         WHERE branch_id = $1) AS total_paid_all,
+
+        (SELECT COALESCE(SUM(balance_amount), 0)
+         FROM tbl_expense 
+         WHERE branch_id = $1) AS total_unpaid_all,
+
+        (SELECT COALESCE(SUM(paid_amount), 0)
+         FROM tbl_expense
+         WHERE branch_id = $1
+         AND DATE_TRUNC('month', expense_date) = DATE_TRUNC('month', CURRENT_DATE)
+        ) AS total_paid_this_month,
+
+        (SELECT COALESCE(SUM(paid_amount), 0)
+         FROM tbl_expense
+         WHERE branch_id = $1
+         AND DATE_TRUNC('month', expense_date) = DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')
+        ) AS total_paid_last_month;
     `;
 
-    const result = await conn.query(query, [branch_id]);
-    return result.rows[0];
+    const result = await conn.query(query, [
+      branch_id,
+      searchQuery
+    ]);
+
+    return {
+      expenses: result.rows[0].expenses || [],
+      total_count: result.rows[0].total_count || 0,
+      summary: {
+        total_expense: result.rows[0].total_expense || 0,
+        total_paid: result.rows[0].total_paid_all || 0,
+        total_unpaid: result.rows[0].total_unpaid_all || 0,
+        this_month: result.rows[0].total_paid_this_month || 0,
+        last_month: result.rows[0].total_paid_last_month || 0,
+      },
+      page: Number(page),
+      limit: Number(limit)
+    };
+
   } catch (err) {
     throw new Error("Unable to fetch expense data: " + err.message);
   }
@@ -305,36 +404,183 @@ exports.get_Expense = async (branch_id) => {
 
 
 
+exports.getUnits = async (branch_id) => {
+  console.log(branch_id)
+  try {
+    const query = `
+      SELECT id, zodu_id, branch_id, name, short_name, created_at, updated_at
+      FROM tbl_units
+      WHERE branch_id = $1
+      ORDER BY id DESC
+    `;
+    const { rows } = await conn.query(query, [branch_id]);
+    return rows;
+  } catch (err) {
+    console.error(err);
+    throw new Error("Database error while fetching units");
+  }
+};
+
+// ADD UNIT
+exports.addUnit = async (zodu_id, branch_id, name, short_name) => {
+  try {
+    const query = `
+      INSERT INTO tbl_units (zodu_id, branch_id, name, short_name)
+      VALUES ($1, $2, $3, $4)
+      RETURNING *
+    `;
+    const { rows } = await conn.query(query, [zodu_id, branch_id, name, short_name]);
+    return rows[0];
+  } catch (err) {
+    console.log(err)
+    throw new Error("Database error while adding unit");
+  }
+};
+
+// UPDATE UNIT
+exports.updateUnit = async (id, name, short_name) => {
+  try {
+    const query = `
+      UPDATE tbl_units
+      SET name = $1, short_name = $2, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $3
+      RETURNING *
+    `;
+    const { rows } = await conn.query(query, [name, short_name, id]);
+
+    if (!rows[0]) throw new Error("Unit not found");
+    return rows[0];
+  } catch (err) {
+    if (err.message === "Unit not found") throw err;
+    throw new Error("Database error while updating unit");
+  }
+};
+
+exports.deleteUnit = async (id) => {
+  try {
+    const query = `DELETE FROM tbl_units WHERE id = $1 RETURNING id`;
+    const { rows } = await conn.query(query, [id]);
+
+    if (!rows.length) {
+      throw new Error("Unit not found");
+    }
+
+    return true;
+  } catch (err) {
+    if (err.message === "Unit not found") throw err;
+    throw new Error("Database error while deleting unit");
+  }
+};
+
+exports.getGST = async (branch_id) => {
+  try {
+    const query = `
+      SELECT * FROM tbl_gst
+      WHERE branch_id = $1
+      ORDER BY id DESC
+    `;
+    const { rows } = await conn.query(query, [branch_id]);
+    return rows;
+  } catch (err) {
+    throw new Error("Database error while fetching GST list");
+  }
+};
+
+// ADD GST
+exports.addGST = async (zodu_id, branch_id, gst_rate) => {
+  try {
+    const query = `
+      INSERT INTO tbl_gst (zodu_id, branch_id,  gst_rate)
+      VALUES ($1, $2, $3)
+      RETURNING *
+    `;
+    const { rows } = await conn.query(query, [
+      zodu_id,
+      branch_id,
+      gst_rate,
+    ]);
+    return rows[0];
+  } catch (err) {
+    throw new Error("Database error while adding GST");
+  }
+};
+
+// UPDATE GST
+exports.updateGST = async (id, gst_rate) => {
+  try {
+    const query = `
+      UPDATE tbl_gst
+      SET gst_rate = $1, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $2
+      RETURNING *
+    `;
+    const { rows } = await conn.query(query, [gst_rate, id]);
+
+    if (!rows[0]) throw new Error("GST record not found");
+
+    return rows[0];
+  } catch (err) {
+    if (err.message === "GST record not found") throw err;
+    throw new Error("Database error while updating GST");
+  }
+};
+
+// DELETE GST
+exports.deleteGST = async (id) => {
+  try {
+    const query = `DELETE FROM tbl_gst WHERE id = $1 RETURNING id`;
+    const { rows } = await conn.query(query, [id]);
+
+    if (!rows.length) throw new Error("GST record not found");
+
+    return true;
+  } catch (err) {
+    if (err.message === "GST record not found") throw err;
+    throw new Error("Database error while deleting GST");
+  }
+};
+
+exports.get_pos_data = async (branch_id) => {
+  return await conn.query(
+    `
+    SELECT
+      c.id AS id,
+      c.name AS name,
+      json_agg(
+        json_build_object(
+          'zodu_id', m.zodu_id,
+          'branch_id', m.branch_id,
+          'menu_name', m.menu_name,
+          'variants', m.variants,
+          'qr_code', q.qr_code,
+          'sell_price', m.sell_price,
+          'purchase_price', m.purchase_price,
+          'hsn_code', m.hsn_code,
+          'gst_tax', m.gst_tax,
+          'food_type', m.food_type,
+          'tax_include_or_exclude', m.tax_include_or_exclude,
+          'count', 10,
+          'menu_image', m.menu_image,
+          'menu_type', m.menu_type
+        )
+        ORDER BY m.menu_name
+      ) AS items
+    FROM tbl_category c
+    JOIN tbl_menu_item m 
+      ON c.id = m.menu_category_id 
+     AND m.active = true
+     AND m.branch_id = $1
+    LEFT JOIN tbl_qr_code q 
+      ON q.id = m.qr_code_id
+    GROUP BY c.id, c.name
+    ORDER BY c.name ASC;
+    `,
+    [branch_id]
+  );
+};
 
 
-// exports.get_menuItem_data(branch_id) {
-//   return await conn.query(
-//     `SELECT 
-//     c.name,
-//     json_agg(
-//         json_build_object(
-// 		'zodu_id', m.zodu_id,
-// 		'branch_id',m.branch_id,
-//             'menu_name', m.menu_name,
-// 			'variants', m.variants,
-// 			'qr_code', q.qr_code,
-//             'sell_price', m.sell_price,
-// 			'purchase_price', m.purchase_price,
-// 			'hsn_code', m.hsn_code,
-// 			'gst_tax', m.gst_tax,
-//             'food_type', m.food_type,
-//             'tax_include_or_exclude', m.tax_include_or_exclude,
-//             'count', 10,
-//             'menu_image', m.menu_image,
-// 			'menu_type',m.menu_type
-//         )
-//     ) AS items
-// FROM tbl_category c
-// JOIN tbl_menu_item m ON c.id = m.menu_category_id and m.active = true
-// join tbl_qr_code q ON q.id = m.qr_code_id 
-// GROUP BY c.name`
-// );
-// }
+
 
 exports.get_menuItem_data = async (branch_id, page, limit, search) => {
   const offset = (page - 1) * limit;
@@ -1813,7 +2059,7 @@ SELECT
   c.name AS category_name,           
   e.total_amount,
   e.balance_amount,
-TO_CHAR(e.expense_date, 'DD Month YYYY, Dy') AS expense_date,
+TO_CHAR(e.expense_date, 'DD-MM-YYYY, (Dy)') AS expense_date,
   COUNT(i.id) AS item_count
 FROM tbl_expense e
 LEFT JOIN tbl_category c 
@@ -2340,7 +2586,7 @@ exports.getExpenseSummary = async (zodu_id, branch_id, start_date, end_date, opt
           e.paid_amount,
           e.balance_amount,
           c.name AS category_name,
-          e.expense_name
+          c.name AS expense_name
         FROM tbl_expense e
         LEFT JOIN tbl_category c ON c.id = e.category_id
         WHERE e.zodu_id = $1

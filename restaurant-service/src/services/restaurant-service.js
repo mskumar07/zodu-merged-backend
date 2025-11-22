@@ -8,6 +8,7 @@ const { PDFDocument } = require('pdf-lib');
 const moment = require('moment/moment');
 const { DB_HOSTNAME, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY, BUCKET_NAME } = require('../config/index.js');
 const {getDateRange} = require("../utils/Date_Folder/getDate.js");
+const { get } = require('../api/restaurant-controller.js');
 
 
 
@@ -257,6 +258,68 @@ async function getExpenseCategoryData(branch_id) {
     };
   }
 }
+async function getUnits(branch_id) {
+  if (!branch_id) throw new Error("branch_id is required");
+  try{
+  const units =  await repository.getUnits(branch_id);
+  return {
+    success: true,
+    data: units,
+  };
+  }catch (error) {
+    console.error("Units Data getting Error", error);
+    return {
+      success: false,
+      message: error.message
+    };
+  }     
+};
+
+async function addUnit(zodu_id, branch_id, name, short_name) {
+  try{
+  if (!zodu_id || !branch_id || !name || !short_name) {
+    throw new Error("zodu_id, branch_id, name and short_name are required");
+  }
+  const addedunits = await repository.addUnit(zodu_id, branch_id, name, short_name);
+  return {
+    success: true,
+    data: addedunits,
+  };
+  }catch (error) {
+    console.error("Units Data getting Error", error); 
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+};
+
+async function updateUnit(id, name, short_name) {
+  if (!id) throw new Error("id is required");
+  if (!name) throw new Error("name is required");
+  if (!short_name) throw new Error("short_name is required");
+  return await repository.updateUnit(id, name, short_name);
+};
+
+async function deleteUnit(id) {
+  if (!id) throw new Error("id is required");
+  return await repository.deleteUnit(id);
+};
+async function getPurchaseCategoryData(branch_id) {
+  try {
+    const allCategoryData = await repository.get_purchase_category_data(branch_id);
+    return {
+      success: true,
+      data: allCategoryData,
+    };
+  } catch (error) {
+    console.error("Category Data getting Error", error);
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+}
 
 async function deleteFileFromMinIO(fileName) {
   try {
@@ -271,6 +334,97 @@ async function deleteFileFromMinIO(fileName) {
     return { success: false, message: err.message };
   }
 };
+
+async function getGST(branch_id) {
+  try {
+    if (!branch_id) throw new Error("branch_id is required");
+
+    const gstList = await repository.getGST(branch_id);
+
+    return {
+      success: true,
+      data: gstList,
+    };
+
+  } catch (error) {
+    console.error("GST Data getting Error", error);
+    return {
+      success: false,
+      message: error.message,
+    };
+  }
+}
+
+// ADD GST
+async function addGST(zodu_id, branch_id, gst_rate) {
+  try {
+    if (!zodu_id || !branch_id|| gst_rate === undefined) {
+      throw new Error("zodu_id, branch_id, and gst_rate are required");
+    }
+
+    const addedGST = await repository.addGST(
+      zodu_id,
+      branch_id,
+      gst_rate
+    );
+
+    return {
+      success: true,
+      data: addedGST,
+    };
+
+  } catch (error) {
+    console.error("GST Add Error", error);
+    return {
+      success: false,
+      message: error.message,
+    };
+  }
+}
+
+// UPDATE GST
+async function updateGST(id,  gst_rate) {
+  try {
+    if (!id  || gst_rate === undefined) {
+      throw new Error("id and gst_rate are required");
+    }
+
+    const updated = await repository.updateGST(id, gst_rate);
+
+    return {
+      success: true,
+      data: updated,
+    };
+
+  } catch (error) {
+    console.error("GST Update Error", error);
+    return {
+      success: false,
+      message: error.message,
+    };
+  }
+}
+
+// DELETE GST
+async function deleteGST(id) {
+  try {
+    if (!id) throw new Error("id is required");
+
+    const deleted = await repository.deleteGST(id);
+
+    return {
+      success: true,
+      data: deleted,
+    };
+
+  } catch (error) {
+    console.error("GST Delete Error", error);
+    return {
+      success: false,
+      message: error.message,
+    };
+  }
+}
 
 
 async function get_Report(data) {
@@ -482,7 +636,6 @@ async function addHoldMenu(data) {
   } 
 }
 
-
 async function getPurchaseListData(branch_id) {
   try {
     const allPurchaseData = await repository.get_purchase(branch_id);
@@ -499,21 +652,18 @@ async function getPurchaseListData(branch_id) {
   }
 }
 
-async function getExpenseListData(branch_id) {
+
+
+async function getExpenseListData(params) {
   try {
-    const allExpenseData = await repository.get_Expense(branch_id);
-    return {
-      success: true,
-      data: allExpenseData,
-    };
+    const data = await repository.get_Expense(params);
+    return { success: true, data };
   } catch (error) {
-    console.error("Purchase Data getting Error", error);
-    return {
-      success: false,
-      message: error.message
-    };
+    return { success: false, message: error.message };
   }
 }
+
+
 // async function get_menuItem_data(branch_id) {
 //   try {
 //     const allMenuItemData = await repository.get_menuItem_data(branch_id);
@@ -599,10 +749,21 @@ async function get_menuItem_data(branch_id, page, limit, search) {
 }
 
 
-
-
-
-
+async function get_pos_data(data) {
+  try {
+    const posData = await repository.get_pos_data(data);
+    return {
+      success: true,
+      data: posData.rows,
+    };
+  } catch (error) {
+    console.error("Menu Item Data getting Error", error);
+    return { 
+      success: false,
+      message: error.message,
+    };
+  }
+}
 
 async function get_ordered_data(data) {
   try {
@@ -1208,5 +1369,15 @@ getInventorySummary,
   uploadMultiple,
   deleteFileFromMinIO,
   getOrdersSummary,
-  getExpenseSummary
+  getExpenseSummary,
+  get_pos_data,
+  getPurchaseCategoryData,
+  addUnit,
+  getUnits,
+  updateUnit,
+  deleteUnit,
+  getGST,
+  addGST,
+  updateGST,
+  deleteGST
 };

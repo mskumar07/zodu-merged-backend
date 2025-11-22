@@ -15,6 +15,7 @@ const upload = multer({
 const mime = require("mime-types");
 const moment = require('moment/moment');
 const { validateDateFilter } = require("../utils/Date_Folder/valaidator");
+const { DB_HOSTNAME, MINIO_PORT, MINIO_ACCESSKEY, BUCKET_NAME, MINIO_SECRETKEY } = require("../config");
 
 
 const router = express.Router();
@@ -22,14 +23,14 @@ const router = express.Router();
 
 // MinIO client
 const minioClient = new Minio.Client({
-  endPoint: "72.60.206.59", // e.g. 123.45.67.89
-  port: 9000,
+  endPoint: DB_HOSTNAME, // e.g. 123.45.67.89
+  port: MINIO_PORT,
   useSSL: false,
-  accessKey: "zoduminio",
-  secretKey: "zodu@2025"
+  accessKey: MINIO_ACCESSKEY,
+  secretKey: MINIO_SECRETKEY
 });
 
-const bucketName = "zodu";
+const bucketName = BUCKET_NAME;
 
 
 router.post("/api/createcompany", async (req, res) => {
@@ -528,6 +529,19 @@ router.get("/get/expense-category/:branch_id", async (req, res) => {
   }
 });
 
+router.get("/get/purchase-category/:branch_id", async (req, res) => {
+  
+  try {
+     const { branch_id } = req.params;
+    const getCategoryData = await service.getPurchaseCategoryData(branch_id);
+    if (!getCategoryData.success) return res.status(400).json({ message: getCategoryData.message });
+    return res.status(201).json({ message : "Data Get Successfully" , Data: getCategoryData.data });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 router.get("/get/inventory-list/:branch_id", async (req, res) => {
   
   try {
@@ -557,18 +571,42 @@ router.get("/get/purchase-list/:branch_id", async (req, res) => {
   }
 });
 
+
 router.get("/get/expense-list/:branch_id", async (req, res) => {
-  
   try {
-     const { branch_id } = req.params;
-    const getExpenseListData = await service.getExpenseListData(branch_id);
-    if (!getExpenseListData.success) return res.status(400).json({ message: getExpenseListData.message });
-    return res.status(201).json({ message : "Data Get Successfully" , Data: getExpenseListData.data });
+    const { branch_id } = req.params;
+    const { 
+      page = 1, 
+      limit = 10, 
+      search = "",
+      filter = "All",          // All | Paid | Unpaid
+      start_date,
+      end_date,
+      category_id
+    } = req.query;
+
+    const data = await service.getExpenseListData({
+      branch_id,
+      page,
+      limit,
+      search,
+      filter,
+      start_date,
+      end_date,
+      category_id
+    });
+
+    if (!data.success)
+      return res.status(400).json({ message: data.message });
+
+    return res.status(200).json(data.data);
+
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: error.message });
   }
 });
+
 
 router.get("/get/vendor/:branch_id", async (req, res) => {
   
@@ -611,7 +649,17 @@ router.get("/get/menu_item/:branch_id", async (req, res) => {
   }
 });
 
-
+router.get("/get/pos_data/:branch_id", async (req, res) => {
+  try {
+      const {branch_id} = req.params
+    const getPosData = await service.get_pos_data(branch_id);
+    if (!getPosData.success) return res.status(400).json({ message: getPosData.message });
+    return res.status(201).json({ message : "Data Get Successfully" , Data: getPosData.data });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
 
 router.get("/get/orders/:branch_id", async (req, res) => {
 
@@ -623,6 +671,139 @@ router.get("/get/orders/:branch_id", async (req, res) => {
     return res.status(201).json({ message : "Data Get Successfully" , Data: getMenuItemData.data });
   } catch (error) {
     console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.get("/get/units/:branch_id", async (req, res) => {
+  try {
+    const data = await service.getUnits(req.params.branch_id);
+        if (!data.success) return res.status(400).json({ message: data.message });
+    return res.status(201).json({ message : "Data Get Successfully" , Data: data.data });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// ➤ ADD UNIT
+router.post("/add/unit", async (req, res) => {
+  try {
+    const { zodu_id, branch_id, name,short_name } = req.body;
+    const data = await service.addUnit(zodu_id, branch_id, name, short_name);
+    if (!data.success) return res.status(400).json({ message: data.message });
+    return res.status(201).json({ message: "Unit added successfully", data: data.data });
+  } catch (error) {
+ console.error(error);
+    return res.status(500).json({ error: error.message });  }
+});
+
+// ➤ UPDATE UNIT
+router.put("/update/unit/:id", async (req, res) => {
+  try {
+    const { name, short_name   } = req.body;
+    const data = await service.updateUnit(req.params.id, name, short_name);
+    return success(res, "Unit updated successfully", data);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// ➤ DELETE UNIT
+router.delete("/delete/unit/:id", async (req, res) => {
+  try {
+    await service.deleteUnit(req.params.id);
+    return success(res, "Unit deleted successfully");
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.get("/get/gst/:branch_id", async (req, res) => {
+  try {
+    const { branch_id } = req.params;
+
+    const result = await service.getGST(branch_id);
+
+    if (!result.success)
+      return res.status(400).json({ message: result.message });
+
+    return res.status(200).json({
+      message: "GST Data Fetch Success",
+      data: result.data,
+    });
+
+  } catch (error) {
+    console.error("GST GET Error", error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// ➤ ADD GST
+router.post("/add/gst", async (req, res) => {
+  try {
+    const { zodu_id, branch_id, gst_rate } = req.body;
+
+    const result = await service.addGST(
+      zodu_id,
+      branch_id,
+      gst_rate
+    );
+
+    if (!result.success)
+      return res.status(400).json({ message: result.message });
+
+    return res.status(201).json({
+      message: "GST Added Successfully",
+      data: result.data,
+    });
+
+  } catch (error) {
+    console.error("GST POST Error", error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// ➤ UPDATE GST
+router.put("/update/gst/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {  gst_rate } = req.body;
+
+    const result = await service.updateGST(id, gst_rate);
+
+    if (!result.success)
+      return res.status(400).json({ message: result.message });
+
+    return res.status(200).json({
+      message: "GST Updated Successfully",
+      data: result.data,
+    });
+
+  } catch (error) {
+    console.error("GST UPDATE Error", error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// ➤ DELETE GST
+router.delete("/delete/gst/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await service.deleteGST(id);
+
+    if (!result.success)
+      return res.status(400).json({ message: result.message });
+
+    return res.status(200).json({
+      message: "GST Deleted Successfully",
+    });
+
+  } catch (error) {
+    console.error("GST DELETE Error", error);
     return res.status(500).json({ error: error.message });
   }
 });
@@ -720,7 +901,7 @@ router.post("/api/add/inventory", async (req,res)=>{
 
 });
 
-router.get("/api/restaurant/summary/:type/:zodu_id/:branch_id", async (req, res) => {
+router.get("/api/report/:type/:zodu_id/:branch_id", async (req, res) => {
   try {
     const { type, zodu_id, branch_id } = req.params;
     const {
@@ -728,8 +909,8 @@ router.get("/api/restaurant/summary/:type/:zodu_id/:branch_id", async (req, res)
       start_date,
       end_date,
       summaryType = "all",   
-      page = 2,
-      limit = 10,
+      page = 1,
+      limit = 30,
       sortBy = "order_date",
       sortOrder = "desc",
       top = 0,
