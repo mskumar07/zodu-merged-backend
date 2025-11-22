@@ -558,18 +558,44 @@ router.get("/get/inventory-list/:branch_id", async (req, res) => {
 });
 
 router.get("/get/purchase-list/:branch_id", async (req, res) => {
-  
   try {
-     const { branch_id } = req.params;
-    const getPurchaseListData = await service.getPurchaseListData(branch_id);
-    console.log(getPurchaseListData);
-    if (!getPurchaseListData.success) return res.status(400).json({ message: getPurchaseListData.message });
-    return res.status(201).json({ message : "Data Get Successfully" , Data: getPurchaseListData.data });
+    const { branch_id } = req.params;
+
+    const {
+      page = 1,
+      limit = 10,
+      search = "",
+      status = "all",
+      start_date = "",
+      end_date = "",
+      category_id = ""
+    } = req.query;
+
+    const getPurchaseListData = await service.getPurchaseListData(
+      branch_id,
+      page,
+      limit,
+      search,
+      status,
+      start_date,
+      end_date,
+      category_id
+    );
+
+    if (!getPurchaseListData.success)
+      return res.status(400).json({ message: getPurchaseListData.message });
+
+    return res.status(201).json({
+      message: "Data Get Successfully",
+      Data: getPurchaseListData.data,
+    });
+
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: error.message });
   }
 });
+
 
 
 router.get("/get/expense-list/:branch_id", async (req, res) => {

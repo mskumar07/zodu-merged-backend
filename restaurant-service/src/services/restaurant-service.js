@@ -636,21 +636,42 @@ async function addHoldMenu(data) {
   } 
 }
 
-async function getPurchaseListData(branch_id) {
+async function getPurchaseListData(
+  branch_id,
+  page,
+  limit,
+  search,
+  status,
+  start_date,
+  end_date,
+  category_id
+) {
   try {
-    const allPurchaseData = await repository.get_purchase(branch_id);
+    const allPurchaseData = await repository.get_purchase(
+      branch_id,
+      page,
+      limit,
+      search,
+      status,
+      start_date,
+      end_date,
+      category_id
+    );
+
     return {
       success: true,
       data: allPurchaseData,
     };
+
   } catch (error) {
     console.error("Purchase Data getting Error", error);
     return {
       success: false,
-      message: error.message
+      message: error.message,
     };
   }
 }
+
 
 
 
@@ -901,7 +922,8 @@ async function createMenuItem(menuData) {
     const CategoryCreate = await repository.createCategory(
       menuData.zodu_id,
       menuData.branch_id,
-      menuData.menu_category
+      menuData.menu_category,
+      menuData.menu_type
     );
     menuData.menu_category_id = CategoryCreate.id;
 

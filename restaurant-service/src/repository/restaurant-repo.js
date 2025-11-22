@@ -158,10 +158,55 @@ exports.get_inventory_list = async (branch_id,type) => {
   }
 };
 
-exports.get_purchase = async (branch_id) => {
+exports.get_purchase = async (
+  branch_id,
+  page,
+  limit,
+  search,
+  status,
+  start_date,
+  end_date,
+  category_id
+) => {
   try {
- const query = `
-      WITH purchase_data AS (
+    const offset = (page - 1) * limit;
+
+    const query = `
+      WITH filtered_purchase AS (
+        SELECT *
+        FROM tbl_purchase
+        WHERE branch_id = $1
+
+        -- 🔍 Search filter (safe cast)
+        AND (
+          $2 = '' OR 
+          purchase_id ILIKE '%' || $2 || '%' OR
+          notes ILIKE '%' || $2 || '%'
+        )
+
+        -- 🏷 Category filter (INT comparison)
+        AND (
+          $3 = '' OR category_id = $3::int
+        )
+
+        -- 📅 Date filter
+        AND (
+          ($4 = '' AND $5 = '') OR 
+          (purchase_date BETWEEN $4::date AND $5::date)
+        )
+
+        -- 💳 Status filter
+        AND (
+          $6 = 'all'
+          OR ($6 = 'paid' AND balance_amount = 0)
+          OR ($6 = 'unpaid' AND balance_amount > 0)
+        )
+
+        ORDER BY created_at DESC
+        LIMIT $7 OFFSET $8
+      ),
+
+      purchase_data AS (
         SELECT 
           p.purchase_id,
           p.branch_id,
@@ -192,15 +237,14 @@ exports.get_purchase = async (branch_id) => {
                 'total', pi.total_price,
                 'image', m.menu_image
               )
-            ) FILTER (WHERE pi.purchase_id IS NOT NULL), 
+            ) FILTER (WHERE pi.purchase_id IS NOT NULL),
             '[]'
           ) AS items
-        FROM tbl_purchase p
+        FROM filtered_purchase p
         LEFT JOIN tbl_purchase_items pi ON p.purchase_id = pi.purchase_id
         LEFT JOIN tbl_category c ON p.category_id = c.id
         LEFT JOIN tbl_vendor v ON p.vendor_id = v.vendor_id
         LEFT JOIN tbl_menu_item m ON pi.item_id = m.menu_id
-        WHERE p.branch_id = $1::text
         GROUP BY 
           p.purchase_id, 
           p.branch_id, 
@@ -221,29 +265,56 @@ exports.get_purchase = async (branch_id) => {
           p.created_at, 
           p.updated_at
       )
+
       SELECT 
         JSON_AGG(purchase_data) AS purchases,
-        COUNT(*) AS total_purchase_count,
+
+        -- 📊 Total Count
+        (SELECT COUNT(*) FROM tbl_purchase
+          WHERE branch_id = $1
+            AND ($2 = '' OR purchase_id ILIKE '%' || $2 || '%' OR notes ILIKE '%' || $2 || '%')
+            AND ($3 = '' OR category_id = $3::int)
+            AND (($4 = '' AND $5 = '') OR (purchase_date BETWEEN $4::date AND $5::date))
+            AND (
+              $6 = 'all'
+              OR ($6 = 'paid' AND balance_amount = 0)
+              OR ($6 = 'unpaid' AND balance_amount > 0)
+            )
+        ) AS total_purchase_count,
+
         COALESCE(SUM(paid_amount), 0) AS total_spent_amount,
         COALESCE(SUM(paid_amount), 0) AS total_paid_amount,
         COALESCE(SUM(balance_amount), 0) AS total_unpaid_amount,
-        -- 🔹 This Month Spent (based on purchase_date)
+
         COALESCE(SUM(CASE 
           WHEN DATE_TRUNC('month', purchase_date) = DATE_TRUNC('month', CURRENT_DATE)
           THEN paid_amount ELSE 0 END), 0) AS this_month_spent,
-        -- 🔹 Last Month Spent
+
         COALESCE(SUM(CASE 
           WHEN DATE_TRUNC('month', purchase_date) = DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')
           THEN paid_amount ELSE 0 END), 0) AS last_month_spent
       FROM purchase_data;
     `;
 
-    const result = await conn.query(query, [branch_id]);
-    return result.rows[0]; // { purchases: [...], total_purchase_count, total_spent_amount }
+    const result = await conn.query(query, [
+      branch_id,   // $1
+      search,      // $2
+      category_id, // $3
+      start_date,  // $4
+      end_date,    // $5
+      status,      // $6
+      limit,       // $7
+      offset       // $8
+    ]);
+
+    return result.rows[0];
+
   } catch (err) {
     throw new Error("Unable to fetch purchase data: " + err.message);
   }
 };
+
+
 
 exports.get_Expense = async ({
   branch_id,
@@ -550,6 +621,7 @@ exports.get_pos_data = async (branch_id) => {
         json_build_object(
           'zodu_id', m.zodu_id,
           'branch_id', m.branch_id,
+          'menu_id', m.menu_id,
           'menu_name', m.menu_name,
           'variants', m.variants,
           'qr_code', q.qr_code,
@@ -561,7 +633,10 @@ exports.get_pos_data = async (branch_id) => {
           'tax_include_or_exclude', m.tax_include_or_exclude,
           'count', 10,
           'menu_image', m.menu_image,
-          'menu_type', m.menu_type
+          'menu_type', m.menu_type,
+          'menu_unit', m.menu_unit,
+          'favorites', m.favorites
+
         )
         ORDER BY m.menu_name
       ) AS items
@@ -831,15 +906,15 @@ exports.createQRCode = async (qr_code) => {
   }
 }
 
-exports.createCategory = async (zodu_id, branch_id, name) => {
+exports.createCategory = async (zodu_id, branch_id, name, type) => {
   try {
     // 1️⃣ Check if category already exists in this branch
     const checkQuery = `
       SELECT * FROM tbl_category
-      WHERE zodu_id = $1 AND branch_id = $2 AND name = $3
+      WHERE zodu_id = $1 AND branch_id = $2 AND name = $3 AND type = $4
       LIMIT 1;
     `;
-    const checkValues = [zodu_id, branch_id, name];
+    const checkValues = [zodu_id, branch_id, name, type];
     const checkResult = await conn.query(checkQuery, checkValues);
 
     if (checkResult.rows.length > 0) {
@@ -849,11 +924,11 @@ exports.createCategory = async (zodu_id, branch_id, name) => {
 
     // 2️⃣ Otherwise, insert new category
     const insertQuery = `
-      INSERT INTO tbl_category (zodu_id, branch_id, name)
-      VALUES ($1, $2, $3)
+      INSERT INTO tbl_category (zodu_id, branch_id, name, type)
+      VALUES ($1, $2, $3, $4)
       RETURNING *;
     `;
-    const insertValues = [zodu_id, branch_id, name];
+    const insertValues = [zodu_id, branch_id, name, type];
     const insertResult = await conn.query(insertQuery, insertValues);
 
     if (insertResult.rows.length === 0) {
@@ -979,6 +1054,7 @@ exports.getNextMenuId = async (zoduId, branchId) => {
       // Extract numeric part from something like "zodu-branch-320"
       const match = lastId.match(/(\d+)$/);
       const lastNum = match ? parseInt(match[1], 10) : 0;
+      console.log(lastNum);
 
       nextNumber = lastNum + 1;
     }
@@ -2059,7 +2135,7 @@ SELECT
   c.name AS category_name,           
   e.total_amount,
   e.balance_amount,
-TO_CHAR(e.expense_date, 'DD-MM-YYYY, (Dy)') AS expense_date,
+  e.expense_date,
   COUNT(i.id) AS item_count
 FROM tbl_expense e
 LEFT JOIN tbl_category c 
