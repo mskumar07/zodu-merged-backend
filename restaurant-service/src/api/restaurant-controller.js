@@ -687,6 +687,30 @@ router.get("/get/pos_data/:branch_id", async (req, res) => {
   }
 });
 
+router.delete("/delete/menu_item/:id", async (req, res) => {
+  try {
+    const data = await service.deleteMenuItem(req.params.id);
+    if (!data.success) return res.status(400).json({ message: data.message });
+    return res.status(201).json({ message: "Menu item deleted successfully", data: data.data });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.put("/update/menu_item/:id", async (req, res) => {
+  try {
+    const menuData = req.body;
+  
+    const data = await service.updateMenuItem(req.params.id, menuData);
+    if (!data.success) return res.status(400).json({ message: data.message });
+    return res.status(201).json({ message: "Menu item updated successfully", data: data.data });    
+  } catch (error) { 
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 router.get("/get/orders/:branch_id", async (req, res) => {
 
   try {

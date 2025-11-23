@@ -628,15 +628,19 @@ exports.get_pos_data = async (branch_id) => {
           'sell_price', m.sell_price,
           'purchase_price', m.purchase_price,
           'hsn_code', m.hsn_code,
-          'gst_tax', m.gst_tax,
+
+          -- GST (Correct column)
+          'gst_tax' , g.gst_rate,
+
+          -- Units (Correct column)
+ 'menu_unit', u.short_name,
+
           'food_type', m.food_type,
           'tax_include_or_exclude', m.tax_include_or_exclude,
           'count', 10,
           'menu_image', m.menu_image,
           'menu_type', m.menu_type,
-          'menu_unit', m.menu_unit,
           'favorites', m.favorites
-
         )
         ORDER BY m.menu_name
       ) AS items
@@ -645,8 +649,16 @@ exports.get_pos_data = async (branch_id) => {
       ON c.id = m.menu_category_id 
      AND m.active = true
      AND m.branch_id = $1
+
     LEFT JOIN tbl_qr_code q 
       ON q.id = m.qr_code_id
+
+    LEFT JOIN tbl_gst g 
+      ON g.id = m.gst_tax   -- correct column
+
+    LEFT JOIN tbl_units u
+      ON u.id = m.menu_unit -- correct column
+
     GROUP BY c.id, c.name
     ORDER BY c.name ASC;
     `,
@@ -657,12 +669,10 @@ exports.get_pos_data = async (branch_id) => {
 
 
 
+
 exports.get_menuItem_data = async (branch_id, page, limit, search) => {
   const offset = (page - 1) * limit;
 
-  // -------------------------
-  // 1) TOTAL COUNT QUERY (menu items)
-  // -------------------------
   const totalCountResult = await conn.query(
     `SELECT COUNT(*) AS total
      FROM tbl_menu_item m
@@ -675,9 +685,6 @@ exports.get_menuItem_data = async (branch_id, page, limit, search) => {
   const total_count = Number(totalCountResult.rows[0].total);
   const total_pages = Math.ceil(total_count / limit);
 
-  // -------------------------
-  // 2) PAGINATED DATA QUERY (menu items with category)
-  // -------------------------
   const dataResult = await conn.query(
     `SELECT 
         m.zodu_id,
@@ -687,19 +694,33 @@ exports.get_menuItem_data = async (branch_id, page, limit, search) => {
         m.sell_price,
         m.purchase_price,
         m.hsn_code,
-        m.gst_tax,
+
+        -- GST JOIN (correct column)
+        m.gst_tax AS gst_id,
+        g.gst_rate AS gst_tax,
+
         m.active,
         m.food_type,
         m.tax_include_or_exclude,
         10 AS count,
         m.menu_image,
         m.menu_type,
-        m.menu_unit,
+
+        -- UNIT JOIN (correct column)
+        m.menu_unit AS unit_id,
+        u.name AS unit_name,
+        u.short_name AS menu_unit,
+
         m.favorites,
         m.menu_id,
         c.name AS category
+
      FROM tbl_menu_item m
      JOIN tbl_category c ON c.id = m.menu_category_id
+
+     LEFT JOIN tbl_gst g ON g.id = m.gst_tax
+     LEFT JOIN tbl_units u ON u.id = m.menu_unit
+
      WHERE m.branch_id = $1
        AND (m.menu_name ILIKE '%' || $2 || '%' OR c.name ILIKE '%' || $2 || '%')
      ORDER BY c.name, m.menu_name
@@ -715,6 +736,7 @@ exports.get_menuItem_data = async (branch_id, page, limit, search) => {
     rows: dataResult.rows
   };
 };
+
 
 
 
@@ -1264,6 +1286,147 @@ exports.createMenuItem = async (menuData) => {
   } catch (err) {
     await conn.query('ROLLBACK');
     throw new Error("Unable to create menu: " + err.message);
+  }
+};
+
+exports.updateMenuItem = async (menuId, menuData) => {
+  try {
+    await conn.query("BEGIN");
+
+    const query = `
+      UPDATE tbl_menu_item
+      SET 
+        menu_category_id = $1,
+        menu_name = $2,
+        menu_type = $3,
+        food_type = $4,
+        variants = $5,
+        sell_price = $6,
+        purchase_price = $7,
+        hsn_code = $8,
+        gst_tax = $9,
+        tax_include_or_exclude = $10,
+        menu_image = $11,
+        menu_code = $12,
+        menu_unit = $13,
+        favorites = $14
+      WHERE menu_id = $15
+      RETURNING *;
+    `;
+
+    const values = [
+      menuData.menu_category_id,
+      menuData.menu_name,
+      menuData.menu_type,
+      menuData.food_type,
+      menuData.variants ? JSON.stringify(menuData.variants) : null,
+      menuData.sell_price,
+      menuData.purchase_price,
+      menuData.hsn_code,
+      menuData.gst_tax,
+      menuData.tax_include_or_exclude,
+      menuData.menu_image,
+      menuData.menu_code,
+      menuData.menu_unit,
+      menuData.favorites,
+      menuId
+    ];
+
+    const result = await conn.query(query, values);
+    const updatedMenu = result.rows[0];
+
+    if (!updatedMenu) throw new Error("Menu item not found");
+
+    // ============================
+    //  UPDATE INVENTORY (if product)
+    // ============================
+    if (updatedMenu.menu_type.toLowerCase() === "product") {
+      const invCheck = await conn.query(
+        `SELECT * FROM tbl_inventory WHERE item_id = $1`,
+        [menuId]
+      );
+
+      if (invCheck.rows.length > 0) {
+        // Update inventory fields
+        await conn.query(
+          `UPDATE tbl_inventory
+           SET 
+             item_name = $1,
+             purchase_price = $2,
+             selling_price = $3,
+             item_unit = $4
+           WHERE item_id = $5`,
+          [
+            updatedMenu.menu_name,
+            updatedMenu.purchase_price,
+            updatedMenu.sell_price,
+            updatedMenu.menu_unit,
+            menuId,
+          ]
+        );
+      } else {
+        // Insert fresh inventory row
+        await conn.query(
+          `INSERT INTO tbl_inventory 
+            (zodu_id, branch_id, item_id, category_id, item_name, item_unit,
+            stock_qty, stock_alert, purchase_price, selling_price, last_purchase_date)
+           VALUES ($1,$2,$3,$4,$5,$6,0,$7,$8,$9,NOW())`,
+          [
+            updatedMenu.zodu_id,
+            updatedMenu.branch_id,
+            updatedMenu.menu_id,
+            updatedMenu.menu_category_id,
+            updatedMenu.menu_name,
+            updatedMenu.menu_unit,
+            updatedMenu.purchase_price,
+            updatedMenu.sell_price
+          ]
+        );
+      }
+    }
+
+    await conn.query("COMMIT");
+    return updatedMenu;
+
+  } catch (err) {
+    await conn.query("ROLLBACK");
+    throw new Error("Unable to update menu: " + err.message);
+  }
+};
+
+exports.deleteMenuItem = async (menuId) => {
+  try {
+    await conn.query("BEGIN");
+
+    // Get menu_type before delete
+    const menu = await conn.query(
+      `SELECT menu_type FROM tbl_menu_item WHERE menu_id = $1`,
+      [menuId]
+    );
+
+    if (menu.rows.length === 0) {
+      throw new Error("Menu item not found");
+    }
+
+    const menuType = menu.rows[0].menu_type;
+
+    // Delete menu item
+    await conn.query(`DELETE FROM tbl_menu_item WHERE menu_id = $1`, [menuId]);
+
+    // If product → delete from inventory table
+    if (menuType.toLowerCase() === "product") {
+      await conn.query(
+        `DELETE FROM tbl_inventory WHERE item_id = $1`,
+        [menuId]
+      );
+    }
+
+    await conn.query("COMMIT");
+    return { success: true, message: "Menu deleted successfully" };
+
+  } catch (err) {
+    await conn.query("ROLLBACK");
+    throw new Error("Unable to delete menu: " + err.message);
   }
 };
 

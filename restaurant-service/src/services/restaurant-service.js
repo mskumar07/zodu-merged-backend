@@ -716,6 +716,34 @@ async function update_Inventory(data){
   }
 }
 
+async function updateMenuItem(menuId, menuData) {
+  try {
+    const updated = await repository.updateMenuItem(menuId, menuData);
+    return {success:true, data:updated};
+  } catch (err) {
+        console.error("Unable to update menu item: " + err.message);
+     return {
+      success: false,
+      message: err.message,
+    };
+  }
+};
+
+
+async function deleteMenuItem(menuId) {
+  try {
+    const data =    await repository.deleteMenuItem(menuId);
+
+    return {success:true, data:data};
+  } catch (err) {
+    console.error("Unable to delete menu item: " + err.message);
+    return {
+      success: false,
+      message: err.message,
+    };
+  }
+};
+
 async function get_menuItem_data(branch_id, page, limit, search) {
   try {
     const allMenuItemData = await repository.get_menuItem_data(
@@ -1401,5 +1429,7 @@ getInventorySummary,
   getGST,
   addGST,
   updateGST,
-  deleteGST
+  deleteGST,
+  updateMenuItem,
+  deleteMenuItem
 };
