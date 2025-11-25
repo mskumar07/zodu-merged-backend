@@ -132,8 +132,9 @@ router.post("/add/branch", async (req, res) => {
 
 router.post("/upload", upload.single("file"), async (req, res) => {
   try {
+    console.log(req.file)
    const result =await service.uploadImg(req.file);
-   return res.status(200).json({ success: true, data: result });
+   return res.status(200).json({ data: result });
   } catch (err) {
     console.log(err)
     res.status(500).json({ error: err.message });
@@ -224,9 +225,9 @@ router.post(
     try {
       const menuData = req.body;
       // Add file buffer to menuData for upload
-      if (req.file) {
-        menuData.menu_image = req.file; // multer stores file in req.file
-      }
+      // if (req.file) {
+      //   menuData.menu_image = req.file; // multer stores file in req.file
+      // }
       await conn.query("BEGIN");
       const { errors, input } = await RequestValidator(
         schema.menu_item_create,
@@ -486,13 +487,48 @@ router.put("/api/update/inventory",async (req,res)=>{
     }
 })
 
-router.get("/get/category/:branch_id", async (req, res) => {
+router.get("/get/category/:type/:branch_id", async (req, res) => {
   
   try {
-     const { branch_id } = req.params;
-    const getCategoryData = await service.getCategoryData(branch_id);
+     const { branch_id,type } = req.params;
+    const getCategoryData = await service.getCategoryData(branch_id,type);
     if (!getCategoryData.success) return res.status(400).json({ message: getCategoryData.message });
     return res.status(201).json({ message : "Data Get Successfully" , Data: getCategoryData.data });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.post("/add/category", async (req, res) => {
+  try {
+    const { zodu_id, branch_id, name,type } = req.body;
+    const data = await service.addCategoryData(zodu_id, branch_id, name,type);
+    if (!data.success) return res.status(400).json({ message: data.message });
+    return res.status(201).json({ message: "Category added successfully", data: data.data });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.put("/update/category/:id", async (req, res) => {
+  try {
+    const { name,type,branch_id } = req.body;
+    const data = await service.updateCategoryData(req.params.id, name,type,branch_id);
+    if (!data.success) return res.status(400).json({ message: data.message });
+    return res.status(201).json({ message: "Category updated successfully", data: data.data });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.delete("/delete/category/:id/:branch_id", async (req, res) => {
+  try {
+    const data = await service.deleteCategoryData(req.params.id,req.params.branch_id);
+    if (!data.success) return res.status(400).json({ message: data.message });
+    return res.status(201).json({ message: "Category deleted successfully", data: data.data }); 
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: error.message });
@@ -701,9 +737,11 @@ router.delete("/delete/menu_item/:id", async (req, res) => {
 router.put("/update/menu_item/:id", async (req, res) => {
   try {
     const menuData = req.body;
+    console.log("con",menuData)
   
     const data = await service.updateMenuItem(req.params.id, menuData);
     if (!data.success) return res.status(400).json({ message: data.message });
+    console.log(data)
     return res.status(201).json({ message: "Menu item updated successfully", data: data.data });    
   } catch (error) { 
     console.error(error);
@@ -761,10 +799,35 @@ router.put("/update/unit/:id", async (req, res) => {
 });
 
 // ➤ DELETE UNIT
-router.delete("/delete/unit/:id", async (req, res) => {
+router.delete("/delete/unit/:id/:branch_id", async (req, res) => {
   try {
-    await service.deleteUnit(req.params.id);
-    return success(res, "Unit deleted successfully");
+    console.log(req.params)
+    const result = await service.deleteUnit(req.params.id,req.params.branch_id);
+
+    if (!result.success && result.used) {
+      return res.status(200).json(result);  // Return usage info
+    }
+
+    return res.status(200).json(result);
+
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.post("/replace/unit", async (req, res) => {
+  try {
+    const { old_unit_id, new_unit_id,branch_id } = req.body;
+    const result = await service.replaceUnit(old_unit_id, new_unit_id, branch_id);
+
+    if (!result.success)
+      return res.status(400).json({ message: result.message });
+
+    return res.status(201).json({
+      message: "Unit replaced successfully",
+      data: result.data,
+    });
+
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: error.message });
@@ -954,7 +1017,7 @@ router.post("/api/add/inventory", async (req,res)=>{
 router.get("/api/report/:type/:zodu_id/:branch_id", async (req, res) => {
   try {
     const { type, zodu_id, branch_id } = req.params;
-    const {
+    let {
       filterType = "year",
       start_date,
       end_date,
@@ -969,6 +1032,18 @@ router.get("/api/report/:type/:zodu_id/:branch_id", async (req, res) => {
     const validTypes = ["restaurant", "orders", "purchase", "expense", "inventory"];
     const validFilters = ["today", "week", "month", "year", "custom"];
     const validReportTypes = ["all", "item", "category"];  
+
+    if (type === "purchase" && sortBy === "order_date") {
+  sortBy = "purchase_date";
+}
+
+if (type === "expense" && sortBy === "order_date") {
+  sortBy = "expense_date";
+}
+
+if (type === "inventory" && sortBy === "order_date") {
+  sortBy = "created_at"; // adjust based on your table
+}
 
     // Validate report type
     if (!validTypes.includes(type)) {

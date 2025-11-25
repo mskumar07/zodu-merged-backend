@@ -76,10 +76,10 @@ const menu_item_create = Joi.object({
   sell_price: Joi.string().max(100).required(),
   purchase_price: Joi.string().max(100).allow(null),
   hsn_code: Joi.string().max(50).allow(null).optional(),
-  gst_tax: Joi.string().max(50).required(),
+  gst_tax: Joi.number().required(),
   tax_include_or_exclude: Joi.boolean().required(),
-  menu_image: Joi.object().allow(null).optional(),
-  menu_unit: Joi.string()
+  menu_image: Joi.string().allow(null).optional(),
+  menu_unit: Joi.number().required(),
 });
 
 // item schema for each order item

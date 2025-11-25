@@ -211,9 +211,9 @@ async function getData(zudo_id) {
   }
 }
 
-async function getCategoryData(branch_id) {
+async function getCategoryData(branch_id,type) {
   try {
-    const allCategoryData = await repository.get_category_data(branch_id);
+    const allCategoryData = await repository.get_category_data(branch_id,type);
     return {
       success: true,
       data: allCategoryData,
@@ -226,6 +226,54 @@ async function getCategoryData(branch_id) {
     };
   }
 }
+
+async function addCategoryData(zodu_id, branch_id, name, type) {
+  try {
+    const addedCategory = await repository.createCategory(zodu_id, branch_id, name, type);
+    return {
+      success: true,
+      data: addedCategory,
+    };
+  } catch (error) { 
+    console.error("Category Data adding Error", error);
+    return {
+      success: false,
+      message: err.message
+    };
+  }
+}
+
+async function updateCategoryData(id, name,type,branch_id) {
+  try {
+    const updatedCategory = await repository.updateCategory(id, name,type,branch_id);
+    return {
+      success: true,
+      data: updatedCategory,
+    };
+  } catch (error) {
+    console.error("Category Data updating Error", error); 
+    return {
+      success: false,
+      message: err.message
+    };
+  }
+}
+async function deleteCategoryData(id,branch_id) {
+  try {
+    const deletedCategory = await repository.deleteCategory(id,branch_id);
+    return {
+      success: true,
+      data: deletedCategory,
+    };
+  } catch (error) {
+    console.error("Category Data deleting Error", error);
+    return {
+      success: false,
+      message: err.message
+    };
+  }
+}
+
 
 async function getHoldData(branch_id) {
   try {
@@ -301,10 +349,11 @@ async function updateUnit(id, name, short_name) {
   return await repository.updateUnit(id, name, short_name);
 };
 
-async function deleteUnit(id) {
+async function deleteUnit(id, branch_id) {
   if (!id) throw new Error("id is required");
-  return await repository.deleteUnit(id);
+  return await repository.deleteUnit(id, branch_id);
 };
+
 async function getPurchaseCategoryData(branch_id) {
   try {
     const allCategoryData = await repository.get_purchase_category_data(branch_id);
@@ -717,7 +766,18 @@ async function update_Inventory(data){
 }
 
 async function updateMenuItem(menuId, menuData) {
+
   try {
+        console.log("test",menuData);
+
+     const CategoryCreate = await repository.createCategory(
+      menuData.zodu_id,
+      menuData.branch_id,
+      menuData.menu_category,
+      menuData.menu_type
+    );
+    menuData.menu_category_id = CategoryCreate.id;
+
     const updated = await repository.updateMenuItem(menuId, menuData);
     return {success:true, data:updated};
   } catch (err) {
@@ -729,6 +789,19 @@ async function updateMenuItem(menuId, menuData) {
   }
 };
 
+async function replaceUnit(old_unit_id, new_unit_id,branch_id) {
+  try {
+    const data =    await repository.replaceUnit(old_unit_id, new_unit_id, branch_id);
+
+    return {success:true, data:data};
+  } catch (err) {
+    console.error("Unable to replace unit: " + err.message);
+    return {
+      success: false,
+      message: err.message,
+    };
+  }
+};
 
 async function deleteMenuItem(menuId) {
   try {
@@ -939,21 +1012,21 @@ async function createMenuItem(menuData) {
     const CreateQr = await repository.createQRCode(menuData.item_code);
     menuData.qr_code_id = CreateQr.id;
 
-    if(menuData.menu_image){
-      const imgResult = await uploadImg(menuData.menu_image);
-      if (!imgResult.success) {
-      throw new Error(imgResult.message || "Image upload failed");
-    }
-      menuData.menu_image = imgResult.fileUrl;
-    }
+    // if(menuData.menu_image){
+    //   const imgResult = await uploadImg(menuData.menu_image);
+    //   if (!imgResult.success) {
+    //   throw new Error(imgResult.message || "Image upload failed");
+    // }
+    //   menuData.menu_image = imgResult.fileUrl;
+    // }
 
-    const CategoryCreate = await repository.createCategory(
-      menuData.zodu_id,
-      menuData.branch_id,
-      menuData.menu_category,
-      menuData.menu_type
-    );
-    menuData.menu_category_id = CategoryCreate.id;
+    // const CategoryCreate = await repository.createCategory(
+    //   menuData.zodu_id,
+    //   menuData.branch_id,
+    //   menuData.menu_category,
+    //   menuData.menu_type
+    // );
+    // menuData.menu_category_id = CategoryCreate.id;
 
     // Generate safe sequential menu_id (no extra table needed)
     const nextNumber = await repository.getNextMenuId(
@@ -1431,5 +1504,9 @@ getInventorySummary,
   updateGST,
   deleteGST,
   updateMenuItem,
-  deleteMenuItem
+  deleteMenuItem,
+  replaceUnit,
+  addCategoryData,
+  updateCategoryData,
+  deleteCategoryData,
 };

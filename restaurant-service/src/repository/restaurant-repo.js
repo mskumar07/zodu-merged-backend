@@ -90,14 +90,15 @@ exports.findMaxZoduId = async () => {
 //     'SELECT name,zodu_id,branch_id,active FROM tbl_category');
 // }
 
-exports.get_category_data = async (branch_id) => {
+exports.get_category_data = async (branch_id,type) => {
   try {
+    console.log(type)
     const query = `
-      SELECT name, zodu_id, branch_id, active
+      SELECT name, zodu_id, branch_id, active,id
       FROM tbl_category
-      WHERE branch_id = $1
+      WHERE branch_id = $1 AND type = $2
     `;
-    const result = await conn.query(query, [branch_id]);
+    const result = await conn.query(query, [branch_id,type]);
     return result.rows;
   } catch (err) {
     throw new Error("Unable to fetch category data: " + err.message);
@@ -527,21 +528,116 @@ exports.updateUnit = async (id, name, short_name) => {
   }
 };
 
-exports.deleteUnit = async (id) => {
+exports.deleteUnit = async (id, branch_id) => {
   try {
-    const query = `DELETE FROM tbl_units WHERE id = $1 RETURNING id`;
-    const { rows } = await conn.query(query, [id]);
+    // 1️⃣ Count usage in menu table (ID based)
+    const countMenu = await conn.query(
+      `SELECT COUNT(*) FROM tbl_menu_item 
+       WHERE menu_unit = $1 AND branch_id = $2`,
+      [id, branch_id]
+    );
+
+    // 2️⃣ Count usage in inventory table (ID based)
+    const countInv = await conn.query(
+      `SELECT COUNT(*) FROM tbl_inventory 
+       WHERE item_unit = $1 AND branch_id = $2`,
+      [id, branch_id]
+    );
+
+    const total =
+      Number(countMenu.rows[0].count) + Number(countInv.rows[0].count);
+
+    // 3️⃣ If used → return info
+    if (total > 0) {
+      return {
+        success: false,
+        used: true,
+        count: total,
+        message: "Unit is used and cannot be deleted",
+      };
+    }
+
+    // 4️⃣ Delete unit
+    const deleteQuery =
+      `DELETE FROM tbl_units 
+       WHERE id = $1 AND branch_id = $2 
+       RETURNING id`;
+
+    const { rows } = await conn.query(deleteQuery, [id, branch_id]);
 
     if (!rows.length) {
       throw new Error("Unit not found");
     }
 
-    return true;
+    return {
+      success: true,
+      used: false,
+      message: "Unit deleted successfully",
+    };
+
   } catch (err) {
-    if (err.message === "Unit not found") throw err;
-    throw new Error("Database error while deleting unit");
+    console.log(err);
+    throw new Error("Database error while deleting unit: " + err.message);
   }
 };
+
+
+exports.replaceUnit = async (oldUnitId, newUnitId,branch_id) => {
+  try {
+    await conn.query("BEGIN");
+
+    // 1️⃣ Ensure old unit exists
+    const oldUnit = await conn.query(
+      `SELECT id FROM tbl_units WHERE id = $1 AND branch_id = $2`,
+      [oldUnitId, branch_id]
+    );
+
+    if (oldUnit.rows.length === 0) {
+      throw new Error("Old unit not found");
+    }
+
+    // 2️⃣ Ensure new unit exists
+    const newUnit = await conn.query(
+      `SELECT id FROM tbl_units WHERE id = $1 AND branch_id = $2`,
+      [newUnitId, branch_id]
+    );
+
+    if (newUnit.rows.length === 0) {
+      throw new Error("New unit not found");
+    }
+
+    // 3️⃣ Replace unit in menu items
+    await conn.query(
+      `UPDATE tbl_menu_item 
+       SET menu_unit = $1 
+       WHERE menu_unit = $2 AND branch_id = $3`,
+      [newUnitId, oldUnitId, branch_id]
+    );
+
+    // 4️⃣ Replace unit in inventory
+    await conn.query(
+      `UPDATE tbl_inventory 
+       SET unit = $1 
+       WHERE unit = $2 AND branch_id = $3`,
+      [newUnitId, oldUnitId, branch_id]
+    );
+
+    // 5️⃣ Delete the old unit
+    await conn.query(
+      `DELETE FROM tbl_units WHERE id = $1 AND branch_id = $2`,
+      [oldUnitId, branch_id]
+    );
+
+    await conn.query("COMMIT");
+
+    return { success: true };
+
+  } catch (err) {
+    await conn.query("ROLLBACK");
+    throw new Error("Unable to replace unit: " + err.message);
+  }
+};
+
 
 exports.getGST = async (branch_id) => {
   try {
@@ -705,6 +801,7 @@ exports.get_menuItem_data = async (branch_id, page, limit, search) => {
         10 AS count,
         m.menu_image,
         m.menu_type,
+        m.menu_code,
 
         -- UNIT JOIN (correct column)
         m.menu_unit AS unit_id,
@@ -962,6 +1059,38 @@ exports.createCategory = async (zodu_id, branch_id, name, type) => {
     throw new Error("Unable to create Category: " + err.message);
   }
 }
+
+exports.updateCategory = async (id, name,type,branch_id) => {
+  try {
+    const query = `
+      UPDATE tbl_category
+      SET name = $1,type = $3,updated_at = CURRENT_TIMESTAMP
+      WHERE id = $2 AND branch_id = $4
+      RETURNING *;
+    `;
+    const values = [name, id,type,branch_id];
+    const result = await conn.query(query, values);
+    return result.rows[0];
+  } catch (err) {
+    throw new Error("Unable to update category: " + err.message);
+  }
+}
+
+exports.deleteCategory = async (id,branch_id) => {
+  try {
+    const query = `
+      DELETE FROM tbl_category
+      WHERE id = $1 AND branch_id = $2
+      RETURNING id;
+    `;
+    const values = [id,branch_id];
+    const result = await conn.query(query, values);
+    return result.rows[0];
+  } catch (err) {
+    throw new Error("Unable to delete category: " + err.message);
+  }
+}
+
 
 exports.createExpenseCategory = async (zodu_id, branch_id, name) => {
   console.log(zodu_id,branch_id,name)
@@ -1289,48 +1418,48 @@ exports.createMenuItem = async (menuData) => {
   }
 };
 
-exports.updateMenuItem = async (menuId, menuData) => {
+exports.updateMenuItem = async (menuId, data) => {
   try {
     await conn.query("BEGIN");
+const query = `
+  UPDATE tbl_menu_item
+  SET 
+    menu_category_id = $1,
+    menu_name = $2,
+    menu_type = $3,
+    food_type = $4,
+    variants = $5,
+    sell_price = $6,
+    purchase_price = $7,
+    hsn_code = $8,
+    gst_tax = $9,
+    tax_include_or_exclude = $10,
+    menu_image = $11,
+    menu_code = $12,
+    menu_unit = $13,
+    favorites = $14
+  WHERE menu_id = $15
+  RETURNING *;
+`;
 
-    const query = `
-      UPDATE tbl_menu_item
-      SET 
-        menu_category_id = $1,
-        menu_name = $2,
-        menu_type = $3,
-        food_type = $4,
-        variants = $5,
-        sell_price = $6,
-        purchase_price = $7,
-        hsn_code = $8,
-        gst_tax = $9,
-        tax_include_or_exclude = $10,
-        menu_image = $11,
-        menu_code = $12,
-        menu_unit = $13,
-        favorites = $14
-      WHERE menu_id = $15
-      RETURNING *;
-    `;
+const values = [
+  data.menu_category_id,           // $1
+  data.menu_name,               // $2
+  data.menu_type,               // $3
+  data.food_type,               // $4
+  JSON.stringify(data.variants),// $5
+  data.sell_price,              // $6
+  data.purchase_price,          // $7
+  data.hsn_code,                // $8
+  data.gst_tax,                 // $9
+  data.tax_include_or_exclude,  // $10
+  data.menu_image,              // $11 (URL or null)
+  data.menu_code,               // $12
+  data.menu_unit,               // $13 (unit id)
+  data.favorites ?? null,       // $14
+  menuId                       // $15 (WHERE menu_id = ?)
+];
 
-    const values = [
-      menuData.menu_category_id,
-      menuData.menu_name,
-      menuData.menu_type,
-      menuData.food_type,
-      menuData.variants ? JSON.stringify(menuData.variants) : null,
-      menuData.sell_price,
-      menuData.purchase_price,
-      menuData.hsn_code,
-      menuData.gst_tax,
-      menuData.tax_include_or_exclude,
-      menuData.menu_image,
-      menuData.menu_code,
-      menuData.menu_unit,
-      menuData.favorites,
-      menuId
-    ];
 
     const result = await conn.query(query, values);
     const updatedMenu = result.rows[0];
@@ -1367,21 +1496,23 @@ exports.updateMenuItem = async (menuId, menuData) => {
       } else {
         // Insert fresh inventory row
         await conn.query(
-          `INSERT INTO tbl_inventory 
-            (zodu_id, branch_id, item_id, category_id, item_name, item_unit,
-            stock_qty, stock_alert, purchase_price, selling_price, last_purchase_date)
-           VALUES ($1,$2,$3,$4,$5,$6,0,$7,$8,$9,NOW())`,
-          [
-            updatedMenu.zodu_id,
-            updatedMenu.branch_id,
-            updatedMenu.menu_id,
-            updatedMenu.menu_category_id,
-            updatedMenu.menu_name,
-            updatedMenu.menu_unit,
-            updatedMenu.purchase_price,
-            updatedMenu.sell_price
-          ]
-        );
+  `INSERT INTO tbl_inventory 
+    (zodu_id, branch_id, item_id, category_id, item_name, item_unit,
+     stock_qty, stock_alert, purchase_price, selling_price, last_purchase_date)
+    VALUES ($1,$2,$3,$4,$5,$6,0,$7,$8,$9,NOW())`,
+  [
+    updatedMenu.zodu_id,
+    updatedMenu.branch_id,
+    updatedMenu.menu_id,
+    updatedMenu.menu_category_id,
+    updatedMenu.menu_name,
+    updatedMenu.menu_unit,
+    0,                       // stock_alert
+    updatedMenu.purchase_price,
+    updatedMenu.sell_price
+  ]
+);
+
       }
     }
 
@@ -1414,8 +1545,7 @@ exports.deleteMenuItem = async (menuId) => {
     await conn.query(`DELETE FROM tbl_menu_item WHERE menu_id = $1`, [menuId]);
 
     // If product → delete from inventory table
-    if (menuType.toLowerCase() === "product") {
-      await conn.query(
+    if (menuType && menuType.toLowerCase() === "product") {      await conn.query(
         `DELETE FROM tbl_inventory WHERE item_id = $1`,
         [menuId]
       );
@@ -2348,144 +2478,143 @@ LIMIT 30;
     throw new Error(`Unable to fetch dashboard data: ${error.message}`);
   }
 };
-exports.getOrdersSummary = async (
-  zodu_id,
-  branch_id,
-  start_date,
-  end_date,
-  options = {}
-) => {
-  const {
-    page = 1,
-    limit = 10,
-    sortBy = "order_date",
-    sortOrder = "desc",
-    top = 5,
-    summaryType = "all",
-  } = options;
+// exports.getOrdersSummary = async (
+//   zodu_id,
+//   branch_id,
+//   start_date,
+//   end_date,
+//   options = {}
+// ) => {
+//   const {
+//     page = 1,
+//     limit = 10,
+//     sortBy = "order_date",
+//     sortOrder = "desc",
+//     top = 5,
+//     summaryType = "all",
+//   } = options;
 
 
-  const offset = (page - 1) * limit;
+//   const offset = (page - 1) * limit;
 
 
-  const query = `
-    WITH summary AS (
-      SELECT
-        COUNT(*) AS total_orders,
-        COALESCE(SUM(total_amt), 0) AS total_amount,
-        COALESCE(SUM(no_of_items), 0) AS total_quantity
-      FROM tbl_orders
-      WHERE zodu_id = $1
-        AND branch_id = $2
-        AND final_payment = TRUE
-        AND order_date BETWEEN $3 AND $4
-    ),
+//   const query = `
+//     WITH summary AS (
+//       SELECT
+//         COUNT(*) AS total_orders,
+//         COALESCE(SUM(total_amt), 0) AS total_amount,
+//         COALESCE(SUM(no_of_items), 0) AS total_quantity
+//       FROM tbl_orders
+//       WHERE zodu_id = $1
+//         AND branch_id = $2
+//         AND final_payment = TRUE
+//         AND order_date BETWEEN $3 AND $4
+//     ),
 
 
-    order_list AS (
-      SELECT
-        order_id,
-        customer_name,
-        total_amt,
-        payment_type,
-        order_date,
-        order_time,
-        order_type,
-        table_no
-      FROM tbl_orders
-      WHERE zodu_id = $1
-        AND branch_id = $2
-        AND final_payment = TRUE
-        AND order_date BETWEEN $3 AND $4
-      ORDER BY ${sortBy} ${sortOrder}
-      LIMIT $5 OFFSET $6
-    ),
+//     order_list AS (
+//       SELECT
+//         order_id,
+//         customer_name,
+//         total_amt,
+//         payment_type,
+//         order_date,
+//         order_time,
+//         order_type,
+//         table_no
+//       FROM tbl_orders
+//       WHERE zodu_id = $1
+//         AND branch_id = $2
+//         AND final_payment = TRUE
+//         AND order_date BETWEEN $3 AND $4
+//       ORDER BY ${sortBy} ${sortOrder}
+//       LIMIT $5 OFFSET $6
+//     ),
 
 
-    top_orders AS (
-      SELECT
-        order_id,
-        customer_name,
-        total_amt,
-        payment_type,
-        order_date,
-        order_time
-      FROM tbl_orders
-      WHERE zodu_id = $1
-        AND branch_id = $2
-        AND final_payment = TRUE
-        AND order_date BETWEEN $3 AND $4
-      ORDER BY total_amt DESC
-      LIMIT CASE WHEN $7 > 0 THEN $7 ELSE 5 END
-    ),
+//     top_orders AS (
+//       SELECT
+//         order_id,
+//         customer_name,
+//         total_amt,
+//         payment_type,
+//         order_date,
+//         order_time
+//       FROM tbl_orders
+//       WHERE zodu_id = $1
+//         AND branch_id = $2
+//         AND final_payment = TRUE
+//         AND order_date BETWEEN $3 AND $4
+//       ORDER BY total_amt DESC
+//       LIMIT CASE WHEN $7 > 0 THEN $7 ELSE 5 END
+//     ),
 
 
-    item_wise_summary AS (
-      SELECT
-        oi.item_name,
-        SUM(oi.qty) AS total_qty,
-        SUM(oi.qty * oi.price) AS total_amount
-      FROM tbl_ordered_items oi
-      JOIN tbl_orders o ON o.order_id = oi.order_id
-      WHERE o.zodu_id = $1
-        AND o.branch_id = $2
-        AND o.final_payment = TRUE
-        AND o.order_date BETWEEN $3 AND $4
-      GROUP BY oi.item_name
-      ORDER BY total_amount DESC
-    )
+//     item_wise_summary AS (
+//       SELECT
+//         oi.item_name,
+//         SUM(oi.qty) AS total_qty,
+//         SUM(oi.qty * oi.price) AS total_amount
+//       FROM tbl_ordered_items oi
+//       JOIN tbl_orders o ON o.order_id = oi.order_id
+//       WHERE o.zodu_id = $1
+//         AND o.branch_id = $2
+//         AND o.final_payment = TRUE
+//         AND o.order_date BETWEEN $3 AND $4
+//       GROUP BY oi.item_name
+//       ORDER BY total_amount DESC
+//     )
 
 
    
 
 
-    SELECT
-      s.*,
-      COALESCE((SELECT json_agg(ol) FROM order_list ol), '[]') AS orders,
-      COALESCE((SELECT json_agg(toq) FROM top_orders toq), '[]') AS top_orders,
-      COALESCE((SELECT json_agg(iws) FROM item_wise_summary iws), '[]') AS item_wise_summary
-    FROM summary s;
-  `;
+//     SELECT
+//       s.*,
+//       COALESCE((SELECT json_agg(ol) FROM order_list ol), '[]') AS orders,
+//       COALESCE((SELECT json_agg(toq) FROM top_orders toq), '[]') AS top_orders,
+//       COALESCE((SELECT json_agg(iws) FROM item_wise_summary iws), '[]') AS item_wise_summary
+//     FROM summary s;
+//   `;
 
 
-  const result = await conn.query(query, [
-    zodu_id,
-    branch_id,
-    start_date,
-    end_date,
-    limit,
-    offset,
-    top,
-  ]);
+//   const result = await conn.query(query, [
+//     zodu_id,
+//     branch_id,
+//     start_date,
+//     end_date,
+//     limit,
+//     offset,
+//     top,
+//   ]);
 
 
-  // ---- Pagination ----
-  const countQuery = `
-    SELECT COUNT(*) AS total
-    FROM tbl_orders
-    WHERE zodu_id = $1
-      AND branch_id = $2
-      AND final_payment = TRUE
-      AND order_date BETWEEN $3 AND $4
-  `;
-  const countResult = await conn.query(countQuery, [
-    zodu_id,
-    branch_id,
-    start_date,
-    end_date,
-  ]);
+//   const countQuery = `
+//     SELECT COUNT(*) AS total
+//     FROM tbl_orders
+//     WHERE zodu_id = $1
+//       AND branch_id = $2
+//       AND final_payment = TRUE
+//       AND order_date BETWEEN $3 AND $4
+//   `;
+//   const countResult = await conn.query(countQuery, [
+//     zodu_id,
+//     branch_id,
+//     start_date,
+//     end_date,
+//   ]);
 
 
-  const total = parseInt(countResult.rows[0]?.total || 0);
-  const totalPages = Math.ceil(total / limit);
+//   const total = parseInt(countResult.rows[0]?.total || 0);
+//   const totalPages = Math.ceil(total / limit);
 
 
-  return {
-    success: true,
-    data: result.rows[0],
-    pagination: { page, limit, total, totalPages },
-  };
-};
+//   return {
+//     success: true,
+//     data: result.rows[0],
+//     pagination: { page, limit, total, totalPages },
+//   };
+// };
 
 exports.getOrdersSummary = async (
   zodu_id,
