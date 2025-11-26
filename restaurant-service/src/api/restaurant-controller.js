@@ -425,16 +425,16 @@ router.post(
   async (req, res) => {
     try {
       const expenseData = req.body;
+console.log(expenseData)
 
-
-      if (req.file) {
-        expenseData.attachment_url = req.file; // multer stores file in req.file
-      }
-      expenseData.items = Array.isArray(expenseData.items)
-        ? expenseData.items
-        : expenseData.items
-          ? JSON.parse(expenseData.items)
-          : [];
+      // if (req.file) {
+      //   expenseData.attachment_url = req.file; // multer stores file in req.file
+      // }
+      // expenseData.items = Array.isArray(expenseData.items)
+      //   ? expenseData.items
+      //   : expenseData.items
+      //     ? JSON.parse(expenseData.items)
+      //     : [];
 
 
       await conn.query("BEGIN");
@@ -687,11 +687,11 @@ router.put("/api/update/inventory", async (req, res) => {
   }
 })
 
-router.get("/get/category/:branch_id", async (req, res) => {
+router.get("/get/category/:type/:branch_id", async (req, res) => {
   
   try {
-     const { branch_id } = req.params;
-    const getCategoryData = await service.getCategoryData(branch_id);
+     const { type,branch_id } = req.params;
+    const getCategoryData = await service.getCategoryData(type,branch_id);
     if (!getCategoryData.success) return res.status(400).json({ message: getCategoryData.message });
     return res.status(201).json({ message: "Data Get Successfully", Data: getCategoryData.data });
   } catch (error) {

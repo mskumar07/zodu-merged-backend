@@ -273,9 +273,10 @@ async function deleteExpense(id) {
   
 }
 
-async function getCategoryData(branch_id,type) {
+async function getCategoryData(type,branch_id) {
   try {
-    const allCategoryData = await repository.get_category_data(branch_id,type);
+    const allCategoryData = await repository.get_category_data(type,branch_id);
+
     return {
       success: true,
       data: allCategoryData,
@@ -851,7 +852,6 @@ async function update_Inventory(data) {
 async function updateMenuItem(menuId, menuData) {
 
   try {
-        console.log("test",menuData);
 
     //  const CategoryCreate = await repository.createCategory(
     //   menuData.zodu_id,

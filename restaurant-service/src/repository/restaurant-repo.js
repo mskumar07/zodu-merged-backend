@@ -90,20 +90,59 @@ exports.findMaxZoduId = async () => {
 //     'SELECT name,zodu_id,branch_id,active FROM tbl_category');
 // }
 
-exports.get_category_data = async (branch_id,type) => {
+exports.get_category_data = async (type,branch_id) => {
   try {
-    console.log(type)
+
     const query = `
-      SELECT name, zodu_id, branch_id, active,id
+      SELECT *
       FROM tbl_category
-      WHERE branch_id = $1 AND type = $2
+      WHERE type = $1 AND branch_id = $2
+      ORDER BY id ASC
     `;
-    const result = await conn.query(query, [branch_id,type]);
+
+    const result = await conn.query(query, [type, branch_id]);
+    console.log("RESULT:", result.rows);
+
     return result.rows;
   } catch (err) {
     throw new Error("Unable to fetch category data: " + err.message);
   }
 }
+
+exports.deleteMenuItem = async (menuId) => {
+  try {
+    await conn.query("BEGIN");
+
+    // Get menu_type before delete
+    const menu = await conn.query(
+      `SELECT menu_type FROM tbl_menu_item WHERE menu_id = $1`,
+      [menuId]
+    );
+
+    if (menu.rows.length === 0) {
+      throw new Error("Menu item not found");
+    }
+
+    const menuType = menu.rows[0].menu_type;
+
+    // Delete menu item
+    await conn.query(`DELETE FROM tbl_menu_item WHERE menu_id = $1`, [menuId]);
+
+    // If product → delete from inventory table
+    if (menuType && menuType.toLowerCase() === "product") {      await conn.query(
+        `DELETE FROM tbl_inventory WHERE item_id = $1`,
+        [menuId]
+      );
+    }
+
+    await conn.query("COMMIT");
+    return { success: true, message: "Menu deleted successfully" };
+
+  } catch (err) {
+    await conn.query("ROLLBACK");
+    throw new Error("Unable to delete menu: " + err.message);
+  }
+};
 
 exports.get_expense_category_data = async (branch_id) => {
   try {
@@ -114,7 +153,6 @@ exports.get_expense_category_data = async (branch_id) => {
 `;
 
     const result = await conn.query(query, [branch_id]);
-        console.log("check",result);
 
     return result.rows;
   } catch (err) {
@@ -132,7 +170,6 @@ exports.get_purchase_category_data = async (branch_id) => {
 `;
 
     const result = await conn.query(query, [branch_id]);
-    console.log("check", result);
 
     return result.rows;
   } catch (err) {
@@ -1077,7 +1114,7 @@ exports.get_menuItem_data = async (branch_id, page, limit, search) => {
 
         m.favorites,
         m.menu_id,
-        c.name AS category
+        c.name AS category,
         m.menu_category_id AS category_id
 
      FROM tbl_menu_item m
