@@ -7,7 +7,7 @@ const repository = require('../repository/restaurant-repo.js');
 const { PDFDocument } = require('pdf-lib');
 const moment = require('moment/moment');
 const { DB_HOSTNAME, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY, BUCKET_NAME } = require('../config/index.js');
-const {getDateRange} = require("../utils/Date_Folder/getDate.js");
+const { getDateRange } = require("../utils/Date_Folder/getDate.js");
 const { get } = require('../api/restaurant-controller.js');
 
 
@@ -138,13 +138,13 @@ async function updateCompanyService(zodu_id, updateData) {
 }
 
 
-async function updateMenuFav(menu_id,favorite){
-  try{
-    const updateFav = await repository.updateFavorite(menu_id,favorite)
-    return {success:true, data: updateFav}
+async function updateMenuFav(menu_id, favorite) {
+  try {
+    const updateFav = await repository.updateFavorite(menu_id, favorite)
+    return { success: true, data: updateFav }
 
-  }catch (err){
-     console.error("Error updating Menu:", err);
+  } catch (err) {
+    console.error("Error updating Menu:", err);
     return { success: false, message: err.message };
   }
 }
@@ -181,14 +181,58 @@ async function uploadMultiple(files) {
 }
 
 
+async function createExpenseItem (input) {
+  try {
+   
+    const data = await repository.createItem(input);
+    return {success:true,data:data}
+  } catch (error) {
+ console.error( error);
+    return { success: false, message: error.message };  }
+};
 
-async function updateMenustaus(menu_id,active){
-  try{
-    const updatestatus = await repository.updateActive(menu_id,active)
-    return {success:true, data: updatestatus}
+async function getExpAllItems (branch_id)  {
+  try {
+    const data = await repository.getItems(branch_id);
 
-  }catch (err){
-     console.error("Error updating Menu:", err);
+  
+    return {success:true,data:data}
+  } catch (error) {
+console.error( error);
+    return { success: false, message: error.message };  }  
+};
+
+// Update Item
+async function editExpItem (id,name,branch_id)  {
+  try {
+   
+
+    const updated = await repository.updateItem(id, name,branch_id);
+
+   return {success:true,data:updated} 
+  } catch (error) {
+console.error( error);
+    return { success: false, message: error.message };    }
+};
+
+// Delete Item
+async function removeExpItem (id) {
+  try {
+    const deleted = await repository.deleteItem(id);
+
+   return  { success: true, data: deleted }
+  } catch (error) {
+console.error( error);
+    return { success: false, message: error.message };    }
+};
+
+async function updateMenustaus(menu_id, active) {
+  try {
+    const updatestatus = await repository.updateActive(menu_id, active)
+    return { success: true, data: updatestatus }
+
+  } catch (err) {
+    console.error("Error updating Menu:", err);
     return { success: false, message: err.message };
   }
 }
@@ -209,6 +253,24 @@ async function getData(zudo_id) {
       message: err.message
     };
   }
+}
+
+async function deleteExpense(id) {
+  try{
+     const result = await repository.deleteExpense(id);
+ return {
+      success: true,
+      data: result,
+    };
+
+  }catch (error) {
+    console.error("Company Data Getting Error", error);
+    return {
+      success: false,
+      message: err.message
+    };
+  }
+  
 }
 
 async function getCategoryData(branch_id,type) {
@@ -477,31 +539,31 @@ async function deleteGST(id) {
 
 
 async function get_Report(data) {
-  try{
-    const ReportData= await repository.getReport(data)
- return {
+  try {
+    const ReportData = await repository.getReport(data)
+    return {
       success: true,
       data: ReportData,
     };
-  }catch(error){
-    console.error("Report error",error);
+  } catch (error) {
+    console.error("Report error", error);
     return {
       success: false,
       message: err.message
     };
   }
-  
+
 }
 
-async function get_dashboard(zodu_id,branch_id) {
-   try{
-    const DashboardData = await repository.getDashboard(zodu_id,branch_id)
- return {
+async function get_dashboard(zodu_id, branch_id) {
+  try {
+    const DashboardData = await repository.getDashboard(zodu_id, branch_id)
+    return {
       success: true,
       data: DashboardData,
     };
-  }catch(error){
-    console.error("Report error",error);
+  } catch (error) {
+    console.error("Report error", error);
     return {
       success: false,
       message: error.message
@@ -587,7 +649,7 @@ async function getInventorySummary(zodu_id, branch_id, filterType, start_date, e
 
 async function getVendorData(branch_id) {
   try {
-    const allVendorData = await repository.getVendor(branch_id); 
+    const allVendorData = await repository.getVendor(branch_id);
     return {
       success: true,
       data: allVendorData,
@@ -601,9 +663,9 @@ async function getVendorData(branch_id) {
   }
 }
 
-async function getInventoryListData(branch_id,type) {
+async function getInventoryListData(branch_id, type) {
   try {
-    const allInventoryData = await repository.get_inventory_list(branch_id,type);
+    const allInventoryData = await repository.get_inventory_list(branch_id, type);
     return {
       success: true,
       data: allInventoryData,
@@ -619,22 +681,22 @@ async function getInventoryListData(branch_id,type) {
 
 async function addin_Inventory(data) {
 
-  try{
-     const CategoryCreate = await repository.createCategory(
+  try {
+    const CategoryCreate = await repository.createCategory(
       data.zodu_id,
       data.branch_id,
       data.category
     );
     data.category = CategoryCreate.id;
     const InventoryData = await repository.addin_Inventory(data)
-    return{
-      success:true,
-      data:InventoryData
+    return {
+      success: true,
+      data: InventoryData
     }
 
-  }catch(err){
-    console.error("Inventory Update Failed",err);
-     return {
+  } catch (err) {
+    console.error("Inventory Update Failed", err);
+    return {
       success: false,
       message: err.message
     };
@@ -682,53 +744,74 @@ async function addHoldMenu(data) {
       success: false,
       message: error.message,
     };
-  } 
+  }
 }
 
-async function getPurchaseListData(
-  branch_id,
-  page,
-  limit,
-  search,
-  status,
-  start_date,
-  end_date,
-  category_id
-) {
+async function getPurchaseSummary(zodu_id, branch_id, filterType, start_date, end_date, page = 1, limit = 5) {
   try {
-    const allPurchaseData = await repository.get_purchase(
-      branch_id,
-      page,
-      limit,
-      search,
-      status,
-      start_date,
-      end_date,
-      category_id
-    );
+    const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
+    const reportData = await repository.getPurchaseSummary(zodu_id, branch_id, startDate, endDate);
+
+    const data = reportData?.data || {};
+    const topItems = Array.isArray(data.top_purchase_items) ? data.top_purchase_items : [];
+
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+    const paginatedTopItems = topItems.slice(skip, skip + limitNum);
 
     return {
       success: true,
-      data: allPurchaseData,
+      message: reportData?.message || "Purchase summary fetched successfully",
+      data: {
+        ...data,
+        top_purchase_items: paginatedTopItems,
+      },
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total: topItems.length,
+        totalPages: Math.ceil(topItems.length / limitNum),
+      },
     };
-
   } catch (error) {
-    console.error("Purchase Data getting Error", error);
-    return {
-      success: false,
-      message: error.message,
-    };
+    console.error("Service Error (getPurchaseSummary):", error);
+    return { success: false, message: error.message };
   }
 }
 
 
 
-
-async function getExpenseListData(params) {
+// --- Expense Summary ---
+async function getExpenseSummary(zodu_id, branch_id, filterType, start_date, end_date) {
   try {
-    const data = await repository.get_Expense(params);
-    return { success: true, data };
+    const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
+    const reportData = await repository.getExpenseSummary(zodu_id, branch_id, startDate, endDate);
+
+    return {
+      success: reportData?.success ?? true,
+      message: reportData?.message || "Expense summary fetched successfully",
+      data: reportData?.data || {},
+    };
   } catch (error) {
+    console.error("Service Error (getExpenseSummary):", error);
+    return { success: false, message: error.message };
+  }
+}
+
+// --- Inventory Summary ---
+async function getInventorySummary(zodu_id, branch_id, filterType, start_date, end_date) {
+  try {
+    const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
+    const reportData = await repository.getInventorySummary(zodu_id, branch_id, startDate, endDate);
+
+    return {
+      success: reportData?.success ?? true,
+      message: reportData?.message || "Inventory summary fetched successfully",
+      data: reportData?.data || {},
+    };
+  } catch (error) {
+    console.error("Service Error (getInventorySummary):", error);
     return { success: false, message: error.message };
   }
 }
@@ -751,12 +834,12 @@ async function getExpenseListData(params) {
 //   }
 // }
 
-async function update_Inventory(data){
-  try{
- const updatedInventory = await repository.updateInventory(data)
-    return {success:true, data: updatedInventory}
-    
-  }catch(error){
+async function update_Inventory(data) {
+  try {
+    const updatedInventory = await repository.updateInventory(data)
+    return { success: true, data: updatedInventory }
+
+  } catch (error) {
     console.error("Menu Item Data getting Error", error);
     return {
       success: false,
@@ -770,13 +853,13 @@ async function updateMenuItem(menuId, menuData) {
   try {
         console.log("test",menuData);
 
-     const CategoryCreate = await repository.createCategory(
-      menuData.zodu_id,
-      menuData.branch_id,
-      menuData.menu_category,
-      menuData.menu_type
-    );
-    menuData.menu_category_id = CategoryCreate.id;
+    //  const CategoryCreate = await repository.createCategory(
+    //   menuData.zodu_id,
+    //   menuData.branch_id,
+    //   menuData.menu_category,
+    //   menuData.menu_type
+    // );
+    // menuData.menu_category_id = CategoryCreate.id;
 
     const updated = await repository.updateMenuItem(menuId, menuData);
     return {success:true, data:updated};
@@ -905,7 +988,7 @@ async function get_ordered_data(data) {
 }
 
 async function update_Final_payment(data) {
-   try {
+  try {
     const orderData = await repository.updateFinalPayment(data);
 
     return {
@@ -951,13 +1034,13 @@ async function createBranch(branchData) {
     // Generate new zodu_id if not provided
     let BranchId = await repository.findMaxBranchID(branchData.zodu_id);
     console.log("BranchId", BranchId.rows);
-    if (BranchId.rows[0].max === null || BranchId.rows[0].max === undefined) { 
+    if (BranchId.rows[0].max === null || BranchId.rows[0].max === undefined) {
       branchData.branch_id = branchData.zodu_id + "B1";
       console.log("first branch id", branchData.branch_id);
     }
     else if (BranchId.rows[0].max) {
       console.log("Not first branch id", BranchId.rows[0].max);
-      const maxBranchId = BranchId.rows[0].max; 
+      const maxBranchId = BranchId.rows[0].max;
       const match = maxBranchId.match(/B(\d+)$/);
       const nextNum = match ? parseInt(match[1], 10) + 1 : 1;
       branchData.branch_id = maxBranchId.replace(/B\d+$/, "B" + nextNum);
@@ -1008,17 +1091,17 @@ async function createBranch(branchData) {
 
 async function createMenuItem(menuData) {
   try {
-    
+
     const CreateQr = await repository.createQRCode(menuData.item_code);
     menuData.qr_code_id = CreateQr.id;
 
-    // if(menuData.menu_image){
-    //   const imgResult = await uploadImg(menuData.menu_image);
-    //   if (!imgResult.success) {
-    //   throw new Error(imgResult.message || "Image upload failed");
-    // }
-    //   menuData.menu_image = imgResult.fileUrl;
-    // }
+    if(menuData.menu_image){
+      const imgResult = await uploadImg(menuData.menu_image);
+      if (!imgResult.success) {
+      throw new Error(imgResult.message || "Image upload failed");
+    }
+      menuData.menu_image = imgResult.fileUrl;
+    }
 
     // const CategoryCreate = await repository.createCategory(
     //   menuData.zodu_id,
@@ -1035,8 +1118,8 @@ async function createMenuItem(menuData) {
     );
     menuData.menu_id = `${menuData.zodu_id}-${menuData.branch_id}-${nextNumber}`;
     console.log(nextNumber)
-    menuData.menu_code=menuData.item_code
-    menuData.favorites=false
+    menuData.menu_code = menuData.item_code
+    menuData.favorites = false
 
     const newMenu = await repository.createMenuItem(menuData);
 
@@ -1054,26 +1137,141 @@ async function createMenuItem(menuData) {
   }
 }
 
+async function editMenuItem(menuId, menuData) {
+  try {
+    // 1. Fetch existing menu item
+    const existingMenu = await repository.getMenuById(menuId);
+    if (!existingMenu) {
+      return { success: false, message: "Menu item not found" };
+    }
+
+    // 2. Handle QR code: only if item_code changed
+    if (menuData.item_code && menuData.item_code !== existingMenu.menu_code) {
+      const qrResult = await repository.createQRCode(menuData.item_code);
+      menuData.qr_code_id = qrResult.id;
+    } else {
+      menuData.qr_code_id = existingMenu.qr_code_id;
+    }
+
+    // 3. Handle image upload: if new image provided
+    if (menuData.menu_image) {
+      const imgResult = await uploadImg(menuData.menu_image);
+      if (!imgResult.success) {
+        throw new Error(imgResult.message || "Image upload failed");
+      }
+      menuData.menu_image = imgResult.fileUrl;
+    } else {
+      // Keep old image if not provided
+      menuData.menu_image = existingMenu.menu_image;
+    }
+
+    // 4. Handle category update: if menu_category provided
+    if (menuData.menu_category) {
+      const category = await repository.createCategory(
+        menuData.zodu_id || existingMenu.zodu_id,
+        menuData.branch_id || existingMenu.branch_id,
+        menuData.menu_category
+      );
+      menuData.menu_category_id = category.id;
+    } else {
+      menuData.menu_category_id = existingMenu.menu_category_id;
+    }
+
+    // 5. Prepare updated fields: keep old values if not provided
+    const updatedMenu = {
+      ...existingMenu,
+      ...menuData, // overwrite only fields provided
+      menu_id: existingMenu.menu_id, // menu_id never changes
+      menu_code: menuData.item_code || existingMenu.menu_code
+    };
+
+    // 6. Update menu in DB
+    const result = await repository.updateMenuItem(menuId, updatedMenu);
+
+    return {
+      success: true,
+      message: "Menu item updated successfully",
+      data: result
+    };
+
+  } catch (err) {
+    console.error("Error updating menu item:", err);
+    return {
+      success: false,
+      message: err.message
+    };
+  }
+}
+
+
 async function createOrder(orderData) {
 
   try {
-const newOrder = await repository.createOrder(orderData);
-const neworderItem=await repository.createOrderedItems(orderData);
+    const newOrder = await repository.createOrder(orderData);
+    const neworderItem = await repository.createOrderedItems(orderData);
     let newKot = null;
-if(orderData.order_type==="Dine-In"){
- newKot = await repository.createKOT(orderData);
-}
-return {
+    if (orderData.order_type === "Dine-In") {
+      newKot = await repository.createKOT(orderData);
+    }
+    return {
       success: true,
       message: "Order created successfully",
-      data: {newOrder,neworderItem,newKot},
+      data: { newOrder, neworderItem, newKot },
     };
-  }catch(err){
-     console.error("Error inserting Order:", err);
+  } catch (err) {
+    console.error("Error inserting Order:", err);
     return {
       success: false,
       message: err.message,
     };
+  }
+}
+
+async function getPurchaseListData(
+  branch_id,
+  page,
+  limit,
+  search,
+  status,
+  start_date,
+  end_date,
+  category_id
+) {
+  try {
+    const allPurchaseData = await repository.get_purchase(
+      branch_id,
+      page,
+      limit,
+      search,
+      status,
+      start_date,
+      end_date,
+      category_id
+    );
+
+    return {
+      success: true,
+      data: allPurchaseData,
+    };
+
+  } catch (error) {
+    console.error("Purchase Data getting Error", error);
+    return {
+      success: false,
+      message: error.message,
+    };
+  }
+}
+
+
+
+
+async function getExpenseListData(params) {
+  try {
+    const data = await repository.get_Expense(params);
+    return { success: true, data };
+  } catch (error) {
+    return { success: false, message: error.message };
   }
 }
 
@@ -1165,14 +1363,13 @@ async function createPurchaseOrder(purchaseOrderData) {
 
 async function createExpense(expenseData) {
   try {
-    console.log("testr",expenseData)
-      const CategoryCreate = await repository.createExpenseCategory(
+    const CategoryCreate = await repository.createExpenseCategory(
       expenseData.zodu_id,
       expenseData.branch_id,
       expenseData.category
     );
     expenseData.category = CategoryCreate.id;
-      
+
     await repository.addExpense(expenseData);
 
     return {
@@ -1187,6 +1384,103 @@ async function createExpense(expenseData) {
     };
   };
 
+}
+
+async function editExpense(expenseId, expenseData) {
+  try {
+    // 1. Fetch existing expense
+    const existingExpense = await repository.getExpenseById(expenseId);
+    // console.log(existingExpense);
+    if (!existingExpense) {
+      return { success: false, message: "Expense not found" };
+    }
+    // 5. Update expense in DB
+    const result = await repository.edit_expense(expenseId,expenseData );
+
+    console.log("res",result)
+
+    return {
+      success: true,
+      message: "Expense updated successfully",
+      data: result
+    };
+
+  } catch (err) {
+    console.error("Error updating expense:", err);
+    return {
+      success: false,
+      message: err.message
+    };
+  }
+}
+
+async function getPurchaseSummary(zodu_id, branch_id, filterType, start_date, end_date, page = 1, limit = 5) {
+  try {
+    const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
+    const reportData = await repository.getPurchaseSummary(zodu_id, branch_id, startDate, endDate);
+
+    const data = reportData?.data || {};
+    const topItems = Array.isArray(data.top_purchase_items) ? data.top_purchase_items : [];
+
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+    const paginatedTopItems = topItems.slice(skip, skip + limitNum);
+
+    return {
+      success: true,
+      message: reportData?.message || "Purchase summary fetched successfully",
+      data: {
+        ...data,
+        top_purchase_items: paginatedTopItems,
+      },
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total: topItems.length,
+        totalPages: Math.ceil(topItems.length / limitNum),
+      },
+    };
+  } catch (error) {
+    console.error("Service Error (getPurchaseSummary):", error);
+    return { success: false, message: error.message };
+  }
+}
+
+
+
+// --- Expense Summary ---
+async function getExpenseSummary(zodu_id, branch_id, filterType, start_date, end_date) {
+  try {
+    const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
+    const reportData = await repository.getExpenseSummary(zodu_id, branch_id, startDate, endDate);
+
+    return {
+      success: reportData?.success ?? true,
+      message: reportData?.message || "Expense summary fetched successfully",
+      data: reportData?.data || {},
+    };
+  } catch (error) {
+    console.error("Service Error (getExpenseSummary):", error);
+    return { success: false, message: error.message };
+  }
+}
+
+// --- Inventory Summary ---
+async function getInventorySummary(zodu_id, branch_id, filterType, start_date, end_date) {
+  try {
+    const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
+    const reportData = await repository.getInventorySummary(zodu_id, branch_id, startDate, endDate);
+
+    return {
+      success: reportData?.success ?? true,
+      message: reportData?.message || "Inventory summary fetched successfully",
+      data: reportData?.data || {},
+    };
+  } catch (error) {
+    console.error("Service Error (getInventorySummary):", error);
+    return { success: false, message: error.message };
+  }
 }
 
 
@@ -1760,6 +2054,7 @@ module.exports = {
   getData,
   createBranch,
   createMenuItem,
+  editMenuItem,
   getCategoryData,
   get_menuItem_data,
   updateCompanyService,
@@ -1775,12 +2070,13 @@ module.exports = {
   getPurchaseListData,
   getExpenseListData,
   createExpense,
+  editExpense,
   update_Inventory,
   get_Report,
   addin_Inventory,
   update_Final_payment,
   get_dashboard,
-getInventorySummary,
+  getInventorySummary,
   getPurchaseSummary,
   getExpenseCategoryData,
   addHoldMenu,
@@ -1805,4 +2101,9 @@ getInventorySummary,
   addCategoryData,
   updateCategoryData,
   deleteCategoryData,
+  createExpenseItem,
+  getExpAllItems,
+  removeExpItem,
+  editExpItem,
+  deleteExpense
 };

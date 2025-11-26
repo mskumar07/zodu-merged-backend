@@ -2,7 +2,7 @@
 const Joi = require("joi");
 
 const company_create = Joi.object({
-    zodu_id: Joi.required(),
+  zodu_id: Joi.required(),
   restaurant_name: Joi.string().min(2).max(255).required(),
   // owner_admin_name: Joi.string().max(100).required(),
   mobile_no: Joi.number().min(15).required(), // allows 10-15 digit numbers,
@@ -42,7 +42,7 @@ const branch_create = Joi.object({
   branch_mobile_no: Joi.string().pattern(/^[0-9]{10,15}$/).required(),
   branch_mail_id: Joi.string().email().max(100).required(),
   branch_city: Joi.string().max(50).required(),
-  branch_pincode:  Joi.string().pattern(/^[0-9]{5,10}$/).required(),
+  branch_pincode: Joi.string().pattern(/^[0-9]{5,10}$/).required(),
   branch_district: Joi.string().max(50).required(),
   branch_state: Joi.string().max(50).required(),
   branch_image: Joi.string().uri(), // Optional image URL
@@ -68,8 +68,8 @@ const menu_item_create = Joi.object({
   menu_name: Joi.string().max(100).required(),
   food_type: Joi.string().max(25).allow(null),
   variants: Joi.alternatives().try(
-    Joi.array().items(Joi.object()),   
-    Joi.string()                      
+    Joi.array().items(Joi.object()),
+    Joi.string()
   ).allow(null),
   item_code: Joi.string().required(), 
   menu_category_id: Joi.number().required(),
@@ -82,18 +82,40 @@ const menu_item_create = Joi.object({
   menu_unit: Joi.number().required(),
 });
 
+const menu_item_update = Joi.object({
+  zodu_id: Joi.string().max(50).optional(),
+  branch_id: Joi.string().max(50).optional(),
+  menu_type: Joi.string().max(100).optional(),
+  menu_name: Joi.string().max(100).optional(),
+  food_type: Joi.string().max(25).allow(null).optional(),
+  variants: Joi.alternatives().try(
+    Joi.array().items(Joi.object()),
+    Joi.string()
+  ).allow(null).optional(),
+  item_code: Joi.string().optional(),
+  menu_category: Joi.string().max(100).optional(),
+  sell_price: Joi.string().max(100).optional(),
+  purchase_price: Joi.string().max(100).allow(null).optional(),
+  hsn_code: Joi.string().max(50).allow(null).optional(),
+  gst_tax: Joi.string().max(50).optional(),
+  tax_include_or_exclude: Joi.boolean().optional(),
+  menu_image: Joi.object().allow(null).optional(),
+  menu_unit: Joi.string().optional()
+});
+
+
 // item schema for each order item
-const inventorySchema = 
-      Joi.object({
-        inventory_id: Joi.number().required(),
-        stock_qty: Joi.number().optional(),
-        stock_alert: Joi.number().optional(),
-        selling_price: Joi.number().optional(),
-        purchase_price: Joi.number().optional(),
-        last_purchase_date: Joi.date().optional(),
-      });
-    
-    
+const inventorySchema =
+  Joi.object({
+    inventory_id: Joi.number().required(),
+    stock_qty: Joi.number().optional(),
+    stock_alert: Joi.number().optional(),
+    selling_price: Joi.number().optional(),
+    purchase_price: Joi.number().optional(),
+    last_purchase_date: Joi.date().optional(),
+  });
+
+
 // item schema
 const itemSchema = Joi.object({
   menu_id: Joi.string().max(100).required(),
@@ -107,23 +129,23 @@ const itemSchema = Joi.object({
   variant_id: Joi.string().max(100).optional().allow(null, ''),
 });
 // order schema
- const order_create = Joi.object({
+const order_create = Joi.object({
   zodu_id: Joi.string().max(50).required(),
   branch_id: Joi.string().max(50).required(),
-  table_no: Joi.number().integer().allow('',null),
-  kot_no:Joi.string(),
-  no_of_items:Joi.number().integer().required(),
+  table_no: Joi.number().integer().allow('', null),
+  kot_no: Joi.string(),
+  no_of_items: Joi.number().integer().required(),
   order_type: Joi.string().valid('Dine-In', 'Takeaway', 'Delivery').required(),
-  payment_type:Joi.string().allow('',null),
-  order_id:Joi.string().max(50),
+  payment_type: Joi.string().allow('', null),
+  order_id: Joi.string().max(50),
   customer_name: Joi.string().max(100).allow('', null),
   customer_phone: Joi.string()
     .pattern(/^[0-9]{7,15}$/)
     .allow('', null),
   total_amt: Joi.number().precision(2).min(0).required(),
-items: Joi.array().items(itemSchema).min(1).required(),
+  items: Joi.array().items(itemSchema).min(1).required(),
   final_payment: Joi.boolean().required(),
-   order_date: Joi.alternatives().try(
+  order_date: Joi.alternatives().try(
     Joi.date().iso(), // '2025-10-09'
     Joi.string().pattern(/^\d{2}-\d{2}-\d{4}$/) // '09-10-2025'
   ).required(),
@@ -146,7 +168,7 @@ const purchase_order_create = Joi.object({
   attachment_url: Joi.array().items(Joi.object()).optional(),
   payment_type: Joi.string().valid("cash", "card", "upi", "credit").required(),
   notes: Joi.string().allow("", null),
-  
+
   // array of items
   items: Joi.array()
     .items(
@@ -165,6 +187,37 @@ const purchase_order_create = Joi.object({
     .required(),
 });
 
+const purchase_order_update = Joi.object({
+  zodu_id: Joi.string().max(50).optional(),
+  branch_id: Joi.string().max(50).optional(),
+  vendor: Joi.string().optional(),
+  category: Joi.string().max(100).optional(),
+  purchase_date: Joi.date().optional(),
+  total_amount: Joi.number().precision(2).min(0).optional(),
+  paid_amount: Joi.number().precision(2).min(0).optional(),
+  purchase_type: Joi.string().max(50).optional(),
+  attachment_url: Joi.array().items(Joi.object()).optional(),
+  payment_type: Joi.string().valid("cash", "card", "upi", "credit").optional(),
+  notes: Joi.string().allow("", null).optional(),
+
+  // array of items
+  items: Joi.array()
+    .items(
+      Joi.object({
+        id: Joi.string().required(),
+        name: Joi.string().required(),
+        qty: Joi.number().min(1).required(),
+        unit: Joi.string().max(50).required(),
+        purchase_price: Joi.number().precision(2).min(0).required(),
+        selling_price: Joi.number().precision(2).min(0),
+        gst_tax: Joi.number().min(0),
+        total_price: Joi.number().precision(2).min(0).required(),
+      })
+    )
+    .min(1)
+    .optional(),
+});
+
 const expense_data = Joi.object({
   zodu_id: Joi.string().max(50).required(),
   branch_id: Joi.string().max(50).required(),
@@ -175,7 +228,7 @@ const expense_data = Joi.object({
   attachment_url: Joi.object().optional().allow(null),
   payment_type: Joi.string().valid("cash", "card", "upi", "credit").required(),
   description: Joi.string().allow("", null),
-  
+
   // array of items
   items: Joi.array()
     .items(
@@ -189,6 +242,37 @@ const expense_data = Joi.object({
     .min(1)
     .required(),
 });
+
+const expense_data_update = Joi.object({
+  zodu_id: Joi.string().max(50).optional(),
+  branch_id: Joi.string().max(50).optional(),
+  category: Joi.number().optional(),
+  expense_date: Joi.date().optional(),
+  total_amount: Joi.number().precision(2).min(0).optional(),
+  paid_amount: Joi.number().precision(2).min(0).optional(),
+  attachment_url: Joi.array().optional().allow(null),
+  payment_type: Joi.string().valid("cash", "card", "upi", "credit").optional(),
+  description: Joi.string().allow("", null).optional(),
+
+  // array of items
+  items: Joi.array()
+    .items(
+      Joi.object({
+        id: Joi.string().required(),
+        name: Joi.string().required(),
+        qty: Joi.number().min(1).required(),
+        purchase_price: Joi.number().precision(2).min(0).required(),
+      })
+    )
+    .min(1)
+    .optional(),
+});
+
+const expense_item = Joi.object({
+  name:Joi.string().max(100).required(),
+  branch_id:Joi.string().max(100).required(),
+  zodu_id:Joi.string().max(100).required(),
+})
 
 const vendor_create = Joi.object({
   zodu_id: Joi.string().max(50).required().messages({
@@ -233,34 +317,34 @@ const vendor_create = Joi.object({
   }),
 });
 
- const reportSchema = Joi.object({
-    zodu_id: Joi.string().required(),
-    branch_id: Joi.string().required(),
-    type: Joi.string()
-      .valid("order", "expense", "inventory", "purchase")
-      .required(),
-    filter: Joi.string()
-      .valid("daily", "weekly", "monthly", "yearly", "custom",)
-      .default("daily"),
-    wiseData: Joi.string().valid("item","category","date").default("normal"),
-    start_date: Joi.date().optional(),
-    end_date: Joi.date().optional(),
-  });
+const reportSchema = Joi.object({
+  zodu_id: Joi.string().required(),
+  branch_id: Joi.string().required(),
+  type: Joi.string()
+    .valid("order", "expense", "inventory", "purchase")
+    .required(),
+  filter: Joi.string()
+    .valid("daily", "weekly", "monthly", "yearly", "custom",)
+    .default("daily"),
+  wiseData: Joi.string().valid("item", "category", "date").default("normal"),
+  start_date: Joi.date().optional(),
+  end_date: Joi.date().optional(),
+});
 
-  const Inventory = Joi.object({
-    zodu_id: Joi.string().required(),
-    branch_id: Joi.string().required(),
-      category: Joi.string().max(100).required(),
+const Inventory = Joi.object({
+  zodu_id: Joi.string().required(),
+  branch_id: Joi.string().required(),
+  category: Joi.string().max(100).required(),
 
-    item_name: Joi.string().max(50).required(),
-    item_unit: Joi.string().required(),
-     stock_qty: Joi.number().required(),
-        stock_alert: Joi.number().required(),
-        purchase_price: Joi.number().required(),
-        last_purchase_date: Joi.date().required(),
-  })
+  item_name: Joi.string().max(50).required(),
+  item_unit: Joi.string().required(),
+  stock_qty: Joi.number().required(),
+  stock_alert: Joi.number().required(),
+  purchase_price: Joi.number().required(),
+  last_purchase_date: Joi.date().required(),
+})
 
-  const holdSchema = Joi.object({
+const holdSchema = Joi.object({
   zodu_id: Joi.string().max(100).required(),
   branch_id: Joi.string().max(100).required(),
   orderType: Joi.string().max(100).required(),
@@ -288,13 +372,17 @@ module.exports = {
   company_create,
   branch_create,
   menu_item_create,
+  menu_item_update,
   update_company,
   order_create,
   purchase_order_create,
+  purchase_order_update,
   vendor_create,
   expense_data,
+  expense_data_update,
   inventorySchema,
   reportSchema,
   Inventory,
-  holdSchema
+  holdSchema,
+  expense_item
 };

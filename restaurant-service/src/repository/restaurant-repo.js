@@ -5,7 +5,7 @@ const conn = require('../database/connection');
 // ========== Company Repository Functions ==========
 
 
-exports.createCompany= async (companyData) => {
+exports.createCompany = async (companyData) => {
   const query = `
   INSERT INTO tbl_company_registration (
     zodu_id, restaurant_name, mobile_no, mail_id
@@ -108,7 +108,7 @@ exports.get_category_data = async (branch_id,type) => {
 exports.get_expense_category_data = async (branch_id) => {
   try {
     const query = `
-  SELECT category_name AS name, zodu_id, branch_id
+  SELECT category_name AS name, zodu_id, branch_id,id
   FROM tbl_expense_category
   WHERE branch_id = $1
 `;
@@ -132,7 +132,7 @@ exports.get_purchase_category_data = async (branch_id) => {
 `;
 
     const result = await conn.query(query, [branch_id]);
-        console.log("check",result);
+    console.log("check", result);
 
     return result.rows;
   } catch (err) {
@@ -140,7 +140,115 @@ exports.get_purchase_category_data = async (branch_id) => {
   }
 }
 
-exports.get_inventory_list = async (branch_id,type) => {
+exports.updateMenuItem = async (menuId, data) => {
+  try {
+    await conn.query("BEGIN");
+const query = `
+  UPDATE tbl_menu_item
+  SET 
+    menu_category_id = $1,
+    menu_name = $2,
+    menu_type = $3,
+    food_type = $4,
+    variants = $5,
+    sell_price = $6,
+    purchase_price = $7,
+    hsn_code = $8,
+    gst_tax = $9,
+    tax_include_or_exclude = $10,
+    menu_image = $11,
+    menu_code = $12,
+    menu_unit = $13,
+    favorites = $14
+  WHERE menu_id = $15
+  RETURNING *;
+`;
+
+const values = [
+  data.menu_category_id,           // $1
+  data.menu_name,               // $2
+  data.menu_type,               // $3
+  data.food_type,               // $4
+  JSON.stringify(data.variants),// $5
+  data.sell_price,              // $6
+  data.purchase_price,          // $7
+  data.hsn_code,                // $8
+  data.gst_tax,                 // $9
+  data.tax_include_or_exclude,  // $10
+  data.menu_image,              // $11 (URL or null)
+  data.menu_code,               // $12
+  data.menu_unit,               // $13 (unit id)
+  data.favorites ?? null,       // $14
+  menuId                       // $15 (WHERE menu_id = ?)
+];
+
+
+    const result = await conn.query(query, values);
+    const updatedMenu = result.rows[0];
+
+    if (!updatedMenu) throw new Error("Menu item not found");
+
+    // ============================
+    //  UPDATE INVENTORY (if product)
+    // ============================
+    if (updatedMenu.menu_type.toLowerCase() === "product") {
+      const invCheck = await conn.query(
+        `SELECT * FROM tbl_inventory WHERE item_id = $1`,
+        [menuId]
+      );
+
+      if (invCheck.rows.length > 0) {
+        // Update inventory fields
+        await conn.query(
+          `UPDATE tbl_inventory
+           SET 
+             item_name = $1,
+             purchase_price = $2,
+             selling_price = $3,
+             item_unit = $4
+           WHERE item_id = $5`,
+          [
+            updatedMenu.menu_name,
+            updatedMenu.purchase_price,
+            updatedMenu.sell_price,
+            updatedMenu.menu_unit,
+            menuId,
+          ]
+        );
+      } else {
+        // Insert fresh inventory row
+        await conn.query(
+  `INSERT INTO tbl_inventory 
+    (zodu_id, branch_id, item_id, category_id, item_name, item_unit,
+     stock_qty, stock_alert, purchase_price, selling_price, last_purchase_date)
+    VALUES ($1,$2,$3,$4,$5,$6,0,$7,$8,$9,NOW())`,
+  [
+    updatedMenu.zodu_id,
+    updatedMenu.branch_id,
+    updatedMenu.menu_id,
+    updatedMenu.menu_category_id,
+    updatedMenu.menu_name,
+    updatedMenu.menu_unit,
+    0,                       // stock_alert
+    updatedMenu.purchase_price,
+    updatedMenu.sell_price
+  ]
+);
+
+      }
+    }
+
+    await conn.query("COMMIT");
+    return updatedMenu;
+
+  } catch (err) {
+    await conn.query("ROLLBACK");
+    throw new Error("Unable to update menu: " + err.message);
+  }
+};
+
+
+exports.get_inventory_list = async (branch_id, type) => {
   try {
     const query = `
       SELECT 
@@ -152,7 +260,7 @@ exports.get_inventory_list = async (branch_id,type) => {
       LEFT JOIN tbl_menu_item m ON i.item_id = m.menu_id
       WHERE i.branch_id = $1 AND i.inventory_type = $2
     `;
-    const result = await conn.query(query, [branch_id,type]);
+    const result = await conn.query(query, [branch_id, type]);
     return result.rows;
   } catch (err) {
     throw new Error("Unable to fetch inventory data: " + err.message);
@@ -172,7 +280,7 @@ exports.get_purchase = async (
   try {
     const offset = (page - 1) * limit;
 
-    const query = `
+       const query = `
       WITH filtered_purchase AS (
         SELECT *
         FROM tbl_purchase
@@ -317,6 +425,163 @@ exports.get_purchase = async (
 
 
 
+// exports.get_Expense = async ({
+//   branch_id,
+//   page = 1,
+//   limit = 10,
+//   search = "",
+//   filter = "All",
+//   start_date,
+//   end_date,
+//   category_id
+// }) => {
+//   try {
+//     const offset = (page - 1) * limit;
+//     const searchQuery = `%${search}%`;
+
+//     let filterConditions = [];
+//     filterConditions.push(`e.branch_id = $1`);
+
+//     filterConditions.push(`
+//       (
+//          c.category_name ILIKE $2
+//       OR e.description ILIKE $2
+//       OR ei.item_name ILIKE $2
+//       OR e.expense_id::text ILIKE $2
+//       )
+//     `);
+
+//     if (category_id) filterConditions.push(`e.category_id = '${category_id}'`);
+
+//     if (filter === "Paid") filterConditions.push(`e.balance_amount = 0`);
+//     if (filter === "Unpaid") filterConditions.push(`e.balance_amount > 0`);
+
+//     if (start_date && end_date) {
+//       filterConditions.push(`
+//         e.expense_date::date BETWEEN '${start_date}' AND '${end_date}'
+//       `);
+//     }
+
+//     const whereClause = filterConditions.join(" AND ");
+
+//     const query = `
+//       WITH filtered_expenses AS (
+//         SELECT DISTINCT e.expense_id
+//         FROM tbl_expense e
+//         LEFT JOIN tbl_expense_items ei ON e.expense_id = ei.expense_id
+//         LEFT JOIN tbl_expense_category c ON e.category_id = c.id
+//         WHERE ${whereClause}
+//       ),
+
+//       total_count AS (
+//         SELECT COUNT(*) AS count FROM filtered_expenses
+//       ),
+
+//       expense_data AS (
+//         SELECT 
+//           e.expense_id,
+//           e.branch_id,
+//           e.category_id,
+//           c.category_name AS expense_name,
+//           e.attachment_url,
+//           e.description,
+//           e.expense_date,
+//           e.payment_type,
+//           e.total_amount,
+//           e.paid_amount,
+//           e.balance_amount,
+//           e.created_at,
+//           e.updated_at,
+
+//           COALESCE(
+//             JSON_AGG(
+//               JSON_BUILD_OBJECT(
+//                 'item_id', ei.item_id,
+//                 'item_name', ei.item_name,
+//                 'quantity', ei.qty,
+//                 'price', ei.price,
+//                 'total', ei.total
+//               )
+//             ) FILTER (WHERE ei.expense_id IS NOT NULL), '[]'
+//           ) AS items
+
+//         FROM filtered_expenses fe
+//         JOIN tbl_expense e ON fe.expense_id = e.expense_id
+//         LEFT JOIN tbl_expense_items ei ON e.expense_id = ei.expense_id
+//         LEFT JOIN tbl_expense_category c ON e.category_id = c.id
+
+//         GROUP BY 
+//           e.expense_id,
+//           e.category_id,
+//           c.category_name,
+//           e.attachment_url,
+//           e.description,
+//           e.expense_date,
+//           e.payment_type,
+//           e.total_amount,
+//           e.paid_amount,
+//           e.balance_amount,
+//           e.created_at,
+//           e.updated_at
+
+//         ORDER BY e.expense_date DESC
+//         LIMIT ${limit} OFFSET ${offset}
+//       )
+
+//       SELECT
+//         (SELECT JSON_AGG(ed) FROM expense_data ed) AS expenses,
+//         (SELECT count FROM total_count) AS total_count,
+
+//         -- summaries
+//         (SELECT COALESCE(SUM(total_amount), 0)
+//          FROM tbl_expense 
+//          WHERE branch_id = $1) AS total_expense,
+
+//         (SELECT COALESCE(SUM(paid_amount), 0)
+//          FROM tbl_expense 
+//          WHERE branch_id = $1) AS total_paid_all,
+
+//         (SELECT COALESCE(SUM(balance_amount), 0)
+//          FROM tbl_expense 
+//          WHERE branch_id = $1) AS total_unpaid_all,
+
+//         (SELECT COALESCE(SUM(paid_amount), 0)
+//          FROM tbl_expense
+//          WHERE branch_id = $1
+//          AND DATE_TRUNC('month', expense_date) = DATE_TRUNC('month', CURRENT_DATE)
+//         ) AS total_paid_this_month,
+
+//         (SELECT COALESCE(SUM(paid_amount), 0)
+//          FROM tbl_expense
+//          WHERE branch_id = $1
+//          AND DATE_TRUNC('month', expense_date) = DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')
+//         ) AS total_paid_last_month;
+//     `;
+
+//     const result = await conn.query(query, [
+//       branch_id,
+//       searchQuery
+//     ]);
+
+//     return {
+//       expenses: result.rows[0].expenses || [],
+//       total_count: result.rows[0].total_count || 0,
+//       summary: {
+//         total_expense: result.rows[0].total_expense || 0,
+//         total_paid: result.rows[0].total_paid_all || 0,
+//         total_unpaid: result.rows[0].total_unpaid_all || 0,
+//         this_month: result.rows[0].total_paid_this_month || 0,
+//         last_month: result.rows[0].total_paid_last_month || 0,
+//       },
+//       page: Number(page),
+//       limit: Number(limit)
+//     };
+
+//   } catch (err) {
+//     throw new Error("Unable to fetch expense data: " + err.message);
+//   }
+// };
+
 exports.get_Expense = async ({
   branch_id,
   page = 1,
@@ -355,6 +620,8 @@ exports.get_Expense = async ({
     }
 
     const whereClause = filterConditions.join(" AND ");
+
+    console.log(branch_id,searchQuery)
 
     const query = `
       WITH filtered_expenses AS (
@@ -455,6 +722,7 @@ exports.get_Expense = async ({
       searchQuery
     ]);
 
+
     return {
       expenses: result.rows[0].expenses || [],
       total_count: result.rows[0].total_count || 0,
@@ -473,7 +741,6 @@ exports.get_Expense = async ({
     throw new Error("Unable to fetch expense data: " + err.message);
   }
 };
-
 
 
 exports.getUnits = async (branch_id) => {
@@ -811,6 +1078,7 @@ exports.get_menuItem_data = async (branch_id, page, limit, search) => {
         m.favorites,
         m.menu_id,
         c.name AS category
+        m.menu_category_id AS category_id
 
      FROM tbl_menu_item m
      JOIN tbl_category c ON c.id = m.menu_category_id
@@ -859,7 +1127,7 @@ exports.updateFinalPayment = async (data) => {
         DELETE FROM tbl_kot_list
         WHERE table_no = $1 AND order_id =$2;
       `;
-      await conn.query(deleteQuery, [table_no,order_id]);
+      await conn.query(deleteQuery, [table_no, order_id]);
       console.log(`✅ Cleared KOT items for table ${table_no}`);
     }
 
@@ -1093,7 +1361,7 @@ exports.deleteCategory = async (id,branch_id) => {
 
 
 exports.createExpenseCategory = async (zodu_id, branch_id, name) => {
-  console.log(zodu_id,branch_id,name)
+  console.log(zodu_id, branch_id, name)
   try {
     // 1️⃣ Check if category already exists in this branch
     const checkQuery = `
@@ -1415,148 +1683,6 @@ exports.createMenuItem = async (menuData) => {
   } catch (err) {
     await conn.query('ROLLBACK');
     throw new Error("Unable to create menu: " + err.message);
-  }
-};
-
-exports.updateMenuItem = async (menuId, data) => {
-  try {
-    await conn.query("BEGIN");
-const query = `
-  UPDATE tbl_menu_item
-  SET 
-    menu_category_id = $1,
-    menu_name = $2,
-    menu_type = $3,
-    food_type = $4,
-    variants = $5,
-    sell_price = $6,
-    purchase_price = $7,
-    hsn_code = $8,
-    gst_tax = $9,
-    tax_include_or_exclude = $10,
-    menu_image = $11,
-    menu_code = $12,
-    menu_unit = $13,
-    favorites = $14
-  WHERE menu_id = $15
-  RETURNING *;
-`;
-
-const values = [
-  data.menu_category_id,           // $1
-  data.menu_name,               // $2
-  data.menu_type,               // $3
-  data.food_type,               // $4
-  JSON.stringify(data.variants),// $5
-  data.sell_price,              // $6
-  data.purchase_price,          // $7
-  data.hsn_code,                // $8
-  data.gst_tax,                 // $9
-  data.tax_include_or_exclude,  // $10
-  data.menu_image,              // $11 (URL or null)
-  data.menu_code,               // $12
-  data.menu_unit,               // $13 (unit id)
-  data.favorites ?? null,       // $14
-  menuId                       // $15 (WHERE menu_id = ?)
-];
-
-
-    const result = await conn.query(query, values);
-    const updatedMenu = result.rows[0];
-
-    if (!updatedMenu) throw new Error("Menu item not found");
-
-    // ============================
-    //  UPDATE INVENTORY (if product)
-    // ============================
-    if (updatedMenu.menu_type.toLowerCase() === "product") {
-      const invCheck = await conn.query(
-        `SELECT * FROM tbl_inventory WHERE item_id = $1`,
-        [menuId]
-      );
-
-      if (invCheck.rows.length > 0) {
-        // Update inventory fields
-        await conn.query(
-          `UPDATE tbl_inventory
-           SET 
-             item_name = $1,
-             purchase_price = $2,
-             selling_price = $3,
-             item_unit = $4
-           WHERE item_id = $5`,
-          [
-            updatedMenu.menu_name,
-            updatedMenu.purchase_price,
-            updatedMenu.sell_price,
-            updatedMenu.menu_unit,
-            menuId,
-          ]
-        );
-      } else {
-        // Insert fresh inventory row
-        await conn.query(
-  `INSERT INTO tbl_inventory 
-    (zodu_id, branch_id, item_id, category_id, item_name, item_unit,
-     stock_qty, stock_alert, purchase_price, selling_price, last_purchase_date)
-    VALUES ($1,$2,$3,$4,$5,$6,0,$7,$8,$9,NOW())`,
-  [
-    updatedMenu.zodu_id,
-    updatedMenu.branch_id,
-    updatedMenu.menu_id,
-    updatedMenu.menu_category_id,
-    updatedMenu.menu_name,
-    updatedMenu.menu_unit,
-    0,                       // stock_alert
-    updatedMenu.purchase_price,
-    updatedMenu.sell_price
-  ]
-);
-
-      }
-    }
-
-    await conn.query("COMMIT");
-    return updatedMenu;
-
-  } catch (err) {
-    await conn.query("ROLLBACK");
-    throw new Error("Unable to update menu: " + err.message);
-  }
-};
-
-exports.deleteMenuItem = async (menuId) => {
-  try {
-    await conn.query("BEGIN");
-
-    // Get menu_type before delete
-    const menu = await conn.query(
-      `SELECT menu_type FROM tbl_menu_item WHERE menu_id = $1`,
-      [menuId]
-    );
-
-    if (menu.rows.length === 0) {
-      throw new Error("Menu item not found");
-    }
-
-    const menuType = menu.rows[0].menu_type;
-
-    // Delete menu item
-    await conn.query(`DELETE FROM tbl_menu_item WHERE menu_id = $1`, [menuId]);
-
-    // If product → delete from inventory table
-    if (menuType && menuType.toLowerCase() === "product") {      await conn.query(
-        `DELETE FROM tbl_inventory WHERE item_id = $1`,
-        [menuId]
-      );
-    }
-
-    await conn.query("COMMIT");
-    return { success: true, message: "Menu deleted successfully" };
-
-  } catch (err) {
-    await conn.query("ROLLBACK");
-    throw new Error("Unable to delete menu: " + err.message);
   }
 };
 
@@ -1907,21 +2033,21 @@ exports.insertPurchaseItems = async (purchase_id, items) => {
 exports.updateInventory = async (items) => {
   try {
     await conn.query('BEGIN');
-      const {
-        inventory_id,
-        stock_qty,
-        stock_alert,
-        selling_price,
-        purchase_price,
-        last_purchase_date,
-      } = items;
+    const {
+      inventory_id,
+      stock_qty,
+      stock_alert,
+      selling_price,
+      purchase_price,
+      last_purchase_date,
+    } = items;
 
-      if (!inventory_id) {
-        throw new Error("Missing inventory_id for one or more items");
-      }
+    if (!inventory_id) {
+      throw new Error("Missing inventory_id for one or more items");
+    }
 
-      await conn.query(
-        `
+    await conn.query(
+      `
         UPDATE tbl_inventory
         SET 
            stock_qty = stock_qty + COALESCE($1, 0),
@@ -1932,36 +2058,36 @@ exports.updateInventory = async (items) => {
           updated_at = NOW()
         WHERE inventory_id = $6
         `,
-        [
-          stock_qty,
-          stock_alert,
-          selling_price,
-          purchase_price,
-          last_purchase_date,
-          inventory_id,
-        ]
-      );
-    
+      [
+        stock_qty,
+        stock_alert,
+        selling_price,
+        purchase_price,
+        last_purchase_date,
+        inventory_id,
+      ]
+    );
+
 
     await conn.query('COMMIT');
     return { success: true, message: "Inventory updated successfully" };
   } catch (err) {
     await conn.query('ROLLBACK');
     throw new Error("Unable to update Inventory: " + err.message);
-  } 
+  }
 };
 
 
 exports.addin_Inventory = async (data) => {
-  const client = await conn.connect();
+  const conn = await conn.connect();
   try {
-    await client.query("BEGIN");
+    await conn.query("BEGIN");
 
- const prefix = "INDIR-INV-";
+    const prefix = "INDIR-INV-";
     let itemId;
 
     // 🔹 Get the maximum numeric suffix from existing indirect inventory IDs
-    const { rows } = await client.query(`
+    const { rows } = await conn.query(`
       SELECT MAX(
         CAST(REGEXP_REPLACE(item_id, '^${prefix}', '') AS INTEGER)
       ) AS max_num
@@ -1975,7 +2101,7 @@ exports.addin_Inventory = async (data) => {
     itemId = `${prefix}${String(nextNum).padStart(3, "0")}`;
 
     // 🔹 Insert into tbl_inventory (always indirect)
-    await client.query(
+    await conn.query(
       `INSERT INTO tbl_inventory (
         zodu_id,
         branch_id,
@@ -2005,7 +2131,7 @@ exports.addin_Inventory = async (data) => {
       ]
     );
 
-    await client.query("COMMIT");
+    await conn.query("COMMIT");
 
     return {
       success: true,
@@ -2013,11 +2139,9 @@ exports.addin_Inventory = async (data) => {
       item_id: itemId,
     };
   } catch (err) {
-    await client.query("ROLLBACK");
+    await conn.query("ROLLBACK");
     throw new Error("Unable to add indirect inventory: " + err.message);
-  } finally {
-    client.release();
-  }
+  } 
 };
 
 
@@ -2092,7 +2216,7 @@ exports.addInventory = async (items, branch_id, zodu_id, purchase_date, category
 
 exports.addExpense = async (orderData) => {
 
-  console.log("new",orderData)
+  console.log("new", orderData)
   try {
     await conn.query('BEGIN');
 
@@ -2150,7 +2274,7 @@ exports.addExpense = async (orderData) => {
         ]
       );
     } else {
-      console.log("ss",orderData);
+      console.log("ss", orderData);
       // 🆕 Insert new expense
       await conn.query(
         `INSERT INTO tbl_expense 
@@ -2210,6 +2334,217 @@ exports.addExpense = async (orderData) => {
   }
 };
 
+exports.getExpenseById = async (expense_id) => {
+  try {
+    const result = await conn.query(
+      `SELECT 
+        e.expense_id,
+        e.zodu_id,
+        e.branch_id,
+        e.category_id,
+        e.expense_date,
+        e.total_amount,
+        e.paid_amount,
+        e.balance_amount,
+        e.description,
+        e.attachment_url,
+        e.payment_type,
+        e.created_at,
+        e.updated_at,
+        c.name AS category_name
+      FROM tbl_expense e
+      LEFT JOIN tbl_category c ON e.category_id = c.id
+      WHERE e.expense_id = $1`,
+      [expense_id]
+    );
+
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    // Also fetch expense items
+    const itemsResult = await conn.query(
+      `SELECT 
+        item_id,
+        item_name,
+        qty,
+        price
+      FROM tbl_expense_items
+      WHERE expense_id = $1`,
+      [expense_id]
+    );
+
+    const expense = result.rows[0];
+    expense.items = itemsResult.rows;
+
+    console.log("test",expense);
+
+    return expense;
+  } catch (err) {
+    console.error(" Error in getExpenseById:", err.message);
+    throw new Error("Unable to fetch expense: " + err.message);
+  }
+};
+
+exports.edit_expense = async (expenseId, data) => {
+
+  try {
+    await conn.query("BEGIN");
+
+    console.log(data)
+
+    // --------------------------
+    // 1️⃣ Update MAIN EXPENSE
+    // --------------------------
+    const updateExpenseQuery = `
+      UPDATE tbl_expense 
+      SET 
+        branch_id = $1,
+        category_id = $2,
+        expense_name = $3,
+        expense_date = $4,
+        attachment_url = $5,
+        total_amount = $6,
+        description = $7,
+        zodu_id = $8,
+        paid_amount = $9,
+        payment_type = $10,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE expense_id = $11
+      RETURNING *;
+    `;
+
+    const expenseValues = [
+      data.branch_id,
+      data.category,
+      data.expense_name,
+      data.expense_date,
+      data.attachment_url,
+      data.total_amount,
+      data.description,
+      data.zodu_id,
+      data.paid_amount,
+      data.payment_type,
+      expenseId,
+    ];
+
+    const updatedExpense = await conn.query(updateExpenseQuery, expenseValues);
+
+    // --------------------------
+    // 2️⃣ Fetch Existing Items
+    // --------------------------
+    const oldItemsResult = await conn.query(
+      `SELECT * FROM tbl_expense_items WHERE expense_id = $1`,
+      [expenseId]
+    );
+
+    const oldItems = oldItemsResult.rows;
+    const newItems = data.items || [];
+
+    const oldItemIds = oldItems.map(i => i.id);
+    const newItemIds = newItems.map(i => i.id).filter(id => id !== null && id !== undefined);
+
+    // --------------------------
+    // 3️⃣ Delete removed items
+    // --------------------------
+    const itemsToDelete = oldItemIds.filter(id => !newItemIds.includes(id));
+
+    for (const deleteId of itemsToDelete) {
+      await conn.query(`DELETE FROM tbl_expense_items WHERE id = $1`, [deleteId]);
+    }
+
+    // --------------------------
+    // 4️⃣ Insert/Update items
+    // --------------------------
+    for (const item of newItems) {
+
+      // 4A. Existing Item → Update
+      if (item.id) {
+        await conn.query(
+          `
+          UPDATE tbl_expense_items
+          SET item_name = $1, qty = $2, price = $3
+          WHERE item_id = $4 AND expense_id = $5
+        `,
+          [item.name, item.qty, item.purchase_price, item.id, expenseId]
+        );
+      }
+
+      // 4B. New Item → Insert
+      else {
+        await conn.query(
+          `
+          INSERT INTO tbl_expense_items
+          (expense_id, item_name, qty, price, item_id)
+          VALUES ($1, $2, $3, $4, $5)
+        `,
+          [expenseId, item.name, item.qty, item.purchase_price, item.item_id]
+        );
+      }
+    }
+
+    await conn.query("COMMIT");
+    return updatedExpense.rows[0];
+
+  } catch (err) {
+    await conn.query("ROLLBACK");
+    console.error("❌ ERROR Edit Expense:", err);
+    throw err;
+  } 
+};
+
+// CREATE ITEM
+// CREATE ITEM
+exports.createItem = async (input) => {
+  const { name, branch_id, zodu_id } = input;
+
+
+  const query = `
+    INSERT INTO tbl_expitem (name, branch_id, zodu_id)
+    VALUES ($1, $2, $3)
+    RETURNING *;
+  `;
+
+  const result = await conn.query(query, [name, branch_id, zodu_id]);
+  return result.rows;
+};
+
+
+// GET ITEMS BY BRANCH + ZODU
+exports.getItems = async (branch_id) => {
+  const query = `
+    SELECT *
+    FROM tbl_expitem
+    WHERE branch_id = $1
+    ORDER BY id ASC;
+  `;
+  const result = await conn.query(query, [branch_id]);
+  return result.rows;
+};
+
+// UPDATE ITEM (SECURED BY BRANCH & ZODU)
+exports.updateItem = async (id, name, branch_id) => {
+  const query = `
+    UPDATE tbl_expitem
+    SET name = $1, updated_at = CURRENT_TIMESTAMP
+    WHERE id = $2 AND branch_id = $3
+    RETURNING *;
+  `;
+  const result = await conn.query(query, [name, id, branch_id]);
+  return result.rows;
+};
+
+// DELETE ITEM (SECURED BY BRANCH & ZODU)
+exports.deleteItem = async (id) => {
+  const query = `
+    DELETE FROM tbl_expitem
+    WHERE id = $1
+    RETURNING *;
+  `;
+  const result = await conn.query(query, [id]);
+  return result.rows;
+};
+
 exports.getHold = async (branch_id) => {
   try {
     const result = await conn.query(
@@ -2256,9 +2591,40 @@ exports.getHold = async (branch_id) => {
   }
 };
 
+exports.deleteExpenseWithItems = async (expenseId) => {
 
+  try {
+    await conn.query("BEGIN");
 
-exports.getDashboard = async (zodu_id, branch_id ) => {
+    // 1) Delete all items for this expense
+    await conn.query(
+      `DELETE FROM tbl_expense_items
+       WHERE expense_id = $1`,
+      [expenseId]
+    );
+
+    // 2) Delete the expense itself
+    const { rows } = await conn.query(
+      `DELETE FROM tbl_expense
+       WHERE expense_id = $1
+       RETURNING *`,
+      [expenseId]
+    );
+
+    await conn.query("COMMIT");
+
+    // if nothing deleted, return null (controller will return 404)
+    if (rows.length === 0) return null;
+
+    return rows[0];
+  } catch (err) {
+    await conn.query("ROLLBACK");
+    console.error("❌ deleteExpenseWithItems error:", err);
+    throw err;
+  } 
+};
+
+exports.getDashboard = async (zodu_id, branch_id) => {
   try {
     const startDate = moment("2025-10-30").startOf("day");
     const endDate = moment("2025-10-31").endOf("day");
@@ -2304,7 +2670,7 @@ exports.getDashboard = async (zodu_id, branch_id ) => {
     const dash = dashboardRes.rows[0] || {};
 
     // 🔹 1️⃣ Orders List (latest orders)
-const ordersQuery = `
+    const ordersQuery = `
   SELECT 
     o.order_id,
     o.total_amt,
@@ -2333,23 +2699,23 @@ const ordersQuery = `
   LIMIT 30;
 `;
 
-const ordersRes = await conn.query(ordersQuery, [zodu_id, branch_id]);
+    const ordersRes = await conn.query(ordersQuery, [zodu_id, branch_id]);
 
-const orders = ordersRes.rows.map((o) => ({
-  order_no: `#${o.order_id}`,
-  amount: Number(o.total_amt),
-  type: o.order_type || "Dine-in",
-  items: Number(o.no_of_items),   // ✅ total items count from tbl_orders
-  qty: Number(o.total_qty),       // ✅ total quantity sum from tbl_ordered_items
-  date: o.formatted_date,         // ✅ formatted datetime
-}));
+    const orders = ordersRes.rows.map((o) => ({
+      order_no: `#${o.order_id}`,
+      amount: Number(o.total_amt),
+      type: o.order_type || "Dine-in",
+      items: Number(o.no_of_items),   // ✅ total items count from tbl_orders
+      qty: Number(o.total_qty),       // ✅ total quantity sum from tbl_ordered_items
+      date: o.formatted_date,         // ✅ formatted datetime
+    }));
 
 
 
 
 
     // 🔹 2️⃣ Top Items
-const topItemsQuery = `
+    const topItemsQuery = `
   SELECT 
     m.menu_name,
     c.name AS category_name,                     -- 🆕 Category name from tbl_category
@@ -2374,14 +2740,14 @@ const topItemsQuery = `
   LIMIT 20;
 `;
 
-const topItemsRes = await conn.query(topItemsQuery, [zodu_id, branch_id]);
+    const topItemsRes = await conn.query(topItemsQuery, [zodu_id, branch_id]);
 
-const top_items = topItemsRes.rows.map((r, index) => ({
-  name: r.menu_name,
-  category: r.category_name || "Uncategorized",   // ✅ fallback if category is null
-  qty: `${r.total_qty} ${r.menu_unit || ""}`.trim(),  // ✅ Add unit to quantity
-  price: `₹${Number(r.total_amount).toFixed(2)}`  // ✅ Proper formatting
-}));
+    const top_items = topItemsRes.rows.map((r, index) => ({
+      name: r.menu_name,
+      category: r.category_name || "Uncategorized",   // ✅ fallback if category is null
+      qty: `${r.total_qty} ${r.menu_unit || ""}`.trim(),  // ✅ Add unit to quantity
+      price: `₹${Number(r.total_amount).toFixed(2)}`  // ✅ Proper formatting
+    }));
 
 
     // 🔹 3️⃣ Datewise Sales (last 7–30 days)
@@ -2421,7 +2787,7 @@ const top_items = topItemsRes.rows.map((r, index) => ({
     }));
 
     // 🔹 4️⃣ Expense List
-  const expenseQuery = `
+    const expenseQuery = `
 SELECT 
   e.expense_id,
   c.name AS expense_name,
@@ -2451,17 +2817,17 @@ LIMIT 30;
     const expenseRes = await conn.query(expenseQuery, [zodu_id, branch_id]);
     console.log(expenseRes.rows)
     const expenses = expenseRes.rows.map((e) => ({
-      
+
       id: e.expense_id,
-      title: e.category_name ,
+      title: e.category_name,
       category: e.category_name,
       amount: e.total_amount,
-      due:e.balance_amount,
-      item_count:e.item_count,
-      expense_date:e.expense_date
+      due: e.balance_amount,
+      item_count: e.item_count,
+      expense_date: e.expense_date
     }));
 
-   return {
+    return {
       summary: {
         total_orders: Number(dash.total_orders || 0),
         total_amount: Number(dash.total_sales || 0),
@@ -3245,6 +3611,147 @@ exports.getOrdersSummary = async (
   };
 };
 
+exports.getOrdersSummary = async (
+  zodu_id,
+  branch_id,
+  start_date,
+  end_date,
+  options = {}
+) => {
+  const {
+    page = 1,
+    limit = 10,
+    sortBy = "order_date",
+    sortOrder = "desc",
+    top = 5,
+    summaryType = "all",
+  } = options;
+
+
+  const offset = (page - 1) * limit;
+
+
+  const query = `
+    WITH summary AS (
+      SELECT
+        COUNT(*) AS total_orders,
+        COALESCE(SUM(total_amt), 0) AS total_amount,
+        COALESCE(SUM(no_of_items), 0) AS total_quantity
+      FROM tbl_orders
+      WHERE zodu_id = $1
+        AND branch_id = $2
+        AND final_payment = TRUE
+        AND order_date BETWEEN $3 AND $4
+    ),
+
+
+    order_list AS (
+      SELECT
+        order_id,
+        customer_name,
+        total_amt,
+        payment_type,
+        order_date,
+        order_time,
+        order_type,
+        table_no
+      FROM tbl_orders
+      WHERE zodu_id = $1
+        AND branch_id = $2
+        AND final_payment = TRUE
+        AND order_date BETWEEN $3 AND $4
+      ORDER BY ${sortBy} ${sortOrder}
+      LIMIT $5 OFFSET $6
+    ),
+
+
+    top_orders AS (
+      SELECT
+        order_id,
+        customer_name,
+        total_amt,
+        payment_type,
+        order_date,
+        order_time
+      FROM tbl_orders
+      WHERE zodu_id = $1
+        AND branch_id = $2
+        AND final_payment = TRUE
+        AND order_date BETWEEN $3 AND $4
+      ORDER BY total_amt DESC
+      LIMIT CASE WHEN $7 > 0 THEN $7 ELSE 5 END
+    ),
+
+
+    item_wise_summary AS (
+      SELECT
+        oi.item_name,
+        SUM(oi.qty) AS total_qty,
+        SUM(oi.qty * oi.price) AS total_amount
+      FROM tbl_ordered_items oi
+      JOIN tbl_orders o ON o.order_id = oi.order_id
+      WHERE o.zodu_id = $1
+        AND o.branch_id = $2
+        AND o.final_payment = TRUE
+        AND o.order_date BETWEEN $3 AND $4
+      GROUP BY oi.item_name
+      ORDER BY total_amount DESC
+    )
+
+
+   
+
+
+    SELECT
+      s.*,
+      COALESCE((SELECT json_agg(ol) FROM order_list ol), '[]') AS orders,
+      COALESCE((SELECT json_agg(toq) FROM top_orders toq), '[]') AS top_orders,
+      COALESCE((SELECT json_agg(iws) FROM item_wise_summary iws), '[]') AS item_wise_summary
+    FROM summary s;
+  `;
+
+
+  const result = await conn.query(query, [
+    zodu_id,
+    branch_id,
+    start_date,
+    end_date,
+    limit,
+    offset,
+    top,
+  ]);
+
+
+  // ---- Pagination ----
+  const countQuery = `
+    SELECT COUNT(*) AS total
+    FROM tbl_orders
+    WHERE zodu_id = $1
+      AND branch_id = $2
+      AND final_payment = TRUE
+      AND order_date BETWEEN $3 AND $4
+  `;
+  const countResult = await conn.query(countQuery, [
+    zodu_id,
+    branch_id,
+    start_date,
+    end_date,
+  ]);
+
+
+  const total = parseInt(countResult.rows[0]?.total || 0);
+  const totalPages = Math.ceil(total / limit);
+
+
+  return {
+    success: true,
+    data: result.rows[0],
+    pagination: { page, limit, total, totalPages },
+  };
+};
+
+
+
 
 exports.getPurchaseSummary = async (
   zodu_id,
@@ -3419,6 +3926,7 @@ exports.getExpenseSummary = async (
           e.total_amount,
           e.paid_amount,
           e.balance_amount,
+          ec.category_name AS expense_name,
           ec.category_name AS category_name
         FROM tbl_expense e
         LEFT JOIN tbl_expense_category ec
@@ -3640,7 +4148,7 @@ exports.getInventorySummary = async (
   }
 };
 
-exports.createHold= async(zodu_id, branch_id, orderType, table_no, customerName, customerPhone ) => {
+exports.createHold = async (zodu_id, branch_id, orderType, table_no, customerName, customerPhone) => {
   console.log(zodu_id);
   const query = `
     INSERT INTO tbl_hold (zodu_id, branch_id, order_type, table_no, customer_name, customer_phone)
@@ -3660,8 +4168,8 @@ exports.createHold= async(zodu_id, branch_id, orderType, table_no, customerName,
   return result.rows[0].hold_id;
 }
 
-exports.insertHoldItem = async (hold_id, zodu_id, branch_id, item)=> {
-  
+exports.insertHoldItem = async (hold_id, zodu_id, branch_id, item) => {
+
   const query = `
     INSERT INTO tbl_hold_items 
       (zodu_id, branch_id, hold_id, item_name, item_id, item_unit, qty, price, variant_name, variant_id)
@@ -3737,7 +4245,7 @@ exports.insertHoldItem = async (hold_id, zodu_id, branch_id, item)=> {
 //     if (type === "order") {
 //       if (wiseData === "category") {
 //         query = `
-//           SELECT 
+//           SELECT
 //             COALESCE(i.item_name, 'Unknown') AS category,
 //             SUM(i.price * i.qty) AS total_amount,
 //             COUNT(DISTINCT o.order_id) AS total_count
@@ -3752,7 +4260,7 @@ exports.insertHoldItem = async (hold_id, zodu_id, branch_id, item)=> {
 //         `;
 //       } else if (wiseData === "item") {
 //         query = `
-//           SELECT 
+//           SELECT
 //             COALESCE(i.item_name, 'Unknown') AS item_name,
 //             SUM(i.qty) AS total_qty,
 //             SUM(i.price * i.qty) AS total_amount,
@@ -3769,7 +4277,7 @@ exports.insertHoldItem = async (hold_id, zodu_id, branch_id, item)=> {
 //       } else {
 //         query = `
 //           WITH order_data AS (
-//             SELECT 
+//             SELECT
 //               o.order_id,
 //               o.table_no,
 //               o.order_type,
@@ -3798,7 +4306,7 @@ exports.insertHoldItem = async (hold_id, zodu_id, branch_id, item)=> {
 //               AND o.${dateField} BETWEEN $3 AND $4
 //             GROUP BY o.order_id
 //           )
-//           SELECT 
+//           SELECT
 //             JSON_AGG(order_data) AS data,
 //             COUNT(*) AS total_count,
 //             COALESCE(SUM(total_amt), 0) AS total_amount,
@@ -3813,7 +4321,7 @@ exports.insertHoldItem = async (hold_id, zodu_id, branch_id, item)=> {
 //   if (wiseData === "category") {
 //     // 🔹 CATEGORY-WISE EXPENSE REPORT
 //     query = `
-//       SELECT 
+//       SELECT
 //         c.name AS category_name,
 //         COUNT(e.expense_id) AS total_count,
 //         COALESCE(SUM(e.total_amount), 0) AS total_amount,
@@ -3821,7 +4329,7 @@ exports.insertHoldItem = async (hold_id, zodu_id, branch_id, item)=> {
 //         COALESCE(SUM(e.balance_amount), 0) AS total_balance
 //       FROM tbl_expense e
 //       LEFT JOIN tbl_category c ON e.category_id = c.id
-//       WHERE 
+//       WHERE
 //         e.zodu_id = $1
 //         AND e.branch_id = $2
 //         AND e.expense_date BETWEEN $3 AND $4
@@ -3832,7 +4340,7 @@ exports.insertHoldItem = async (hold_id, zodu_id, branch_id, item)=> {
 //   } else if (wiseData === "item") {
 //     // 🔹 ITEM-WISE EXPENSE REPORT
 //     query = `
-//       SELECT 
+//       SELECT
 //         ei.item_name,
 //         c.name AS category_name,
 //         COALESCE(SUM(ei.qty), 0) AS total_qty,
@@ -3841,7 +4349,7 @@ exports.insertHoldItem = async (hold_id, zodu_id, branch_id, item)=> {
 //       FROM tbl_expense e
 //       LEFT JOIN tbl_expense_items ei ON e.expense_id = ei.expense_id
 //       LEFT JOIN tbl_category c ON e.category_id = c.id
-//       WHERE 
+//       WHERE
 //         e.zodu_id = $1
 //         AND e.branch_id = $2
 //         AND e.expense_date BETWEEN $3 AND $4
@@ -3852,7 +4360,7 @@ exports.insertHoldItem = async (hold_id, zodu_id, branch_id, item)=> {
 //   } else {
 //     // 🔹 FULL EXPENSE REPORT (WITH ITEM DETAILS)
 //     query = `
-//       SELECT 
+//       SELECT
 //         e.expense_id,
 //         e.zodu_id,
 //         e.branch_id,
@@ -3882,11 +4390,11 @@ exports.insertHoldItem = async (hold_id, zodu_id, branch_id, item)=> {
 //       FROM tbl_expense e
 //       LEFT JOIN tbl_expense_items ei ON e.expense_id = ei.expense_id
 //       LEFT JOIN tbl_category c ON e.category_id = c.id
-//       WHERE 
+//       WHERE
 //         e.zodu_id = $1
 //         AND e.branch_id = $2
 //         AND e.expense_date BETWEEN $3 AND $4
-//       GROUP BY 
+//       GROUP BY
 //         e.expense_id,
 //         e.zodu_id,
 //         e.branch_id,
@@ -3912,7 +4420,7 @@ exports.insertHoldItem = async (hold_id, zodu_id, branch_id, item)=> {
 //   if (wiseData === "category") {
 //     // 🔹 CATEGORY-WISE INVENTORY REPORT
 //     query = `
-//       SELECT 
+//       SELECT
 //         c.name AS category,
 //         COALESCE(SUM(i.stock_qty * i.purchase_price), 0) AS total_amount,
 //         COUNT(i.inventory_id) AS total_count
@@ -3927,7 +4435,7 @@ exports.insertHoldItem = async (hold_id, zodu_id, branch_id, item)=> {
 //   } else if (wiseData === "item") {
 //     // 🔹 ITEM-WISE INVENTORY REPORT
 //     query = `
-//       SELECT 
+//       SELECT
 //         i.item_name,
 //         c.name AS category,
 //         COALESCE(SUM(i.stock_qty), 0) AS total_qty,
@@ -3947,7 +4455,7 @@ exports.insertHoldItem = async (hold_id, zodu_id, branch_id, item)=> {
 //     // 🔹 DEFAULT INVENTORY LIST REPORT (with summary support)
 //     query = `
 //       WITH inventory_data AS (
-//         SELECT 
+//         SELECT
 //           i.inventory_id,
 //           i.item_name,
 //           c.name AS category,
@@ -3966,7 +4474,7 @@ exports.insertHoldItem = async (hold_id, zodu_id, branch_id, item)=> {
 //           AND i.branch_id = $2
 //           AND i.last_purchase_date BETWEEN $3 AND $4
 //       )
-//       SELECT 
+//       SELECT
 //         JSON_AGG(inventory_data) AS data,
 //         COUNT(*) AS total_count,
 //         COALESCE(SUM(total_value), 0) AS total_amount
@@ -3981,7 +4489,7 @@ exports.insertHoldItem = async (hold_id, zodu_id, branch_id, item)=> {
 //     else if (type === "purchase") {
 //       if (wiseData === "category") {
 //         query = `
-//           SELECT 
+//           SELECT
 //             c.name AS category_name,
 //             SUM(p.total_amount) AS total_amount,
 //             SUM(p.balance_amount) AS total_unpaid,
@@ -3996,7 +4504,7 @@ exports.insertHoldItem = async (hold_id, zodu_id, branch_id, item)=> {
 //         `;
 //       } else if (wiseData === "item") {
 //         query = `
-//           SELECT 
+//           SELECT
 //             pi.item_name,
 //             SUM(pi.qty) AS total_qty,
 //             SUM(pi.total_price) AS total_amount,
@@ -4013,7 +4521,7 @@ exports.insertHoldItem = async (hold_id, zodu_id, branch_id, item)=> {
 //       } else {
 //         query = `
 //           WITH purchase_data AS (
-//             SELECT 
+//             SELECT
 //               p.purchase_id,
 //               p.branch_id,
 //               p.category_id,
@@ -4054,14 +4562,14 @@ exports.insertHoldItem = async (hold_id, zodu_id, branch_id, item)=> {
 //             WHERE p.zodu_id = $1
 //               AND p.branch_id = $2
 //               AND p.purchase_date BETWEEN $3 AND $4
-//             GROUP BY 
+//             GROUP BY
 //               p.purchase_id, p.branch_id, p.category_id, p.payment_type,
 //               p.attachment_url, p.notes, c.name, p.vendor_id, v.vendor_name,
 //               v.company_name, v.vendor_phone, v.vendor_email,
-//               p.purchase_date, p.total_amount, p.paid_amount, 
+//               p.purchase_date, p.total_amount, p.paid_amount,
 //               p.balance_amount, p.created_at, p.updated_at
 //           )
-//           SELECT 
+//           SELECT
 //             JSON_AGG(purchase_data) AS data,
 //             COUNT(*) AS total_count,
 //             COALESCE(SUM(total_amount), 0) AS total_amount,
