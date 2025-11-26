@@ -158,7 +158,7 @@ exports.get_expense_category_data = async (branch_id) => {
   } catch (err) {
     throw new Error("Unable to fetch category data: " + err.message);
   }
-  
+
 }
 
 exports.get_purchase_category_data = async (branch_id) => {
@@ -317,7 +317,7 @@ exports.get_purchase = async (
   try {
     const offset = (page - 1) * limit;
 
-       const query = `
+    const query = `
       WITH filtered_purchase AS (
         SELECT *
         FROM tbl_purchase
@@ -886,7 +886,7 @@ exports.deleteUnit = async (id, branch_id) => {
 };
 
 
-exports.replaceUnit = async (oldUnitId, newUnitId,branch_id) => {
+exports.replaceUnit = async (oldUnitId, newUnitId, branch_id) => {
   try {
     await conn.query("BEGIN");
 
@@ -1365,7 +1365,7 @@ exports.createCategory = async (zodu_id, branch_id, name, type) => {
   }
 }
 
-exports.updateCategory = async (id, name,type,branch_id) => {
+exports.updateCategory = async (id, name, type, branch_id) => {
   try {
     const query = `
       UPDATE tbl_category
@@ -1373,7 +1373,7 @@ exports.updateCategory = async (id, name,type,branch_id) => {
       WHERE id = $2 AND branch_id = $4
       RETURNING *;
     `;
-    const values = [name, id,type,branch_id];
+    const values = [name, id, type, branch_id];
     const result = await conn.query(query, values);
     return result.rows[0];
   } catch (err) {
@@ -1381,14 +1381,14 @@ exports.updateCategory = async (id, name,type,branch_id) => {
   }
 }
 
-exports.deleteCategory = async (id,branch_id) => {
+exports.deleteCategory = async (id, branch_id) => {
   try {
     const query = `
       DELETE FROM tbl_category
       WHERE id = $1 AND branch_id = $2
       RETURNING id;
     `;
-    const values = [id,branch_id];
+    const values = [id, branch_id];
     const result = await conn.query(query, values);
     return result.rows[0];
   } catch (err) {
@@ -2523,6 +2523,9 @@ exports.edit_expense = async (expenseId, data) => {
     await conn.query("COMMIT");
     return updatedExpense.rows[0];
 
+    await conn.query('COMMIT');
+    return result.rows[0];
+
   } catch (err) {
     await conn.query("ROLLBACK");
     console.error("❌ ERROR Edit Expense:", err);
@@ -2581,6 +2584,146 @@ exports.deleteItem = async (id) => {
   const result = await conn.query(query, [id]);
   return result.rows;
 };
+
+exports.getPurchaseById = async (purchase_id) => {
+  try {
+    const result = await conn.query(
+      `SELECT 
+        p.purchase_id,
+        p.zodu_id,
+        p.branch_id,
+        p.vendor_id,
+        p.category_id,
+        p.purchase_date,
+        p.purchase_type,
+        p.total_amount,
+        p.paid_amount,
+        p.balance_amount,
+        p.attachment_url,
+        p.payment_type,
+        p.notes,
+        p.created_at,
+        p.updated_at,
+        c.name AS category_name,
+        v.vendor_name
+      FROM tbl_purchase p
+      LEFT JOIN tbl_category c ON p.category_id = c.id
+      LEFT JOIN tbl_vendor v ON p.vendor_id = v.vendor_id
+      WHERE p.purchase_id = $1`,
+      [purchase_id]
+    );
+
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    // Also fetch purchase items
+    const itemsResult = await conn.query(
+      `SELECT 
+        item_id,
+        item_name,
+        qty,
+        unit,
+        purchase_price
+      FROM tbl_purchase_items
+      WHERE purchase_id = $1`,
+      [purchase_id]
+    );
+
+    const purchase = result.rows[0];
+    purchase.items = itemsResult.rows;
+
+    return purchase;
+  } catch (err) {
+    console.error(" Error in getPurchaseById:", err.message);
+    throw new Error("Unable to fetch purchase: " + err.message);
+  }
+};
+
+exports.updatePurchase = async (purchase_id, purchaseData) => {
+  try {
+    await conn.query("BEGIN");
+
+    // Ensure numeric values are properly set
+    const totalAmount = Number(purchaseData.total_amount) || 0;
+    const paidAmount = Number(purchaseData.paid_amount) || 0;
+
+    // 1. Update main purchase record
+    // Note: balance_amount is a generated column, PostgreSQL calculates it automatically
+    const updateQuery = `
+      UPDATE tbl_purchase
+      SET 
+        vendor_id = $1,
+        category_id = $2,
+        purchase_date = $3,
+        purchase_type = $4,
+        total_amount = $5,
+        paid_amount = $6,
+        attachment_url = $7,
+        payment_type = $8,
+        notes = $9,
+        updated_at = NOW()
+      WHERE purchase_id = $10
+      RETURNING *
+    `;
+
+    const result = await conn.query(updateQuery, [
+      purchaseData.vendor,
+      purchaseData.category,
+      purchaseData.purchase_date,
+      purchaseData.purchase_type,
+      totalAmount,
+      paidAmount,
+      purchaseData.attachment_url || null,
+      purchaseData.payment_type,
+      purchaseData.notes || null,
+      purchase_id
+    ]);
+
+    // 2. Update purchase items if provided
+    if (purchaseData.items && Array.isArray(purchaseData.items) && purchaseData.items.length > 0) {
+      // Delete existing items
+      await conn.query(
+        `DELETE FROM tbl_purchase_items WHERE purchase_id = $1`,
+        [purchase_id]
+      );
+
+      // Insert new items
+      const insertItemQuery = `
+        INSERT INTO tbl_purchase_items 
+          (purchase_id, item_id, item_name, qty, unit, purchase_price)
+        VALUES ($1, $2, $3, $4, $5, $6)
+      `;
+
+      for (const item of purchaseData.items) {
+        let itemId = item.id;
+        if (!itemId || itemId === null || itemId === '' || itemId === 'null') {
+          const cleanName = (item.name || 'Unnamed').replace(/\s+/g, '-').toUpperCase();
+          itemId = `${purchaseData.branch_id}-ITEM-${cleanName}`;
+        }
+
+        await conn.query(insertItemQuery, [
+          purchase_id,
+          itemId,
+          item.name,
+          item.qty,
+          item.unit,
+          item.purchase_price,
+        ]);
+      }
+    }
+
+
+    await conn.query("COMMIT");
+    return updatedExpense.rows[0];
+
+  } catch (err) {
+    await conn.query('ROLLBACK');
+    console.error(" Error in updatePurchase:", err.message);
+    throw new Error("Unable to update purchase: " + err.message);
+  }
+};
+
 
 exports.getHold = async (branch_id) => {
   try {
@@ -2661,8 +2804,19 @@ exports.deleteExpenseWithItems = async (expenseId) => {
   } 
 };
 
-exports.getDashboard = async (zodu_id, branch_id) => {
+exports.getDashboard = async (zodu_id, branch_id, options = {}) => {
   try {
+    // Extract pagination options
+    const {
+      page = 1,
+      limit = 10,
+      sortBy = "created_at",
+      sortOrder = "desc"
+    } = options;
+
+    const offset = (page - 1) * limit;
+    const order = sortOrder.toLowerCase() === "asc" ? "ASC" : "DESC";
+
     const startDate = moment("2025-10-30").startOf("day");
     const endDate = moment("2025-10-31").endOf("day");
 
@@ -2706,7 +2860,7 @@ exports.getDashboard = async (zodu_id, branch_id) => {
     const dashboardRes = await conn.query(dashboardQuery, params);
     const dash = dashboardRes.rows[0] || {};
 
-    // 🔹 1️⃣ Orders List (latest orders)
+    // 🔹 1️⃣ Orders List (with pagination)
     const ordersQuery = `
   SELECT 
     o.order_id,
@@ -2732,11 +2886,11 @@ exports.getDashboard = async (zodu_id, branch_id) => {
     o.order_type, 
     o.order_date, 
     o.order_time
-  ORDER BY o.order_date DESC, o.order_time DESC
-  LIMIT 30;
+  ORDER BY o.order_date ${order}, o.order_time ${order}
+  LIMIT $3 OFFSET $4;
 `;
 
-    const ordersRes = await conn.query(ordersQuery, [zodu_id, branch_id]);
+    const ordersRes = await conn.query(ordersQuery, [zodu_id, branch_id, limit, offset]);
 
     const orders = ordersRes.rows.map((o) => ({
       order_no: `#${o.order_id}`,
@@ -2747,9 +2901,16 @@ exports.getDashboard = async (zodu_id, branch_id) => {
       date: o.formatted_date,         // ✅ formatted datetime
     }));
 
-
-
-
+    // Count total orders for pagination
+    const ordersCountQuery = `
+      SELECT COUNT(*) AS total
+      FROM tbl_orders
+      WHERE zodu_id = $1
+        AND branch_id = $2
+        AND final_payment = true
+    `;
+    const ordersCountRes = await conn.query(ordersCountQuery, [zodu_id, branch_id]);
+    const totalOrders = parseInt(ordersCountRes.rows[0]?.total || 0);
 
     // 🔹 2️⃣ Top Items
     const topItemsQuery = `
@@ -2823,7 +2984,7 @@ exports.getDashboard = async (zodu_id, branch_id) => {
       bills: r.total_orders,
     }));
 
-    // 🔹 4️⃣ Expense List
+    // 🔹 4️⃣ Expense List (with pagination)
     const expenseQuery = `
 SELECT 
   e.expense_id,
@@ -2846,13 +3007,12 @@ GROUP BY
   e.total_amount, 
   e.balance_amount, 
   e.expense_date
-ORDER BY e.expense_date DESC
-LIMIT 30;
+ORDER BY e.expense_date ${order}
+LIMIT $3 OFFSET $4;
 `;
 
 
-    const expenseRes = await conn.query(expenseQuery, [zodu_id, branch_id]);
-    console.log(expenseRes.rows)
+    const expenseRes = await conn.query(expenseQuery, [zodu_id, branch_id, limit, offset]);
     const expenses = expenseRes.rows.map((e) => ({
 
       id: e.expense_id,
@@ -2864,17 +3024,37 @@ LIMIT 30;
       expense_date: e.expense_date
     }));
 
+    // Count total expenses for pagination
+    const expensesCountQuery = `
+      SELECT COUNT(*) AS total
+      FROM tbl_expense
+      WHERE zodu_id = $1
+        AND branch_id = $2
+    `;
+    const expensesCountRes = await conn.query(expensesCountQuery, [zodu_id, branch_id]);
+    const totalExpenses = parseInt(expensesCountRes.rows[0]?.total || 0);
+
     return {
-      summary: {
-        total_orders: Number(dash.total_orders || 0),
-        total_amount: Number(dash.total_sales || 0),
-        total_expense: Number(dash.total_expense || 0),
-        low_stocks: Number(dash.low_stocks || 0),
+      data: {
+        summary: {
+          total_orders: Number(dash.total_orders || 0),
+          total_amount: Number(dash.total_sales || 0),
+          total_expense: Number(dash.total_expense || 0),
+          low_stocks: Number(dash.low_stocks || 0),
+        },
+        orders,
+        top_items,
+        datewise_sales,
+        expenses,
       },
-      orders,
-      top_items,
-      datewise_sales,
-      expenses,
+      pagination: {
+        page,
+        limit,
+        totalOrders,
+        totalExpenses,
+        totalPagesOrders: Math.ceil(totalOrders / limit),
+        totalPagesExpenses: Math.ceil(totalExpenses / limit)
+      }
     };
   } catch (error) {
     console.error("Dashboard error:", error);
@@ -2969,7 +3149,7 @@ LIMIT 30;
 //     )
 
 
-   
+
 
 
 //     SELECT

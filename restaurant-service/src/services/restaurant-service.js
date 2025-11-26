@@ -297,7 +297,7 @@ async function addCategoryData(zodu_id, branch_id, name, type) {
       success: true,
       data: addedCategory,
     };
-  } catch (error) { 
+  } catch (error) {
     console.error("Category Data adding Error", error);
     return {
       success: false,
@@ -306,24 +306,24 @@ async function addCategoryData(zodu_id, branch_id, name, type) {
   }
 }
 
-async function updateCategoryData(id, name,type,branch_id) {
+async function updateCategoryData(id, name, type, branch_id) {
   try {
-    const updatedCategory = await repository.updateCategory(id, name,type,branch_id);
+    const updatedCategory = await repository.updateCategory(id, name, type, branch_id);
     return {
       success: true,
       data: updatedCategory,
     };
   } catch (error) {
-    console.error("Category Data updating Error", error); 
+    console.error("Category Data updating Error", error);
     return {
       success: false,
       message: err.message
     };
   }
 }
-async function deleteCategoryData(id,branch_id) {
+async function deleteCategoryData(id, branch_id) {
   try {
-    const deletedCategory = await repository.deleteCategory(id,branch_id);
+    const deletedCategory = await repository.deleteCategory(id, branch_id);
     return {
       success: true,
       data: deletedCategory,
@@ -371,33 +371,33 @@ async function getExpenseCategoryData(branch_id) {
 }
 async function getUnits(branch_id) {
   if (!branch_id) throw new Error("branch_id is required");
-  try{
-  const units =  await repository.getUnits(branch_id);
-  return {
-    success: true,
-    data: units,
-  };
-  }catch (error) {
+  try {
+    const units = await repository.getUnits(branch_id);
+    return {
+      success: true,
+      data: units,
+    };
+  } catch (error) {
     console.error("Units Data getting Error", error);
     return {
       success: false,
       message: error.message
     };
-  }     
+  }
 };
 
 async function addUnit(zodu_id, branch_id, name, short_name) {
-  try{
-  if (!zodu_id || !branch_id || !name || !short_name) {
-    throw new Error("zodu_id, branch_id, name and short_name are required");
-  }
-  const addedunits = await repository.addUnit(zodu_id, branch_id, name, short_name);
-  return {
-    success: true,
-    data: addedunits,
-  };
-  }catch (error) {
-    console.error("Units Data getting Error", error); 
+  try {
+    if (!zodu_id || !branch_id || !name || !short_name) {
+      throw new Error("zodu_id, branch_id, name and short_name are required");
+    }
+    const addedunits = await repository.addUnit(zodu_id, branch_id, name, short_name);
+    return {
+      success: true,
+      data: addedunits,
+    };
+  } catch (error) {
+    console.error("Units Data getting Error", error);
     return {
       success: false,
       message: error.message
@@ -470,7 +470,7 @@ async function getGST(branch_id) {
 // ADD GST
 async function addGST(zodu_id, branch_id, gst_rate) {
   try {
-    if (!zodu_id || !branch_id|| gst_rate === undefined) {
+    if (!zodu_id || !branch_id || gst_rate === undefined) {
       throw new Error("zodu_id, branch_id, and gst_rate are required");
     }
 
@@ -495,9 +495,9 @@ async function addGST(zodu_id, branch_id, gst_rate) {
 }
 
 // UPDATE GST
-async function updateGST(id,  gst_rate) {
+async function updateGST(id, gst_rate) {
   try {
-    if (!id  || gst_rate === undefined) {
+    if (!id || gst_rate === undefined) {
       throw new Error("id and gst_rate are required");
     }
 
@@ -556,15 +556,16 @@ async function get_Report(data) {
 
 }
 
-async function get_dashboard(zodu_id, branch_id) {
+async function get_dashboard(zodu_id, branch_id, options = {}) {
   try {
-    const DashboardData = await repository.getDashboard(zodu_id, branch_id)
+    const DashboardData = await repository.getDashboard(zodu_id, branch_id, options);
     return {
       success: true,
-      data: DashboardData,
+      data: DashboardData.data || DashboardData,
+      pagination: DashboardData.pagination || {}
     };
   } catch (error) {
-    console.error("Report error", error);
+    console.error("Dashboard error", error);
     return {
       success: false,
       message: error.message
@@ -853,7 +854,7 @@ async function updateMenuItem(menuId, menuData) {
 
   try {
 
-    //  const CategoryCreate = await repository.createCategory(
+   //  const CategoryCreate = await repository.createCategory(
     //   menuData.zodu_id,
     //   menuData.branch_id,
     //   menuData.menu_category,
@@ -862,21 +863,21 @@ async function updateMenuItem(menuId, menuData) {
     // menuData.menu_category_id = CategoryCreate.id;
 
     const updated = await repository.updateMenuItem(menuId, menuData);
-    return {success:true, data:updated};
+    return { success: true, data: updated };
   } catch (err) {
-        console.error("Unable to update menu item: " + err.message);
-     return {
+    console.error("Unable to update menu item: " + err.message);
+    return {
       success: false,
       message: err.message,
     };
   }
 };
 
-async function replaceUnit(old_unit_id, new_unit_id,branch_id) {
+async function replaceUnit(old_unit_id, new_unit_id, branch_id) {
   try {
-    const data =    await repository.replaceUnit(old_unit_id, new_unit_id, branch_id);
+    const data = await repository.replaceUnit(old_unit_id, new_unit_id, branch_id);
 
-    return {success:true, data:data};
+    return { success: true, data: data };
   } catch (err) {
     console.error("Unable to replace unit: " + err.message);
     return {
@@ -888,9 +889,9 @@ async function replaceUnit(old_unit_id, new_unit_id,branch_id) {
 
 async function deleteMenuItem(menuId) {
   try {
-    const data =    await repository.deleteMenuItem(menuId);
+    const data = await repository.deleteMenuItem(menuId);
 
-    return {success:true, data:data};
+    return { success: true, data: data };
   } catch (err) {
     console.error("Unable to delete menu item: " + err.message);
     return {
@@ -963,7 +964,7 @@ async function get_pos_data(data) {
     };
   } catch (error) {
     console.error("Menu Item Data getting Error", error);
-    return { 
+    return {
       success: false,
       message: error.message,
     };
@@ -1095,11 +1096,11 @@ async function createMenuItem(menuData) {
     const CreateQr = await repository.createQRCode(menuData.item_code);
     menuData.qr_code_id = CreateQr.id;
 
-    if(menuData.menu_image){
+    if (menuData.menu_image) {
       const imgResult = await uploadImg(menuData.menu_image);
       if (!imgResult.success) {
-      throw new Error(imgResult.message || "Image upload failed");
-    }
+        throw new Error(imgResult.message || "Image upload failed");
+      }
       menuData.menu_image = imgResult.fileUrl;
     }
 
@@ -1407,6 +1408,83 @@ async function editExpense(expenseId, expenseData) {
 
   } catch (err) {
     console.error("Error updating expense:", err);
+    return {
+      success: false,
+      message: err.message
+    };
+  }
+}
+
+async function editPurchase(purchaseId, purchaseData) {
+  try {
+    // 1. Fetch existing purchase
+    const existingPurchase = await repository.getPurchaseById(purchaseId);
+
+    if (!existingPurchase) {
+      return { success: false, message: "Purchase not found" };
+    }
+
+    // 2. Handle category update: if category provided
+    if (purchaseData.category) {
+      const category = await repository.createCategory(
+        purchaseData.zodu_id || existingPurchase.zodu_id,
+        purchaseData.branch_id || existingPurchase.branch_id,
+        purchaseData.category
+      );
+
+      purchaseData.category = category.id;
+    } else {
+      purchaseData.category = existingPurchase.category_id;
+    }
+
+    // 3. Handle vendor update: if vendor provided
+    if (purchaseData.vendor) {
+      const vendor = await repository.getVendorId(
+        purchaseData.zodu_id || existingPurchase.zodu_id,
+        purchaseData.branch_id || existingPurchase.branch_id,
+        purchaseData.vendor
+      );
+
+      if (vendor) {
+        purchaseData.vendor = vendor.vendor_id;
+      } else {
+        // If vendor not found, keep the existing vendor
+        purchaseData.vendor = existingPurchase.vendor_id;
+      }
+    } else {
+      purchaseData.vendor = existingPurchase.vendor_id;
+    }
+
+    // 4. Handle attachment upload: if new attachments provided
+    if (purchaseData.attachment_url && Array.isArray(purchaseData.attachment_url)) {
+      const uploadResult = await uploadMultiple(purchaseData.attachment_url);
+      if (!uploadResult || uploadResult.length === 0) {
+        throw new Error("Attachment upload failed");
+      }
+      purchaseData.attachment_url = JSON.stringify(uploadResult);
+    } else {
+      // Keep old attachments if not provided
+      purchaseData.attachment_url = existingPurchase.attachment_url;
+    }
+
+    // 5. Prepare updated fields: keep old values if not provided
+    const updatedPurchase = {
+      ...existingPurchase,
+      ...purchaseData, // overwrite only fields provided
+      purchase_id: existingPurchase.purchase_id, // purchase_id never changes
+    };
+
+    // 6. Update purchase in DB
+    const result = await repository.updatePurchase(purchaseId, updatedPurchase);
+
+    return {
+      success: true,
+      message: "Purchase updated successfully",
+      data: result
+    };
+
+  } catch (err) {
+    console.error("Error updating purchase:", err);
     return {
       success: false,
       message: err.message
@@ -2071,6 +2149,7 @@ module.exports = {
   getExpenseListData,
   createExpense,
   editExpense,
+  editPurchase,
   update_Inventory,
   get_Report,
   addin_Inventory,
