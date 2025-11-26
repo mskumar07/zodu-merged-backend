@@ -1190,10 +1190,169 @@ async function createExpense(expenseData) {
 }
 
 
-async function getOrdersSummary(zodu_id, branch_id, filterType, start_date, end_date, options = {}) {
+// async function getOrdersSummary(zodu_id, branch_id, filterType, start_date, end_date, options = {}) {
+//   try {
+//     // --- Calculate proper date range ---
+//     const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
+
+//     const {
+//       page = 1,
+//       limit = 10,
+//       sortBy = "order_date",
+//       sortOrder = "desc",
+//       top = 5,
+//       summaryType = "all"   // all | item | category
+//     } = options;
+
+//     // --- Fetch from repository ---
+//     const reportData = await repository.getOrdersSummary(
+//       zodu_id,
+//       branch_id,
+//       startDate,
+//       endDate,
+//       { page, limit, sortBy, sortOrder, top, summaryType }
+//     );
+
+//     if (!reportData?.success) {
+//       return { success: false, message: reportData?.message || "No data found" };
+//     }
+
+//     // --- Build response based on summaryType ---
+//     let responseData = {};
+
+//     switch(summaryType) {
+//       case "item":
+//         responseData = {
+//           item_wise_summary: reportData.data.item_wise_summary || [],
+//           top_orders: reportData.data.top_orders || []
+//         };
+//         break;
+
+//       case "category":
+//         responseData = {
+//           category_wise_summary: reportData.data.category_wise_summary || []
+//         };
+//         break;
+
+//       case "all":
+//       default:
+//         responseData = {
+//           total_orders: reportData.data.total_orders || 0,
+//           total_amount: reportData.data.total_amount || 0,
+//           total_quantity: reportData.data.total_quantity || 0,
+//           orders: reportData.data.orders || [],
+//           top_orders: reportData.data.top_orders || [],
+//           item_wise_summary: reportData.data.item_wise_summary || [],
+//           category_wise_summary: reportData.data.category_wise_summary || []
+//         };
+//         break;
+//     }
+
+//     return {
+//       success: true,
+//       message: "Orders summary fetched successfully",
+//       data: responseData,
+//       pagination: reportData.pagination || {}
+//     };
+
+//   } catch (error) {
+//     console.error("Service Error (getOrdersSummary):", error);
+//     return { success: false, message: error.message };
+//   }
+// }
+
+// // ============================
+// // PURCHASE SUMMARY SERVICE
+// // ============================
+// async function getPurchaseSummary(
+//   zodu_id,
+//   branch_id,
+//   filterType,
+//   start_date,
+//   end_date,
+//   options = {}
+// ) {
+//   try {
+//     const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
+
+//     const {
+//       page = 1,
+//       limit = 10,
+//       sortBy = "purchase_date",
+//       sortOrder = "desc",
+//       top = 5,
+//       summaryType = "all"   // <-- add this
+//     } = options;
+
+//     const reportData = await repository.getPurchaseSummary(
+//       zodu_id,
+//       branch_id,
+//       startDate,
+//       endDate,
+//       { page, limit, sortBy, sortOrder, top, summaryType }
+//     );
+
+//     if (!reportData?.success) {
+//       return { success: false, message: reportData?.message || "No data found" };
+//     }
+
+//     // --- return based on mode ---
+//     let responseData = {};
+
+//     if (summaryType === "all") {
+//       responseData = {
+//         total_purchase_count: reportData.data.total_purchase_count || 0,
+//         total_amount: reportData.data.total_amount || 0,
+//         total_paid: reportData.data.total_paid || 0,
+//         total_balance: reportData.data.total_balance || 0,
+//         top_items: reportData.data.top_items || [],
+//         top_vendors: reportData.data.top_vendors || [],
+//         purchases: reportData.data.purchases || []
+//       };
+//     }
+
+//     if (summaryType === "items") {
+//       responseData = {
+//         item_wise_summary: reportData.data.item_wise_summary || [],
+//         top_items: reportData.data.top_items || []
+//       };
+//     }
+
+//     if (summaryType === "category") {
+//       responseData = {
+//         category_wise_summary: reportData.data.category_wise_summary || []
+//       };
+//     }
+
+//     return {
+//       success: true,
+//       message: "Purchase summary fetched successfully",
+//       data: responseData,
+//       pagination: reportData.pagination || {}
+//     };
+
+//   } catch (error) {
+//     console.error("Service Error (getPurchaseSummary):", error);
+//     return { success: false, message: error.message };
+//   }
+// }
+
+// services/restaurant-service.js (or similar)
+
+async function getOrdersSummary(
+  zodu_id,
+  branch_id,
+  filterType,
+  start_date,
+  end_date,
+  options = {}
+) {
   try {
-    // --- Calculate proper date range ---
-    const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
+    const { startDate, endDate } = await getDateRange(
+      filterType,
+      start_date,
+      end_date
+    );
 
     const {
       page = 1,
@@ -1201,10 +1360,9 @@ async function getOrdersSummary(zodu_id, branch_id, filterType, start_date, end_
       sortBy = "order_date",
       sortOrder = "desc",
       top = 5,
-      summaryType = "all"   // all | item | category
+      summaryType = "all", // all | category
     } = options;
 
-    // --- Fetch from repository ---
     const reportData = await repository.getOrdersSummary(
       zodu_id,
       branch_id,
@@ -1214,56 +1372,47 @@ async function getOrdersSummary(zodu_id, branch_id, filterType, start_date, end_
     );
 
     if (!reportData?.success) {
-      return { success: false, message: reportData?.message || "No data found" };
+      return {
+        success: false,
+        message: reportData?.message || "No data found",
+      };
     }
 
-    // --- Build response based on summaryType ---
+    const raw = reportData.data;
     let responseData = {};
 
-    switch(summaryType) {
-      case "item":
-        responseData = {
-          item_wise_summary: reportData.data.item_wise_summary || [],
-          top_orders: reportData.data.top_orders || []
-        };
-        break;
-
-      case "category":
-        responseData = {
-          category_wise_summary: reportData.data.category_wise_summary || []
-        };
-        break;
-
-      case "all":
-      default:
-        responseData = {
-          total_orders: reportData.data.total_orders || 0,
-          total_amount: reportData.data.total_amount || 0,
-          total_quantity: reportData.data.total_quantity || 0,
-          orders: reportData.data.orders || [],
-          top_orders: reportData.data.top_orders || [],
-          item_wise_summary: reportData.data.item_wise_summary || [],
-          category_wise_summary: reportData.data.category_wise_summary || []
-        };
-        break;
+    if (summaryType === "category") {
+      // ✅ only category-wise summary
+      responseData = {
+        total_orders: raw.total_orders || 0,
+        total_amount: raw.total_amount || 0,
+        total_quantity: raw.total_quantity || 0,
+        category_wise_summary: raw.category_wise_summary || [],
+      };
+    } else {
+      // ✅ overall + orders list (+ category summary if you want)
+      responseData = {
+        total_orders: raw.total_orders || 0,
+        total_amount: raw.total_amount || 0,
+        total_quantity: raw.total_quantity || 0,
+        orders: raw.orders || [],
+        category_wise_summary: raw.category_wise_summary || [],
+        // ❌ no item_wise_summary, no top_orders in response
+      };
     }
 
     return {
       success: true,
       message: "Orders summary fetched successfully",
       data: responseData,
-      pagination: reportData.pagination || {}
+      pagination: reportData.pagination || {},
     };
-
   } catch (error) {
     console.error("Service Error (getOrdersSummary):", error);
     return { success: false, message: error.message };
   }
 }
 
-// ============================
-// PURCHASE SUMMARY SERVICE
-// ============================
 async function getPurchaseSummary(
   zodu_id,
   branch_id,
@@ -1273,7 +1422,11 @@ async function getPurchaseSummary(
   options = {}
 ) {
   try {
-    const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
+    const { startDate, endDate } = await getDateRange(
+      filterType,
+      start_date,
+      end_date
+    );
 
     const {
       page = 1,
@@ -1281,7 +1434,7 @@ async function getPurchaseSummary(
       sortBy = "purchase_date",
       sortOrder = "desc",
       top = 5,
-      summaryType = "all"   // <-- add this
+      summaryType = "all", // all | category
     } = options;
 
     const reportData = await repository.getPurchaseSummary(
@@ -1293,34 +1446,32 @@ async function getPurchaseSummary(
     );
 
     if (!reportData?.success) {
-      return { success: false, message: reportData?.message || "No data found" };
+      return {
+        success: false,
+        message: reportData?.message || "No data found",
+      };
     }
 
-    // --- return based on mode ---
+    const raw = reportData.data;
     let responseData = {};
-
-    if (summaryType === "all") {
-      responseData = {
-        total_purchase_count: reportData.data.total_purchase_count || 0,
-        total_amount: reportData.data.total_amount || 0,
-        total_paid: reportData.data.total_paid || 0,
-        total_balance: reportData.data.total_balance || 0,
-        top_items: reportData.data.top_items || [],
-        top_vendors: reportData.data.top_vendors || [],
-        purchases: reportData.data.purchases || []
-      };
-    }
-
-    if (summaryType === "items") {
-      responseData = {
-        item_wise_summary: reportData.data.item_wise_summary || [],
-        top_items: reportData.data.top_items || []
-      };
-    }
 
     if (summaryType === "category") {
       responseData = {
-        category_wise_summary: reportData.data.category_wise_summary || []
+        total_purchase_count: parseInt(raw.total_purchase_count || 0),
+        total_amount: raw.total_amount || 0,
+        total_paid: raw.total_paid || 0,
+        total_balance: raw.total_balance || 0,
+        category_wise_summary: raw.category_wise_summary || [],
+      };
+    } else {
+      responseData = {
+        total_purchase_count: parseInt(raw.total_purchase_count || 0),
+        total_amount: raw.total_amount || 0,
+        total_paid: raw.total_paid || 0,
+        total_balance: raw.total_balance || 0,
+        purchases: raw.purchases || [],
+        category_wise_summary: raw.category_wise_summary || [],
+        // ❌ top_items, top_vendors, item_wise_summary removed
       };
     }
 
@@ -1328,123 +1479,268 @@ async function getPurchaseSummary(
       success: true,
       message: "Purchase summary fetched successfully",
       data: responseData,
-      pagination: reportData.pagination || {}
+      pagination: reportData.pagination || {},
     };
-
   } catch (error) {
     console.error("Service Error (getPurchaseSummary):", error);
     return { success: false, message: error.message };
   }
 }
 
-async function getExpenseSummary(zodu_id, branch_id, filterType, start_date, end_date, options = {}) {
+async function getExpenseSummary(
+  zodu_id,
+  branch_id,
+  filterType,
+  start_date,
+  end_date,
+  options = {}
+) {
   try {
-    // --- Calculate proper date range ---
-    const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
+    const { startDate, endDate } = await getDateRange(
+      filterType,
+      start_date,
+      end_date
+    );
 
-    // --- Fetch from repository ---
-    const reportData = await repository.getExpenseSummary(zodu_id, branch_id, startDate, endDate, options);
+    const {
+      page = 1,
+      limit = 10,
+      sortBy = "expense_date",
+      sortOrder = "desc",
+      top = 5,
+      summaryType = "all", // all | category
+    } = options;
+
+    const reportData = await repository.getExpenseSummary(
+      zodu_id,
+      branch_id,
+      startDate,
+      endDate,
+      { page, limit, sortBy, sortOrder, top, summaryType }
+    );
 
     if (!reportData?.success) {
-      return { success: false, message: reportData?.message || "No data found" };
+      return {
+        success: false,
+        message: reportData?.message || "No data found",
+      };
     }
 
-    // --- Filter response based on summaryType ---
-    const { summaryType = "all" } = options;
+    const raw = reportData.data;
     let responseData = {};
 
-    switch(summaryType) {
-      case "item":
-        responseData = {
-          item_wise_summary: reportData.data.item_wise_summary || [],
-          top_expenses: reportData.data.top_expenses || []
-        };
-        break;
-      case "category":
-        responseData = { category_wise_summary: reportData.data.category_wise_summary || [] };
-        break;
-      case "all":
-      default:
-        responseData = {
-          total_expense_count: parseInt(reportData.data.total_expense_count || 0),
-          total_amount: reportData.data.total_amount || 0,
-          total_paid: reportData.data.total_paid || 0,
-          total_balance: reportData.data.total_balance || 0,
-          expenses: reportData.data.expenses || [],
-          top_expenses: reportData.data.top_expenses || [],
-          item_wise_summary: reportData.data.item_wise_summary || [],
-          category_wise_summary: reportData.data.category_wise_summary || []
-        };
-        break;
+    if (summaryType === "category") {
+      responseData = {
+        total_expense_count: parseInt(raw.total_expense_count || 0),
+        total_amount: raw.total_amount || 0,
+        total_paid: raw.total_paid || 0,
+        total_balance: raw.total_balance || 0,
+        category_wise_summary: raw.category_wise_summary || [],
+      };
+    } else {
+      responseData = {
+        total_expense_count: parseInt(raw.total_expense_count || 0),
+        total_amount: raw.total_amount || 0,
+        total_paid: raw.total_paid || 0,
+        total_balance: raw.total_balance || 0,
+        expenses: raw.expenses || [],
+        category_wise_summary: raw.category_wise_summary || [],
+        // ❌ item_wise_summary, top_expenses removed
+      };
     }
 
     return {
       success: true,
       message: "Expense summary fetched successfully",
       data: responseData,
-      pagination: reportData.pagination || {}
+      pagination: reportData.pagination || {},
     };
-
   } catch (error) {
     console.error("Service Error (getExpenseSummary):", error);
     return { success: false, message: error.message };
   }
 }
 
-async function getInventorySummary(zodu_id, branch_id, filterType, start_date, end_date, options = {}) {
+async function getInventorySummary(
+  zodu_id,
+  branch_id,
+  filterType,
+  start_date,
+  end_date,
+  options = {}
+) {
   try {
-    // --- Calculate proper date range ---
-    const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
+    const { startDate, endDate } = await getDateRange(
+      filterType,
+      start_date,
+      end_date
+    );
 
-    // --- Fetch from repository ---
-    const reportData = await repository.getInventorySummary(zodu_id, branch_id, startDate, endDate, options);
+    const {
+      page = 1,
+      limit = 10,
+      sortBy = "updated_at",
+      sortOrder = "desc",
+      top = 5,
+      summaryType = "all", // all | category
+    } = options;
+
+    const reportData = await repository.getInventorySummary(
+      zodu_id,
+      branch_id,
+      startDate,
+      endDate,
+      { page, limit, sortBy, sortOrder, top, summaryType }
+    );
 
     if (!reportData?.success) {
-      return { success: false, message: reportData?.message || "No inventory data found" };
+      return {
+        success: false,
+        message: reportData?.message || "No inventory data found",
+      };
     }
 
-    // --- Filter response based on summaryType ---
-    const { summaryType = "all" } = options;
+    const raw = reportData.data;
     let responseData = {};
 
-    switch(summaryType) {
-      case "item":
-        responseData = {
-          low_stock_items: reportData.data.low_stock_items || [],
-          recently_updated_items: reportData.data.recently_updated_items || []
-        };
-        break;
-      case "category":
-        responseData = {
-          category_wise_summary: reportData.data.category_wise_summary || []
-        };
-        break;
-      case "all":
-      default:
-        responseData = {
-          total_items: parseInt(reportData.data.total_items || 0),
-          total_stock_qty: parseFloat(reportData.data.total_stock_qty || 0),
-          total_stock_value: parseFloat(reportData.data.total_stock_value || 0),
-          low_stock_items: reportData.data.low_stock_items || [],
-          recently_updated_items: reportData.data.recently_updated_items || [],
-          category_wise_summary: reportData.data.category_wise_summary || [],
-          inventory_list: reportData.data.inventory_list || []
-        };
-        break;
+    if (summaryType === "category") {
+      responseData = {
+        total_items: parseInt(raw.total_items || 0),
+        total_stock_qty: parseFloat(raw.total_stock_qty || 0),
+        total_stock_value: parseFloat(raw.total_stock_value || 0),
+        category_wise_summary: raw.category_wise_summary || [],
+      };
+    } else {
+      responseData = {
+        total_items: parseInt(raw.total_items || 0),
+        total_stock_qty: parseFloat(raw.total_stock_qty || 0),
+        total_stock_value: parseFloat(raw.total_stock_value || 0),
+        inventory_list: raw.inventory_list || [],
+        category_wise_summary: raw.category_wise_summary || [],
+        // ❌ low_stock_items, recently_updated_items removed
+      };
     }
 
     return {
       success: true,
       message: "Inventory summary fetched successfully",
       data: responseData,
-      pagination: reportData.pagination || {}
+      pagination: reportData.pagination || {},
     };
-
   } catch (error) {
     console.error("Service Error (getInventorySummary):", error);
     return { success: false, message: error.message };
   }
 }
+
+// async function getExpenseSummary(zodu_id, branch_id, filterType, start_date, end_date, options = {}) {
+//   try {
+//     // --- Calculate proper date range ---
+//     const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
+
+//     // --- Fetch from repository ---
+//     const reportData = await repository.getExpenseSummary(zodu_id, branch_id, startDate, endDate, options);
+
+//     if (!reportData?.success) {
+//       return { success: false, message: reportData?.message || "No data found" };
+//     }
+
+//     // --- Filter response based on summaryType ---
+//     const { summaryType = "all" } = options;
+//     let responseData = {};
+
+//     switch(summaryType) {
+//       case "item":
+//         responseData = {
+//           item_wise_summary: reportData.data.item_wise_summary || [],
+//           top_expenses: reportData.data.top_expenses || []
+//         };
+//         break;
+//       case "category":
+//         responseData = { category_wise_summary: reportData.data.category_wise_summary || [] };
+//         break;
+//       case "all":
+//       default:
+//         responseData = {
+//           total_expense_count: parseInt(reportData.data.total_expense_count || 0),
+//           total_amount: reportData.data.total_amount || 0,
+//           total_paid: reportData.data.total_paid || 0,
+//           total_balance: reportData.data.total_balance || 0,
+//           expenses: reportData.data.expenses || [],
+//           top_expenses: reportData.data.top_expenses || [],
+//           item_wise_summary: reportData.data.item_wise_summary || [],
+//           category_wise_summary: reportData.data.category_wise_summary || []
+//         };
+//         break;
+//     }
+
+//     return {
+//       success: true,
+//       message: "Expense summary fetched successfully",
+//       data: responseData,
+//       pagination: reportData.pagination || {}
+//     };
+
+//   } catch (error) {
+//     console.error("Service Error (getExpenseSummary):", error);
+//     return { success: false, message: error.message };
+//   }
+// }
+
+// async function getInventorySummary(zodu_id, branch_id, filterType, start_date, end_date, options = {}) {
+//   try {
+//     // --- Calculate proper date range ---
+//     const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
+
+//     // --- Fetch from repository ---
+//     const reportData = await repository.getInventorySummary(zodu_id, branch_id, startDate, endDate, options);
+
+//     if (!reportData?.success) {
+//       return { success: false, message: reportData?.message || "No inventory data found" };
+//     }
+
+//     // --- Filter response based on summaryType ---
+//     const { summaryType = "all" } = options;
+//     let responseData = {};
+
+//     switch(summaryType) {
+//       case "item":
+//         responseData = {
+//           low_stock_items: reportData.data.low_stock_items || [],
+//           recently_updated_items: reportData.data.recently_updated_items || []
+//         };
+//         break;
+//       case "category":
+//         responseData = {
+//           category_wise_summary: reportData.data.category_wise_summary || []
+//         };
+//         break;
+//       case "all":
+//       default:
+//         responseData = {
+//           total_items: parseInt(reportData.data.total_items || 0),
+//           total_stock_qty: parseFloat(reportData.data.total_stock_qty || 0),
+//           total_stock_value: parseFloat(reportData.data.total_stock_value || 0),
+//           low_stock_items: reportData.data.low_stock_items || [],
+//           recently_updated_items: reportData.data.recently_updated_items || [],
+//           category_wise_summary: reportData.data.category_wise_summary || [],
+//           inventory_list: reportData.data.inventory_list || []
+//         };
+//         break;
+//     }
+
+//     return {
+//       success: true,
+//       message: "Inventory summary fetched successfully",
+//       data: responseData,
+//       pagination: reportData.pagination || {}
+//     };
+
+//   } catch (error) {
+//     console.error("Service Error (getInventorySummary):", error);
+//     return { success: false, message: error.message };
+//   }
+//}
 
 
 

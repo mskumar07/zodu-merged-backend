@@ -1014,6 +1014,109 @@ router.post("/api/add/inventory", async (req,res)=>{
 
 });
 
+// router.get("/api/report/:type/:zodu_id/:branch_id", async (req, res) => {
+//   try {
+//     const { type, zodu_id, branch_id } = req.params;
+//     let {
+//       filterType = "year",
+//       start_date,
+//       end_date,
+//       summaryType = "all",   
+//       page = 1,
+//       limit = 30,
+//       sortBy = "order_date",
+//       sortOrder = "desc",
+//       top = 0,
+//     } = req.query;
+
+//     const validTypes = ["restaurant", "orders", "purchase", "expense", "inventory"];
+//     const validFilters = ["today", "week", "month", "year", "custom"];
+//     const validReportTypes = ["all", "item", "category"];  
+
+//     if (type === "purchase" && sortBy === "order_date") {
+//   sortBy = "purchase_date";
+// }
+
+// if (type === "expense" && sortBy === "order_date") {
+//   sortBy = "expense_date";
+// }
+
+// if (type === "inventory" && sortBy === "order_date") {
+//   sortBy = "created_at"; // adjust based on your table
+// }
+
+//     // Validate report type
+//     if (!validTypes.includes(type)) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Invalid type. Must be restaurant, orders, purchase, expense, inventory."
+//       });
+//     }
+
+//     if (!validReportTypes.includes(summaryType)) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Invalid reportType. Must be all, item, or category."
+//       });
+//     }
+
+//     // Validate date filter
+//     const validation = validateDateFilter(filterType, start_date, end_date);
+//     if (!validation.valid) {
+//       return res.status(400).json({ success: false, message: validation.message });
+//     }
+
+//     const serviceMap = {
+//       orders: service.getOrdersSummary,
+//       purchase: service.getPurchaseSummary,
+//       expense: service.getExpenseSummary,
+//       inventory: service.getInventorySummary,
+//     };
+
+//     const getDataFn = serviceMap[type];
+
+
+//     const getData = await getDataFn(
+//       zodu_id,
+//       branch_id,
+//       filterType,
+//       start_date,
+//       end_date,
+//       {
+//         page: parseInt(page),
+//         limit: parseInt(limit),
+//         sortBy,
+//         sortOrder,
+//         top: parseInt(top),
+//         summaryType  
+//       }
+//     );
+
+
+//     if (!getData?.success) {
+//       return res.status(400).json({
+//         success: false,
+//         message: getData?.message || "Failed to fetch data",
+//       });
+//     }
+
+//     return res.status(200).json({
+//       success: true,
+//       message: `${type} summary fetched successfully`,
+//       data: getData.data,
+//       pagination: getData.pagination || {},
+//     });
+
+//   } catch (error) {
+//     console.error("Error in /api/restaurant/summary:", error);
+//     return res.status(500).json({
+//       success: false,
+//       message: error.message || "Internal Server Error",
+//     });
+//   }
+// });
+// routes/report-routes.js
+
 router.get("/api/report/:type/:zodu_id/:branch_id", async (req, res) => {
   try {
     const { type, zodu_id, branch_id } = req.params;
@@ -1021,7 +1124,7 @@ router.get("/api/report/:type/:zodu_id/:branch_id", async (req, res) => {
       filterType = "year",
       start_date,
       end_date,
-      summaryType = "all",   
+      summaryType = "all",   // all | category
       page = 1,
       limit = 30,
       sortBy = "order_date",
@@ -1031,41 +1134,45 @@ router.get("/api/report/:type/:zodu_id/:branch_id", async (req, res) => {
 
     const validTypes = ["restaurant", "orders", "purchase", "expense", "inventory"];
     const validFilters = ["today", "week", "month", "year", "custom"];
-    const validReportTypes = ["all", "item", "category"];  
+    const validSummaryTypes = ["all", "category"];  // ✅ only these two
 
+    // Adjust sortBy for other types
     if (type === "purchase" && sortBy === "order_date") {
-  sortBy = "purchase_date";
-}
+      sortBy = "purchase_date";
+    }
+    if (type === "expense" && sortBy === "order_date") {
+      sortBy = "expense_date";
+    }
+    if (type === "inventory" && sortBy === "order_date") {
+      sortBy = "created_at";
+    }
 
-if (type === "expense" && sortBy === "order_date") {
-  sortBy = "expense_date";
-}
-
-if (type === "inventory" && sortBy === "order_date") {
-  sortBy = "created_at"; // adjust based on your table
-}
-
-    // Validate report type
+    // Validate type
     if (!validTypes.includes(type)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid type. Must be restaurant, orders, purchase, expense, inventory."
+        message:
+          "Invalid type. Must be restaurant, orders, purchase, expense, inventory.",
       });
     }
 
-    if (!validReportTypes.includes(summaryType)) {
+    // Validate summaryType
+    if (!validSummaryTypes.includes(summaryType)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid reportType. Must be all, item, or category."
+        message: "Invalid summaryType. Must be all or category.",
       });
     }
 
     // Validate date filter
     const validation = validateDateFilter(filterType, start_date, end_date);
     if (!validation.valid) {
-      return res.status(400).json({ success: false, message: validation.message });
+      return res
+        .status(400)
+        .json({ success: false, message: validation.message });
     }
 
+    // Map type → service fn
     const serviceMap = {
       orders: service.getOrdersSummary,
       purchase: service.getPurchaseSummary,
@@ -1074,7 +1181,6 @@ if (type === "inventory" && sortBy === "order_date") {
     };
 
     const getDataFn = serviceMap[type];
-
 
     const getData = await getDataFn(
       zodu_id,
@@ -1088,10 +1194,9 @@ if (type === "inventory" && sortBy === "order_date") {
         sortBy,
         sortOrder,
         top: parseInt(top),
-        summaryType  
+        summaryType,  // ✅ pass all/category
       }
     );
-
 
     if (!getData?.success) {
       return res.status(400).json({
@@ -1106,9 +1211,8 @@ if (type === "inventory" && sortBy === "order_date") {
       data: getData.data,
       pagination: getData.pagination || {},
     });
-
   } catch (error) {
-    console.error("Error in /api/restaurant/summary:", error);
+    console.error("Error in /api/report:", error);
     return res.status(500).json({
       success: false,
       message: error.message || "Internal Server Error",

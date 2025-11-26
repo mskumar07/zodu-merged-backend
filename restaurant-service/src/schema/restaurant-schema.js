@@ -72,7 +72,7 @@ const menu_item_create = Joi.object({
     Joi.string()                      
   ).allow(null),
   item_code: Joi.string().required(), 
-  menu_category: Joi.string().max(100).required(),
+  menu_category_id: Joi.number().required(),
   sell_price: Joi.string().max(100).required(),
   purchase_price: Joi.string().max(100).allow(null),
   hsn_code: Joi.string().max(50).allow(null).optional(),
