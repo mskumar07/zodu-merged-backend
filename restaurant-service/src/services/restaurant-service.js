@@ -203,11 +203,11 @@ console.error( error);
 };
 
 // Update Item
-async function editExpItem (id,name,branch_id)  {
+async function editExpItem (id,branch_id,name)  {
   try {
    
 
-    const updated = await repository.updateItem(id, name,branch_id);
+    const updated = await repository.updateItem(id,branch_id,name);
 
    return {success:true,data:updated} 
   } catch (error) {
@@ -250,14 +250,32 @@ async function getData(zudo_id) {
     console.error("Company Data Getting Error", error);
     return {
       success: false,
-      message: err.message
+      message: error.message
     };
   }
 }
 
 async function deleteExpense(id) {
   try{
-     const result = await repository.deleteExpense(id);
+     const result = await repository.deleteExpenseWithItems(id);
+ return {
+      success: true,
+      data: result,
+    };
+
+  }catch (error) {
+    console.error("Error Deleteing Expense", error);
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+  
+}
+
+async function deletePurchase(id) {
+  try{
+     const result = await repository.deletePurchaseWithItems(id);
  return {
       success: true,
       data: result,
@@ -267,7 +285,7 @@ async function deleteExpense(id) {
     console.error("Company Data Getting Error", error);
     return {
       success: false,
-      message: err.message
+      message: error.message
     };
   }
   
@@ -285,7 +303,7 @@ async function getCategoryData(type,branch_id) {
     console.error("Category Data getting Error", error);
     return {
       success: false,
-      message: err.message
+      message: error.message
     };
   }
 }
@@ -301,10 +319,27 @@ async function addCategoryData(zodu_id, branch_id, name, type) {
     console.error("Category Data adding Error", error);
     return {
       success: false,
-      message: err.message
+      message: error.message
     };
   }
 }
+
+async function addExpenseCategory(zodu_id, branch_id, name) {
+  try {
+    const addedCategory = await repository.createExpenseCategory(zodu_id, branch_id, name);
+    return {
+      success: true,
+      data: addedCategory,
+    };
+  } catch (error) {
+    console.error("Category Data adding Error", error);
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+}
+
 
 async function updateCategoryData(id, name, type, branch_id) {
   try {
@@ -317,7 +352,7 @@ async function updateCategoryData(id, name, type, branch_id) {
     console.error("Category Data updating Error", error);
     return {
       success: false,
-      message: err.message
+      message: error.message
     };
   }
 }
@@ -326,17 +361,49 @@ async function deleteCategoryData(id, branch_id) {
     const deletedCategory = await repository.deleteCategory(id, branch_id);
     return {
       success: true,
+      data: deletedCategory.message,
+    };
+  } catch (error) {
+    console.error("Category Data deleting Error", error);
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+}
+
+
+async function updateExpenseCategory(name,id,branch_id) {
+  try {
+    const updatedCategory = await repository.updateExpenseCategory(name,id,branch_id);
+    return {
+      success: true,
+      data: updatedCategory,
+    };
+  } catch (error) {
+    console.error("Category Data updating Error", error);
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+}
+async function deleteExpenseCategory(id) {
+  try {
+    console.log("fromserv",id)
+    const deletedCategory = await repository.deleteExpenseCategory(id);
+    return {
+      success: true,
       data: deletedCategory,
     };
   } catch (error) {
     console.error("Category Data deleting Error", error);
     return {
       success: false,
-      message: err.message
+      message: error.message
     };
   }
 }
-
 
 async function getHoldData(branch_id) {
   try {
@@ -349,7 +416,7 @@ async function getHoldData(branch_id) {
     console.error("Category Data getting Error", error);
     return {
       success: false,
-      message: err.message
+      message: error.message
     };
   }
 }
@@ -550,7 +617,7 @@ async function get_Report(data) {
     console.error("Report error", error);
     return {
       success: false,
-      message: err.message
+      message: error.message
     };
   }
 
@@ -665,9 +732,9 @@ async function getVendorData(branch_id) {
   }
 }
 
-async function getInventoryListData(branch_id, type) {
+async function getInventoryListData(branch_id, type,category) {
   try {
-    const allInventoryData = await repository.get_inventory_list(branch_id, type);
+    const allInventoryData = await repository.get_inventory_list(branch_id, type,category);
     return {
       success: true,
       data: allInventoryData,
@@ -684,12 +751,7 @@ async function getInventoryListData(branch_id, type) {
 async function addin_Inventory(data) {
 
   try {
-    const CategoryCreate = await repository.createCategory(
-      data.zodu_id,
-      data.branch_id,
-      data.category
-    );
-    data.category = CategoryCreate.id;
+ 
     const InventoryData = await repository.addin_Inventory(data)
     return {
       success: true,
@@ -1096,13 +1158,13 @@ async function createMenuItem(menuData) {
     const CreateQr = await repository.createQRCode(menuData.item_code);
     menuData.qr_code_id = CreateQr.id;
 
-    if (menuData.menu_image) {
-      const imgResult = await uploadImg(menuData.menu_image);
-      if (!imgResult.success) {
-        throw new Error(imgResult.message || "Image upload failed");
-      }
-      menuData.menu_image = imgResult.fileUrl;
-    }
+    // if (menuData.menu_image) {
+    //   const imgResult = await uploadImg(menuData.menu_image);
+    //   if (!imgResult.success) {
+    //     throw new Error(imgResult.message || "Image upload failed");
+    //   }
+    //   menuData.menu_image = imgResult.fileUrl;
+    // }
 
     // const CategoryCreate = await repository.createCategory(
     //   menuData.zodu_id,
@@ -1118,7 +1180,6 @@ async function createMenuItem(menuData) {
       menuData.branch_id
     );
     menuData.menu_id = `${menuData.zodu_id}-${menuData.branch_id}-${nextNumber}`;
-    console.log(nextNumber)
     menuData.menu_code = menuData.item_code
     menuData.favorites = false
 
@@ -1154,30 +1215,7 @@ async function editMenuItem(menuId, menuData) {
       menuData.qr_code_id = existingMenu.qr_code_id;
     }
 
-    // 3. Handle image upload: if new image provided
-    if (menuData.menu_image) {
-      const imgResult = await uploadImg(menuData.menu_image);
-      if (!imgResult.success) {
-        throw new Error(imgResult.message || "Image upload failed");
-      }
-      menuData.menu_image = imgResult.fileUrl;
-    } else {
-      // Keep old image if not provided
-      menuData.menu_image = existingMenu.menu_image;
-    }
-
-    // 4. Handle category update: if menu_category provided
-    if (menuData.menu_category) {
-      const category = await repository.createCategory(
-        menuData.zodu_id || existingMenu.zodu_id,
-        menuData.branch_id || existingMenu.branch_id,
-        menuData.menu_category
-      );
-      menuData.menu_category_id = category.id;
-    } else {
-      menuData.menu_category_id = existingMenu.menu_category_id;
-    }
-
+    
     // 5. Prepare updated fields: keep old values if not provided
     const updatedMenu = {
       ...existingMenu,
@@ -1294,40 +1332,52 @@ async function createVendor(vendorData) {
   }
 }
 
+async function editVendor(vendorData) {
+  try {
+
+    const newVendor = await repository.editVendor(vendorData);
+    return {
+      success: true,
+      message: "Vendor update successfully",
+      data: newVendor,
+    };
+  } catch (err) {
+    console.error("Error inserting Vendor:", err);
+    return {
+      success: false,
+      message: err.message,
+    };
+  }
+}
+
+async function deleteVendor(id) {
+  try{
+     const result = await repository.deleteVendor(id);
+ return {
+      success: true,
+      data: result.deleted,
+    };
+
+  }catch (error) {
+    console.error("Error Deleteing Vendor", error);
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+  
+}
+
 async function createPurchaseOrder(purchaseOrderData) {
   try {
-    // -------------------------------------------
-    // Step 1: Create category
-    // -------------------------------------------
-    const CategoryCreate = await repository.createCategory(
-      purchaseOrderData.zodu_id,
-      purchaseOrderData.branch_id,
-      purchaseOrderData.category
-    );
-    purchaseOrderData.category = CategoryCreate.id;
 
-    // -------------------------------------------
-    // Step 2: Get vendor ID
-    // -------------------------------------------
-    const getVendor = await repository.getVendorId(
-      purchaseOrderData.zodu_id,
-      purchaseOrderData.branch_id,
-      purchaseOrderData.vendor
-    );
-    purchaseOrderData.vendor = getVendor.vendor_id;
-
-    // -------------------------------------------
-    // Step 4: Generate Purchase ID
-    // -------------------------------------------
     const nextPurchaseId = await repository.getNextPurchaseId(
       purchaseOrderData.branch_id
     );
 
     purchaseOrderData.purchase_id = `${purchaseOrderData.branch_id}-PO${nextPurchaseId}`;
 
-    // -------------------------------------------
-    // Step 5: Save purchase order + items
-    // -------------------------------------------
+ 
     await repository.createPurchaseOrder(purchaseOrderData);
 
     await repository.insertPurchaseItems(
@@ -1344,9 +1394,9 @@ async function createPurchaseOrder(purchaseOrderData) {
       purchaseOrderData.purchase_type
     );
 
-    purchaseOrderData.expense_date = purchaseOrderData.purchase_date;
+    // purchaseOrderData.expense_date = purchaseOrderData.purchase_date;
 
-    await repository.addExpense(purchaseOrderData);
+    // await repository.addExpense(purchaseOrderData);
 
     return {
       success: true,
@@ -1364,21 +1414,16 @@ async function createPurchaseOrder(purchaseOrderData) {
 
 async function createExpense(expenseData) {
   try {
-    const CategoryCreate = await repository.createExpenseCategory(
-      expenseData.zodu_id,
-      expenseData.branch_id,
-      expenseData.category
-    );
-    expenseData.category = CategoryCreate.id;
+ 
 
     await repository.addExpense(expenseData);
 
     return {
       success: true,
-      message: "Purchase order created successfully",
+      message: "Expense order created successfully",
     };
   } catch (err) {
-    console.error("Error inserting Purchase Order:", err);
+    console.error("Error inserting Expense", err);
     return {
       success: false,
       message: err.message,
@@ -1387,18 +1432,18 @@ async function createExpense(expenseData) {
 
 }
 
-async function editExpense(expenseId, expenseData) {
+
+async function editExpense(expenseData) {
   try {
     // 1. Fetch existing expense
-    const existingExpense = await repository.getExpenseById(expenseId);
+    const existingExpense = await repository.getExpenseById(expenseData.expenseId);
     // console.log(existingExpense);
     if (!existingExpense) {
       return { success: false, message: "Expense not found" };
     }
     // 5. Update expense in DB
-    const result = await repository.edit_expense(expenseId,expenseData );
+    const result = await repository.edit_expense(expenseData );
 
-    console.log("res",result)
 
     return {
       success: true,
@@ -1415,59 +1460,17 @@ async function editExpense(expenseId, expenseData) {
   }
 }
 
-async function editPurchase(purchaseId, purchaseData) {
+async function editPurchase(purchaseData) {
   try {
     // 1. Fetch existing purchase
-    const existingPurchase = await repository.getPurchaseById(purchaseId);
+    const existingPurchase = await repository.getPurchaseById(purchaseData.purchaseId);
 
     if (!existingPurchase) {
       return { success: false, message: "Purchase not found" };
     }
 
-    // 2. Handle category update: if category provided
-    if (purchaseData.category) {
-      const category = await repository.createCategory(
-        purchaseData.zodu_id || existingPurchase.zodu_id,
-        purchaseData.branch_id || existingPurchase.branch_id,
-        purchaseData.category
-      );
 
-      purchaseData.category = category.id;
-    } else {
-      purchaseData.category = existingPurchase.category_id;
-    }
 
-    // 3. Handle vendor update: if vendor provided
-    if (purchaseData.vendor) {
-      const vendor = await repository.getVendorId(
-        purchaseData.zodu_id || existingPurchase.zodu_id,
-        purchaseData.branch_id || existingPurchase.branch_id,
-        purchaseData.vendor
-      );
-
-      if (vendor) {
-        purchaseData.vendor = vendor.vendor_id;
-      } else {
-        // If vendor not found, keep the existing vendor
-        purchaseData.vendor = existingPurchase.vendor_id;
-      }
-    } else {
-      purchaseData.vendor = existingPurchase.vendor_id;
-    }
-
-    // 4. Handle attachment upload: if new attachments provided
-    if (purchaseData.attachment_url && Array.isArray(purchaseData.attachment_url)) {
-      const uploadResult = await uploadMultiple(purchaseData.attachment_url);
-      if (!uploadResult || uploadResult.length === 0) {
-        throw new Error("Attachment upload failed");
-      }
-      purchaseData.attachment_url = JSON.stringify(uploadResult);
-    } else {
-      // Keep old attachments if not provided
-      purchaseData.attachment_url = existingPurchase.attachment_url;
-    }
-
-    // 5. Prepare updated fields: keep old values if not provided
     const updatedPurchase = {
       ...existingPurchase,
       ...purchaseData, // overwrite only fields provided
@@ -1475,7 +1478,7 @@ async function editPurchase(purchaseId, purchaseData) {
     };
 
     // 6. Update purchase in DB
-    const result = await repository.updatePurchase(purchaseId, updatedPurchase);
+    const result = await repository.updatePurchase(updatedPurchase);
 
     return {
       success: true,
@@ -2184,5 +2187,11 @@ module.exports = {
   getExpAllItems,
   removeExpItem,
   editExpItem,
-  deleteExpense
+  deleteExpense,
+  updateExpenseCategory,
+  deleteExpenseCategory,
+  addExpenseCategory,
+  deletePurchase,
+  editVendor,
+  deleteVendor
 };

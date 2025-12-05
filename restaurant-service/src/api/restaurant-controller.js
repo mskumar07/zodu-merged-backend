@@ -267,9 +267,9 @@ router.put(
       await conn.query("BEGIN");
 
       // If image uploaded, attach file buffer
-      if (req.file) {
-        menuData.menu_image = req.file;
-      }
+      // if (req.file) {
+      //   menuData.menu_image = req.file;
+      // }
 
       // Validate input using Joi schema for edit (we can reuse or create a new schema)
       const { errors, input } = await RequestValidator(
@@ -371,21 +371,72 @@ router.post(
   }
 );
 
+router.put(
+  "/api/edit/vendor",
+  async (req, res) => {
+    try {
+      const vendorData = req.body;
+
+      await conn.query("BEGIN");
+      const { errors, input } = await RequestValidator(
+        schema.edit_vendor_create,
+        vendorData
+      );
+
+      if (errors) {
+        await conn.query("ROLLBACK");
+        return res.status(400).json({ errors });
+      }
+
+      const data = await service.editVendor(input);
+
+      if (!data.success) {
+        await conn.query("ROLLBACK");
+        return res.status(400).json({ message: data.message });
+      }
+
+      await conn.query("COMMIT");
+      return res.status(201).json({ data });
+    } catch (error) {
+      await conn.query("ROLLBACK");
+      console.error(error);
+      return res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+
+router.delete("/api/delete/vendor/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+          await conn.query("BEGIN");
+    const data = await service.deleteVendor(id);
+    if(!data.success){
+      await conn.query("ROLLBACK");
+      return res.status(400).json({ message: data.message });
+    }
+return res.status(201).json({ data });
+  } catch (error) {
+    console.error(error);
+        return res.status(500).json({ error: error.message });
+
+  }
+  }
+);
 router.post(
   "/api/add/purchase_orders", upload.array("attachment_url", 10),
   async (req, res) => {
     try {
       const purchaseOrderData = req.body;
 
-
-      if (req.files && req.files.length > 0) {
-        purchaseOrderData.attachment_url = req.files.map(file => ({
-          filename: file.originalname,
-          mimetype: file.mimetype,
-          path: file.path,
-          size: file.size
-        }));
-      }
+      // if (req.files && req.files.length > 0) {
+      //   purchaseOrderData.attachment_url = req.files.map(file => ({
+      //     filename: file.originalname,
+      //     mimetype: file.mimetype,
+      //     path: file.path,
+      //     size: file.size
+      //   }));
+      // }
       purchaseOrderData.items = typeof purchaseOrderData.items === "string" ? JSON.parse(purchaseOrderData.items) : purchaseOrderData.items;
 
 
@@ -400,7 +451,6 @@ router.post(
         return res.status(400).json({ errors });
       }
 
-      console.log(input)
 
       const data = await service.createPurchaseOrder(input);
 
@@ -425,23 +475,13 @@ router.post(
   async (req, res) => {
     try {
       const expenseData = req.body;
-console.log(expenseData)
-
-      // if (req.file) {
-      //   expenseData.attachment_url = req.file; // multer stores file in req.file
-      // }
-      // expenseData.items = Array.isArray(expenseData.items)
-      //   ? expenseData.items
-      //   : expenseData.items
-      //     ? JSON.parse(expenseData.items)
-      //     : [];
-
 
       await conn.query("BEGIN");
       const { errors, input } = await RequestValidator(
         schema.expense_data,
         expenseData
       );
+      console.log(input)
 
       if (errors) {
         await conn.query("ROLLBACK");
@@ -450,9 +490,11 @@ console.log(expenseData)
 
       const data = await service.createExpense(input);
 
+      console.log(data)
+
       if (!data.success) {
         await conn.query("ROLLBACK");
-        return res.status(400).json({ message: data.message });
+        return res.status(400).json({ data });
       }
 
       await conn.query("COMMIT");
@@ -466,14 +508,13 @@ console.log(expenseData)
 );
 
 router.put(
-  "/api/edit/expense/:expense_id", upload.single("attachment_url"),
+  "/api/edit/expense", upload.single("attachment_url"),
   async (req, res) => {
-    const expenseId = req.params.expense_id;
     const expenseData = req.body;
+
 
     try {
       await conn.query("BEGIN");
-console.log("update",expenseData)
       // If attachment uploaded, attach file buffer
       // if (req.file) {
       //   expenseData.attachment_url = req.file;
@@ -500,7 +541,7 @@ console.log("update",expenseData)
       }
 
       // Call service to handle business logic and DB update
-      const result = await service.editExpense(expenseId, input);
+      const result = await service.editExpense(input);
 
       if (!result.success) {
         await conn.query("ROLLBACK");
@@ -508,7 +549,7 @@ console.log("update",expenseData)
       }
 
       await conn.query("COMMIT");
-      return res.status(200).json({ data: result.data });
+      return res.status(201).json({ data: result.data });
 
     } catch (error) {
       await conn.query("ROLLBACK");
@@ -519,18 +560,18 @@ console.log("update",expenseData)
 );
 
 router.put(
-  "/api/edit/purchase/:purchase_id", upload.array("attachment_url", 10),
+  "/api/edit/purchase", upload.array("attachment_url", 10),
   async (req, res) => {
-    const purchaseId = req.params.purchase_id;
     const purchaseData = req.body;
+    console.log("purchase",purchaseData);
 
     try {
       await conn.query("BEGIN");
 
       // If attachments uploaded, attach file buffers
-      if (req.files && req.files.length > 0) {
-        purchaseData.attachment_url = req.files;
-      }
+      // if (req.files && req.files.length > 0) {
+      //   purchaseData.attachment_url = req.files;
+      // }
 
       // Parse items if it's a string
       purchaseData.total_amount = Number(purchaseData.total_amount);
@@ -552,7 +593,7 @@ router.put(
       }
 
       // Call service to handle business logic and DB update
-      const result = await service.editPurchase(purchaseId, input);
+      const result = await service.editPurchase( input);
 
       if (!result.success) {
         await conn.query("ROLLBACK");
@@ -560,7 +601,7 @@ router.put(
       }
 
       await conn.query("COMMIT");
-      return res.status(200).json({ data: result.data });
+      return res.status(201).json({ data: result.data });
 
     } catch (error) {
       await conn.query("ROLLBACK");
@@ -660,7 +701,7 @@ router.put("/update/expense-item/:id/:branch_id",async (req, res) => {
       const data =await service.editExpItem(id,branch_id,name)
       if(!data.success){
           await conn.query("ROLLBACK");
-      return res.status(500).json({ message: data.message });
+      return res.status(400).json({ message: data.message });
       }
     return res.status(201).json({ data });
 
@@ -671,7 +712,7 @@ router.put("/update/expense-item/:id/:branch_id",async (req, res) => {
     }
   })
 
-router.delete("/delete/expitem/:id",async (req, res) => {
+router.delete("/delete/expense-item/:id",async (req, res) => {
   try{
     const {id} =req.params
     const data =await service.removeExpItem(id)
@@ -707,6 +748,23 @@ return res.status(201).json({ data });
   }
 );
 
+router.delete("/api/delete/purchase/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    await conn.query("BEGIN");
+    const data = await service.deletePurchase(id);
+    if(!data.success){
+      await conn.query("ROLLBACK");
+      return res.status(400).json({ message: data.message });
+    }
+return res.status(201).json({ data,message:"Purchase Deleted Successfully" });
+  } catch (error) {
+    console.error(error);
+        return res.status(500).json({ error: error.message });
+
+  }
+  }
+);
 router.put("/api/update/inventory", async (req, res) => {
   try {
     console.log(req.body);
@@ -780,7 +838,7 @@ router.delete("/delete/category/:id/:branch_id", async (req, res) => {
   try {
     const data = await service.deleteCategoryData(req.params.id, req.params.branch_id);
     if (!data.success) return res.status(400).json({ message: data.message });
-    return res.status(201).json({ message: "Category deleted successfully", data: data.data });
+    return res.status(201).json({ message: "Category deleted successfully" });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: error.message });
@@ -817,6 +875,37 @@ router.get("/get/expense-category/:branch_id", async (req, res) => {
   }
 });
 
+router.put("/update/expense-category/:id", async (req, res) => {
+  try {
+    const { name, branch_id } = req.body;
+    const{id} = req.params
+    const data = await service.updateExpenseCategory(name,id, branch_id)
+    if(!data.success) return res.status(400).json({ message: data.message });
+    return res.status(201).json({ message: "Data updated Successfully", Data: data.data });
+
+  }catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+
+})
+
+router.delete("/delete/expense-category/:id", async (req, res) => { 
+  try {
+    const { id } = req.params;
+    console.log("delete",id)
+    const data = await service.deleteExpenseCategory(id);
+    if(!data.success) return res.status(400).json({message: data.message});
+    return res.status(201).json({ message: "Data deleted Successfully", Data: data.data });
+
+  }catch (error) {
+    console.log(error);
+    return res.status(500).json({ error: error.message });
+  }
+})
+
+
+
 router.get("/get/purchase-category/:branch_id", async (req, res) => {
 
   try {
@@ -830,13 +919,26 @@ router.get("/get/purchase-category/:branch_id", async (req, res) => {
   }
 });
 
+router.post("/add/expense-category", async (req, res) => {
+  try {
+    const { zodu_id, branch_id, name } = req.body;
+    const data = await service.addExpenseCategory(zodu_id, branch_id, name);
+     if (!data.success) return res.status(400).json({ message: data.message });
+    return res.status(201).json({ message: "Data Get Successfully", Data: data.data });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+
 router.get("/get/inventory-list/:branch_id", async (req, res) => {
 
   try {
 
     const { branch_id } = req.params;
-    const type = req.query.type
-    const getInventoryListData = await service.getInventoryListData(branch_id, type);
+    const {type,category} = req.query
+    const getInventoryListData = await service.getInventoryListData(branch_id, type,category);
     if (!getInventoryListData.success) return res.status(400).json({ message: getInventoryListData.message });
     return res.status(201).json({ message: "Data Get Successfully", Data: getInventoryListData.data });
   } catch (error) {
