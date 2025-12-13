@@ -120,7 +120,7 @@ const inventorySchema =
 const itemSchema = Joi.object({
   menu_id: Joi.string().max(100).required(),
   name: Joi.string().max(200).required(),
-  qty: Joi.number().integer().min(1).required(),
+qty: Joi.number().positive().required(),
   price: Joi.number().precision(2).min(0).required(),
   image: Joi.string().allow(null, ''),
   tax: Joi.number().precision(2).min(0).required(),
@@ -249,7 +249,7 @@ const expense_data = Joi.object({
 const expense_data_update = Joi.object({
   zodu_id: Joi.string().max(50).optional(),
   branch_id: Joi.string().max(50).optional(),
-  expenseId: Joi.string().max(100).required(),
+  expense_id: Joi.string().max(100).required(),
   category: Joi.number().optional(),
   expense_date: Joi.date().optional(),
   total_amount: Joi.number().precision(2).min(0).optional(),

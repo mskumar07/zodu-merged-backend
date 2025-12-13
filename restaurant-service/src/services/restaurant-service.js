@@ -257,7 +257,7 @@ async function getData(zudo_id) {
 
 async function deleteExpense(id) {
   try{
-     const result = await repository.deleteExpenseWithItems(id);
+     const result = await repository.deleteExpense(id);
  return {
       success: true,
       data: result,
@@ -275,7 +275,7 @@ async function deleteExpense(id) {
 
 async function deletePurchase(id) {
   try{
-     const result = await repository.deletePurchaseWithItems(id);
+     const result = await repository.deletePurchase(id);
  return {
       success: true,
       data: result,
@@ -645,10 +645,10 @@ async function get_dashboard(zodu_id, branch_id, options = {}) {
 
 
 // --- Purchase Summary ---
-async function getPurchaseSummary(zodu_id, branch_id, filterType, start_date, end_date, page = 1, limit = 5) {
+async function getPurchaseSummary(zodu_id, branch_id, filterType, start_date, end_date, page = 1, limit = 5,search) {
   try {
     const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
-    const reportData = await repository.getPurchaseSummary(zodu_id, branch_id, startDate, endDate);
+    const reportData = await repository.getPurchaseSummary(zodu_id, branch_id, startDate, endDate,search);
 
     const data = reportData?.data || {};
     const topItems = Array.isArray(data.top_purchase_items) ? data.top_purchase_items : [];
@@ -681,10 +681,10 @@ async function getPurchaseSummary(zodu_id, branch_id, filterType, start_date, en
 
 
 // --- Expense Summary ---
-async function getExpenseSummary(zodu_id, branch_id, filterType, start_date, end_date) {
+async function getExpenseSummary(zodu_id, branch_id, filterType, start_date, end_date,search) {
   try {
     const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
-    const reportData = await repository.getExpenseSummary(zodu_id, branch_id, startDate, endDate);
+    const reportData = await repository.getExpenseSummary(zodu_id, branch_id, startDate, endDate,search);
 
     return {
       success: reportData?.success ?? true,
@@ -698,10 +698,10 @@ async function getExpenseSummary(zodu_id, branch_id, filterType, start_date, end
 }
 
 // --- Inventory Summary ---
-async function getInventorySummary(zodu_id, branch_id, filterType, start_date, end_date) {
+async function getInventorySummary(zodu_id, branch_id, filterType, start_date, end_date,search) {
   try {
     const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
-    const reportData = await repository.getInventorySummary(zodu_id, branch_id, startDate, endDate);
+    const reportData = await repository.getInventorySummary(zodu_id, branch_id, startDate, endDate,search);
 
     return {
       success: reportData?.success ?? true,
@@ -1436,7 +1436,7 @@ async function createExpense(expenseData) {
 async function editExpense(expenseData) {
   try {
     // 1. Fetch existing expense
-    const existingExpense = await repository.getExpenseById(expenseData.expenseId);
+    const existingExpense = await repository.getExpenseById(expenseData.expense_id);
     // console.log(existingExpense);
     if (!existingExpense) {
       return { success: false, message: "Expense not found" };
@@ -1736,6 +1736,7 @@ async function getOrdersSummary(
       sortOrder = "desc",
       top = 5,
       summaryType = "all", // all | category
+      search=""
     } = options;
 
     const reportData = await repository.getOrdersSummary(
@@ -1743,7 +1744,7 @@ async function getOrdersSummary(
       branch_id,
       startDate,
       endDate,
-      { page, limit, sortBy, sortOrder, top, summaryType }
+      { page, limit, sortBy, sortOrder, top, summaryType,search }
     );
 
     if (!reportData?.success) {
@@ -1810,6 +1811,7 @@ async function getPurchaseSummary(
       sortOrder = "desc",
       top = 5,
       summaryType = "all", // all | category
+      search=""
     } = options;
 
     const reportData = await repository.getPurchaseSummary(
@@ -1817,7 +1819,7 @@ async function getPurchaseSummary(
       branch_id,
       startDate,
       endDate,
-      { page, limit, sortBy, sortOrder, top, summaryType }
+      { page, limit, sortBy, sortOrder, top, summaryType,search }
     );
 
     if (!reportData?.success) {
@@ -1884,14 +1886,17 @@ async function getExpenseSummary(
       sortOrder = "desc",
       top = 5,
       summaryType = "all", // all | category
+      search =""
     } = options;
+
+    console.log("myseatcj",search )
 
     const reportData = await repository.getExpenseSummary(
       zodu_id,
       branch_id,
       startDate,
       endDate,
-      { page, limit, sortBy, sortOrder, top, summaryType }
+      { page, limit, sortBy, sortOrder, top, summaryType,search  }
     );
 
     if (!reportData?.success) {
@@ -1958,6 +1963,7 @@ async function getInventorySummary(
       sortOrder = "desc",
       top = 5,
       summaryType = "all", // all | category
+      search=""
     } = options;
 
     const reportData = await repository.getInventorySummary(
@@ -1965,7 +1971,7 @@ async function getInventorySummary(
       branch_id,
       startDate,
       endDate,
-      { page, limit, sortBy, sortOrder, top, summaryType }
+      { page, limit, sortBy, sortOrder, top, summaryType,search }
     );
 
     if (!reportData?.success) {
@@ -2008,117 +2014,45 @@ async function getInventorySummary(
   }
 }
 
-// async function getExpenseSummary(zodu_id, branch_id, filterType, start_date, end_date, options = {}) {
-//   try {
-//     // --- Calculate proper date range ---
-//     const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
-
-//     // --- Fetch from repository ---
-//     const reportData = await repository.getExpenseSummary(zodu_id, branch_id, startDate, endDate, options);
-
-//     if (!reportData?.success) {
-//       return { success: false, message: reportData?.message || "No data found" };
-//     }
-
-//     // --- Filter response based on summaryType ---
-//     const { summaryType = "all" } = options;
-//     let responseData = {};
-
-//     switch(summaryType) {
-//       case "item":
-//         responseData = {
-//           item_wise_summary: reportData.data.item_wise_summary || [],
-//           top_expenses: reportData.data.top_expenses || []
-//         };
-//         break;
-//       case "category":
-//         responseData = { category_wise_summary: reportData.data.category_wise_summary || [] };
-//         break;
-//       case "all":
-//       default:
-//         responseData = {
-//           total_expense_count: parseInt(reportData.data.total_expense_count || 0),
-//           total_amount: reportData.data.total_amount || 0,
-//           total_paid: reportData.data.total_paid || 0,
-//           total_balance: reportData.data.total_balance || 0,
-//           expenses: reportData.data.expenses || [],
-//           top_expenses: reportData.data.top_expenses || [],
-//           item_wise_summary: reportData.data.item_wise_summary || [],
-//           category_wise_summary: reportData.data.category_wise_summary || []
-//         };
-//         break;
-//     }
-
-//     return {
-//       success: true,
-//       message: "Expense summary fetched successfully",
-//       data: responseData,
-//       pagination: reportData.pagination || {}
-//     };
-
-//   } catch (error) {
-//     console.error("Service Error (getExpenseSummary):", error);
-//     return { success: false, message: error.message };
-//   }
-// }
-
-// async function getInventorySummary(zodu_id, branch_id, filterType, start_date, end_date, options = {}) {
-//   try {
-//     // --- Calculate proper date range ---
-//     const { startDate, endDate } = await getDateRange(filterType, start_date, end_date);
-
-//     // --- Fetch from repository ---
-//     const reportData = await repository.getInventorySummary(zodu_id, branch_id, startDate, endDate, options);
-
-//     if (!reportData?.success) {
-//       return { success: false, message: reportData?.message || "No inventory data found" };
-//     }
-
-//     // --- Filter response based on summaryType ---
-//     const { summaryType = "all" } = options;
-//     let responseData = {};
-
-//     switch(summaryType) {
-//       case "item":
-//         responseData = {
-//           low_stock_items: reportData.data.low_stock_items || [],
-//           recently_updated_items: reportData.data.recently_updated_items || []
-//         };
-//         break;
-//       case "category":
-//         responseData = {
-//           category_wise_summary: reportData.data.category_wise_summary || []
-//         };
-//         break;
-//       case "all":
-//       default:
-//         responseData = {
-//           total_items: parseInt(reportData.data.total_items || 0),
-//           total_stock_qty: parseFloat(reportData.data.total_stock_qty || 0),
-//           total_stock_value: parseFloat(reportData.data.total_stock_value || 0),
-//           low_stock_items: reportData.data.low_stock_items || [],
-//           recently_updated_items: reportData.data.recently_updated_items || [],
-//           category_wise_summary: reportData.data.category_wise_summary || [],
-//           inventory_list: reportData.data.inventory_list || []
-//         };
-//         break;
-//     }
-
-//     return {
-//       success: true,
-//       message: "Inventory summary fetched successfully",
-//       data: responseData,
-//       pagination: reportData.pagination || {}
-//     };
-
-//   } catch (error) {
-//     console.error("Service Error (getInventorySummary):", error);
-//     return { success: false, message: error.message };
-//   }
-//}
 
 
 
+ async function makePayment (data)  {
+  const {
+    zodu_id,
+    branch_id,
+    source_type, // purchase or expense
+    source_id,
+    paid_amount,
+    payment_type,
+   
+  } = data;
+
+  // ensure main payment record
+  const paymentRow = await repository.ensurePaymentForSource({
+    zodu_id,
+    branch_id,
+    source_type,
+    source_id,
+    total_amount: data.total_amount,
+  });
+
+  // create payment record (always append)
+  const history = await repository.insertPaymentHistory({
+    payment_id: paymentRow.payment_id,
+    zodu_id,
+    branch_id,
+    paid_amount,
+    payment_type,
+ 
+  });
+
+  return {
+    success: true,
+    message: "Payment applied",
+    data: { paymentRow, history },
+  };
+};
 
 
 
@@ -2193,5 +2127,6 @@ module.exports = {
   addExpenseCategory,
   deletePurchase,
   editVendor,
-  deleteVendor
+  deleteVendor,
+  makePayment
 };

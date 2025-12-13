@@ -1,5 +1,5 @@
 const { Pool } = require('pg');
-const { DB_USERNAME,DB_PASSWORD,DB_PORT,DB_HOSTNAME,DB_NAME } = require('../config/index');
+const { DB_USERNAME,DB_PASSWORD,DB_PORT,DB_HOSTNAME,DB_NAME } = require('../config');
 
 
 // Create a new client instance
