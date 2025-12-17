@@ -2,6 +2,7 @@
 const taskInstanceRepo = require('../repositories/taskInstanceRepo');
 
 const completeTask = async (taskInstanceId, { completed_by = null } = {}) => {
+  console.log("service",taskInstanceId,completed_by)
   const updated = await taskInstanceRepo.complete(taskInstanceId, completed_by);
   if (!updated) {
     const e = new Error('Task instance not found');

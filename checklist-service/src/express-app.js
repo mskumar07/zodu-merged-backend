@@ -19,7 +19,7 @@ app.use(HandleErrorWithLogger);
 
 conn.connect()
 .then(res => {
-    logger.info('Database Connected at');
+    logger.info('Database Connected at Checklist');
   })
   .catch(err => {
     logger.error('Connection error:', err.stack);

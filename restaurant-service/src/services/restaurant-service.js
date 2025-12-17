@@ -67,6 +67,7 @@ async function createCompanyService(companyData) {
 }
 
 async function uploadImg(file) {
+  console.log(file)
   try {
     if (!file || !file.buffer)
       throw new Error("Invalid file input");
@@ -804,6 +805,24 @@ async function addHoldMenu(data) {
 
   } catch (error) {
     console.error("❌ Hold Add Failed:", error);
+    return {
+      success: false,
+      message: error.message,
+    };
+  }
+}
+
+async function deleteHoldMenu(hold_id) {
+
+  try {
+    await repository.deleteHold(hold_id);
+
+    return {
+      success: true,
+      message: "Hold deleted successfully",
+    };
+  } catch (error) {
+    console.error("❌ Hold Delete Failed:", error);
     return {
       success: false,
       message: error.message,
@@ -2128,5 +2147,6 @@ module.exports = {
   deletePurchase,
   editVendor,
   deleteVendor,
-  makePayment
+  makePayment,
+  deleteHoldMenu
 };

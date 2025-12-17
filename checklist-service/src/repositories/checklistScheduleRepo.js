@@ -17,6 +17,7 @@ const findByChecklistId = async (checklist_id) => {
 };
 
 const update = async (id, patch) => {
+  console.log(id,patch)
   const keys = Object.keys(patch);
   if (!keys.length) return null;
   const sets = keys.map((k, i) => `${k} = $${i+1}`);

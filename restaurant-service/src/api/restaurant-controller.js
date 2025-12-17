@@ -149,7 +149,6 @@ router.post("/upload/multiple", upload.array("files", 20), async (req, res) => {
 
     const result = await service.uploadMultiple(req.files);
 
-    console.log(result);
 
     return res.status(200).json({ success: true, files: result });
   } catch (err) {
@@ -961,6 +960,7 @@ router.get("/get/purchase-list/:branch_id", async (req, res) => {
       category_id = ""
     } = req.query;
 
+    console.log(status)
     const getPurchaseListData = await service.getPurchaseListData(
       branch_id,
       page,
@@ -1490,6 +1490,20 @@ router.post("/add/hold_menu", async (req, res) => {
     await client.query("ROLLBACK");
     console.error("Error adding hold:", error);
     res.status(500).json({ error: "Failed to save hold" });
+  }
+});
+
+router.delete("/delete/hold-menu/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const data = await service.deleteHoldMenu(id);
+    if (!data.success) {
+      return res.status(400).json({ message: data.message });
+    }
+    return res.status(201).json({ data });
+  } catch (error) {
+    console.error("Error deleting hold:", error);
+    res.status(500).json({ error: "Failed to delete hold" });
   }
 });
 

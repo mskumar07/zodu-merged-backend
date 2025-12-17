@@ -1,10 +1,20 @@
 // src/controllers/checklistController.js
+const { sum } = require('pdf-lib');
 const checklistService = require('../services/checklistService');
+
+// const create = async (req, res, next) => {
+//   try {
+//     const row = await checklistService.createChecklist(req.body);
+//     res.status(201).json(row);
+//   } catch (err) {
+//     next(err);
+//   }
+// };
 
 const create = async (req, res, next) => {
   try {
-    const row = await checklistService.createChecklist(req.body);
-    res.status(201).json(row);
+    const result = await checklistService.createChecklistWithDetails(req.body);
+    res.status(201).json(result);
   } catch (err) {
     next(err);
   }
@@ -22,8 +32,10 @@ const getById = async (req, res, next) => {
 
 const list = async (req, res, next) => {
   try {
+        console.log(req.query)
+
     const rows = await checklistService.listChecklists(req.query);
-    res.json(rows);
+    res.json({Data:rows});
   } catch (err) {
     next(err);
   }
@@ -47,4 +59,16 @@ const remove = async (req, res, next) => {
   }
 };
 
-module.exports = { create, getById, list, update, remove };
+const summary = async (req, res) => {
+  const { zodu_id, branch_id, user_id } = req.query;
+
+  const data = await checklistService.getDashboardSummary({
+    zodu_id,
+    branch_id,
+    user_id
+  });
+
+  res.json(data);
+};
+
+module.exports = { create, getById, list, update, remove,summary };

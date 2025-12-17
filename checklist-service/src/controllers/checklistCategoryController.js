@@ -19,7 +19,7 @@ const get = async (req, res, next) => {
 const list = async (req, res, next) => {
   try {
     const rows = await categoryService.listCategories(req.query);
-    res.json(rows);
+    res.json({Data:rows});
   } catch (err) { next(err); }
 };
 

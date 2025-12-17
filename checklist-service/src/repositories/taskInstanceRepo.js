@@ -18,18 +18,32 @@ const findById = async (id) => {
   return res.rows[0];
 };
 
-const complete = async (id, completed_by = null) => {
+const complete = async (task_id, user_id ) => {
+  console.log(task_id,user_id)
   const q = `
-    UPDATE tbl_task_instance
-    SET status = 'completed',
-        completed_at = now(),
-        assigned_user_id = COALESCE($2, assigned_user_id)
-    WHERE id = $1
-    RETURNING *;
+    UPDATE tbl_task_instance ti
+    SET
+      status = 'completed',
+      completed_at = now(),
+      completed_by = $2
+    FROM tbl_task t
+    JOIN tbl_checklist_assignees ca
+      ON ca.checklist_id = t.checklist_id
+    WHERE ti.task_id = $1
+      AND ti.task_id = t.id
+      AND ca.user_id = $2
+    RETURNING ti.*;
   `;
-  const res = await db.query(q, [id, completed_by]);
+
+  const res = await db.query(q, [task_id, user_id]);
+
+  if (res.rowCount === 0) {
+    throw new Error('User not assigned to this checklist or invalid task');
+  }
+
   return res.rows[0];
 };
+
 
 const update = async (id, patch) => {
   const keys = Object.keys(patch);
@@ -42,4 +56,41 @@ const update = async (id, patch) => {
   return res.rows[0];
 };
 
-module.exports = { listByChecklistInstance, findById, complete, update };
+const createTx = async (checklist_instance_id, taskId) => {
+  await db.query(
+    `
+    INSERT INTO tbl_task_instance
+      (checklist_instance_id, task_id)
+    VALUES ($1,$2)
+    `,
+    [
+      checklist_instance_id,
+      taskId,
+      
+    ]
+  );
+};
+
+const removeByTaskId = async (task_id) => {
+  await db.query(
+    `
+    DELETE FROM tbl_task_instance
+    WHERE task_id = $1
+    `,
+    [task_id]
+  );
+};
+
+const exists = async (checklistInstanceId, taskId) => {
+  const q = `
+    SELECT 1 FROM tbl_task_instance
+    WHERE checklist_instance_id = $1 AND task_id = $2
+    LIMIT 1
+  `;
+  const res = await db.query(q, [checklistInstanceId, taskId]);
+  return res.rowCount > 0;
+};
+
+
+
+module.exports = { listByChecklistInstance, findById, complete, update, createTx, removeByTaskId ,exists};

@@ -1,13 +1,17 @@
 // src/repositories/checklistInstanceRepo.js
 const db = require('../database/connection');
+const { get } = require('../routes');
 
-const create = async ({ checklist_id, scheduled_for, deadline = null, status = 'pending' }) => {
-  const q = `
-    INSERT INTO tbl_checklist_instance (checklist_id, scheduled_for, deadline, status)
-    VALUES ($1, $2, $3, $4)
-    RETURNING *;
-  `;
-  const res = await db.query(q, [checklist_id, scheduled_for, deadline, status]);
+const create = async (data) => {
+  const res = await db.query(
+    `
+    INSERT INTO tbl_checklist_instance
+      (checklist_id, scheduled_for, status)
+    VALUES ($1,$2,$3)
+    RETURNING *
+    `,
+    [data.checklist_id, data.scheduled_for, data.status]
+  );
   return res.rows[0];
 };
 
@@ -29,4 +33,19 @@ const updateStatus = async (id, status) => {
   return res.rows[0];
 };
 
-module.exports = { create, findById, listByChecklist, updateStatus };
+const getLatestByChecklist = async (checklist_id) => {
+  const res = await db.query(
+    `
+    SELECT *
+    FROM tbl_checklist_instance
+    WHERE checklist_id = $1
+    ORDER BY created_at DESC
+    LIMIT 1
+    `,
+    [checklist_id]
+  );
+  return res.rows[0] || null;
+};
+
+
+module.exports = { create, findById, listByChecklist, updateStatus,getLatestByChecklist };

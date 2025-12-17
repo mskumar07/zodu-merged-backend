@@ -231,7 +231,7 @@ const values = [
     // ============================
     //  UPDATE INVENTORY (if product)
     // ============================
-    if (updatedMenu.menu_type.toLowerCase() === "product") {
+    if (updatedMenu.menu_type && updatedMenu.menu_type.toLowerCase() === "product") {      
       const invCheck = await conn.query(
         `SELECT * FROM tbl_inventory WHERE item_id = $1`,
         [menuId]
@@ -365,32 +365,41 @@ WITH filtered_purchase AS (
 
   AND (
     $3 = '' OR EXISTS (
-      SELECT 1 
+      SELECT 1
       FROM tbl_purchase_items pi
       WHERE pi.purchase_id = p.purchase_id
       AND pi.category_id = $3::int
     )
   )
 
-  AND (($4 = '' AND $5 = '') OR (p.purchase_date BETWEEN $4::date AND $5::date))
+  AND (($5 = '' AND $6 = '') OR (p.purchase_date BETWEEN $5::date AND $6::date))
 
   ORDER BY p.created_at DESC
-  LIMIT $6 OFFSET $7
+  LIMIT $7 OFFSET $8
 ),
 
 pay_join AS (
   SELECT
     p.*,
     COALESCE(pay.total_amount, 0) AS total_amount,
-    COALESCE(pay.paid_amount, 0) AS paid_amount,
+    COALESCE(pay.paid_amount, 0)  AS paid_amount,
     (COALESCE(pay.total_amount,0) - COALESCE(pay.paid_amount,0)) AS balance_amount,
     pay.payment_id
   FROM filtered_purchase p
   LEFT JOIN tbl_payment pay
-    ON pay.source_type='purchase'
-    AND pay.source_id = p.purchase_id
-    AND pay.branch_id = p.branch_id
-    AND pay.zodu_id = p.zodu_id
+    ON pay.source_type = 'purchase'
+   AND pay.source_id   = p.purchase_id
+   AND pay.branch_id   = p.branch_id
+   AND pay.zodu_id     = p.zodu_id
+),
+
+status_filtered AS (
+  SELECT *
+  FROM pay_join
+  WHERE
+    $4 = 'all'
+    OR ($4 = 'paid'   AND balance_amount = 0)
+    OR ($4 = 'unpaid' AND balance_amount > 0)
 ),
 
 purchase_data AS (
@@ -436,10 +445,10 @@ purchase_data AS (
       (
         SELECT JSON_AGG(
           JSON_BUILD_OBJECT(
-            'payment_id',ph.payment_id,
-            'paid_amount',ph.paid_amount,
-            'payment_mode',ph.payment_mode,
-            'paid_date',ph.paid_date,
+            'payment_id', ph.payment_id,
+            'paid_amount', ph.paid_amount,
+            'payment_mode', ph.payment_mode,
+            'paid_date', ph.paid_date,
             'created_at', TO_CHAR(ph.created_at,'DD-MON-YYYY HH12:MI AM')
           )
           ORDER BY ph.created_at DESC
@@ -450,40 +459,42 @@ purchase_data AS (
       '[]'
     ) AS payment_history
 
-  FROM pay_join pj
+  FROM status_filtered pj
   LEFT JOIN tbl_purchase_items pi ON pj.purchase_id = pi.purchase_id
   LEFT JOIN tbl_category c       ON pi.category_id = c.id
   LEFT JOIN tbl_vendor v         ON pj.vendor_id   = v.vendor_id
   GROUP BY
-    pj.purchase_id,pj.branch_id,pj.vendor_id,
-    pj.purchase_date,pj.purchase_type,pj.total_amount,
-    pj.paid_amount,pj.balance_amount,pj.payment_id,
-    pj.notes,pj.attachment_url,pj.created_at,pj.updated_at,
-    v.vendor_name,v.vendor_phone,
-    v.vendor_email,v.company_name
+    pj.purchase_id, pj.branch_id, pj.vendor_id,
+    pj.purchase_date, pj.purchase_type,
+    pj.total_amount, pj.paid_amount, pj.balance_amount,
+    pj.payment_id, pj.notes, pj.attachment_url,
+    pj.created_at, pj.updated_at,
+    v.vendor_name, v.vendor_phone,
+    v.vendor_email, v.company_name
 )
 
 SELECT
   JSON_AGG(purchase_data) AS purchases,
+  COUNT(*) OVER()        AS total_purchase_count,
+  SUM(paid_amount)       AS total_paid_amount,
+  SUM(balance_amount)    AS total_unpaid_amount,
 
-  COUNT(*) OVER() AS total_purchase_count,
-  SUM(paid_amount) AS total_paid_amount,
-  SUM(balance_amount) AS total_unpaid_amount,
-
-  SUM(CASE WHEN DATE_TRUNC('month', purchase_date)=DATE_TRUNC('month',CURRENT_DATE) 
+  SUM(CASE WHEN DATE_TRUNC('month', purchase_date)=DATE_TRUNC('month',CURRENT_DATE)
            THEN paid_amount ELSE 0 END) AS this_month_spent,
 
   SUM(CASE WHEN DATE_TRUNC('month', purchase_date)
-             = DATE_TRUNC('month',CURRENT_DATE - INTERVAL '1 month')
+           = DATE_TRUNC('month',CURRENT_DATE - INTERVAL '1 month')
            THEN paid_amount ELSE 0 END) AS last_month_spent
 
 FROM purchase_data;
+
 `;
 
     const result = await conn.query(query, [
       branch_id,   // $1
       search,      // $2
       category_id, // $3
+      status,   
       start_date,  // $4
       end_date,    // $5
       limit,       // $6  <-- IMPORTANT
@@ -2899,16 +2910,16 @@ exports.deleteExpense = async (expenseId) => {
       [expenseId]
     );
 
-    const attachmentURL = expenseData.rows[0]?.attachment_url || null;
+    const attachmentURL = expenseData.rows[0]?.attachment_url ?? [];
 
-console.log(attachmentURL);
-    // 🔥 Delete multiple files
-    for (const file of attachmentURL) {
-     
-      if (file) {
-        await deleteFileFromMinIO(file.name);
-      }
+if (Array.isArray(attachmentURL)) {
+  for (const file of attachmentURL) {
+    if (file?.name) {
+      await deleteFileFromMinIO(file.name);
     }
+  }
+}
+
 
     // 1) Get the payment_id linked to this expense
     const paymentResult = await conn.query(
@@ -2978,15 +2989,15 @@ exports.deletePurchase = async (purchaseId) => {
       [purchaseId]
     );
 
-    const attachmentURL = purchaseData.rows[0]?.attachment_url || null;
+  const attachmentURL = purchaseData.rows[0]?.attachment_url ?? [];
 
-    // 🔥 Delete multiple files
-    for (const file of attachmentURL) {
-     
-      if (file) {
-        await deleteFileFromMinIO(file.name);
-      }
+if (Array.isArray(attachmentURL)) {
+  for (const file of attachmentURL) {
+    if (file?.name) {
+      await deleteFileFromMinIO(file.name);
     }
+  }
+}
 
       const paymentResult = await conn.query(
       `SELECT payment_id 
@@ -4206,6 +4217,24 @@ exports.insertHoldItem = async (hold_id, zodu_id, branch_id, item) => {
   ]);
 }
 
+exports.deleteHoldItems = async (hold_id) => {
+  const query = `
+    DELETE FROM tbl_hold_items  
+    WHERE hold_id = $1 
+  `;
+
+  await conn.query(query, [hold_id]);
+};
+
+exports.deleteHold = async (hold_id) => {
+  const query = `
+    DELETE FROM tbl_hold
+    WHERE hold_id = $1 
+  `;
+
+  await conn.query(query, [hold_id]);
+};
+
 exports.ensurePaymentForSource = async ({
   zodu_id,
   branch_id,
@@ -4234,9 +4263,8 @@ exports.ensurePaymentForSource = async ({
       const updated = await conn.query(
         `
         UPDATE tbl_payment
-        SET total_amount = $1,
-            updated_at   = NOW()
-        WHERE payment_id = $2
+        SET total_amount = $1
+         WHERE payment_id = $2
         RETURNING *
         `,
         [total_amount, row.payment_id]
