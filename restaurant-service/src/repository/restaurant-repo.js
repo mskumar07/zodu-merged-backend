@@ -1056,6 +1056,7 @@ exports.updateFinalPayment = async (data) => {
   try {
     const { order_id, table_no, final_payment, items, zodu_id, branch_id,total_amt } = data;
 
+
     await conn.query("BEGIN");
 
     // 1️⃣ UPDATE FINAL PAYMENT
@@ -2010,22 +2011,20 @@ exports.createOrderedItems = async (orderData) => {
         const updateQuery = hasVariant
           ? `
             UPDATE tbl_ordered_items
-            SET qty = qty + $1,
-                price = price + $2
-            WHERE order_id = $3 AND item_id = $4 AND variant_id = $5
+            SET qty = qty + $1
+            WHERE order_id = $2 AND item_id = $3 AND variant_id = $4
             RETURNING *;
           `
           : `
             UPDATE tbl_ordered_items
-            SET qty = qty + $1,
-                price = price + $2
-            WHERE order_id = $3 AND item_id = $4 AND variant_id IS NULL
+            SET qty = qty + $1
+            WHERE order_id = $2 AND item_id = $3 AND variant_id IS NULL
             RETURNING *;
           `;
 
         const updateValues = hasVariant
-          ? [item.qty, item.price, orderData.order_id, item.menu_id, item.variant_id]
-          : [item.qty, item.price, orderData.order_id, item.menu_id];
+          ? [item.qty, orderData.order_id, item.menu_id, item.variant_id]
+          : [item.qty, orderData.order_id, item.menu_id];
 
         const result = await conn.query(updateQuery, updateValues);
 

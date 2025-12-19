@@ -1278,6 +1278,8 @@ router.delete("/delete/gst/:id", async (req, res) => {
 router.post("/api/completeorder", async (req, res) => {
   try {
     const data = req.body
+
+    console.log(req.body)
     const orderData = await service.update_Final_payment(data);
 
     if (!orderData.success) {
