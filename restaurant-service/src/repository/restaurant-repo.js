@@ -1054,7 +1054,7 @@ exports.get_menuItem_data = async (branch_id, page, limit, search) => {
 
 exports.updateFinalPayment = async (data) => {
   try {
-    const { order_id, table_no, final_payment, items, zodu_id, branch_id,total_amt } = data;
+    const { order_id, table_no, final_payment, items, zodu_id, branch_id,total_amt,payment_type } = data;
 
 
     await conn.query("BEGIN");
@@ -1067,7 +1067,8 @@ exports.updateFinalPayment = async (data) => {
       UPDATE tbl_orders
       SET final_payment = $1,
           total_amt = $2,
-          no_of_items = $3
+          no_of_items = $3,
+          payment_type = $6
       WHERE order_id = $4 AND table_no = $5
       RETURNING *;
     `;
@@ -1077,7 +1078,8 @@ exports.updateFinalPayment = async (data) => {
       total_amt, 
       noOfItems, 
       order_id, 
-      table_no
+      table_no,
+      payment_type
     ]);
 
 
@@ -2691,51 +2693,94 @@ exports.edit_expense = async (data) => {
 
 exports.getExpenseById = async (expense_id) => {
   try {
-    const result = await conn.query(
-      `SELECT 
+    const query = `
+    WITH expense_data AS (
+      SELECT
         e.expense_id,
         e.zodu_id,
         e.branch_id,
         e.category_id,
-        e.expense_date,
-        e.description,
+        c.category_name AS expense_name,
         e.attachment_url,
+        e.description,
+        e.expense_date,
         e.payment_type,
         e.created_at,
         e.updated_at,
-        c.name AS category_name
+
+        COALESCE(pay.total_amount,0) AS total_amount,
+        COALESCE(pay.paid_amount,0)  AS paid_amount,
+        (COALESCE(pay.total_amount,0) - COALESCE(pay.paid_amount,0)) AS balance_amount,
+
+        COALESCE(
+          JSON_AGG(
+            JSON_BUILD_OBJECT(
+              'item_id', ei.item_id,
+              'item_name', ei.item_name,
+              'quantity', ei.qty,
+              'price', ei.price
+            )
+          ) FILTER (WHERE ei.item_id IS NOT NULL),
+          '[]'
+        ) AS items
+
       FROM tbl_expense e
-      LEFT JOIN tbl_category c ON e.category_id = c.id
-      WHERE e.expense_id = $1`,
-      [expense_id]
-    );
+      LEFT JOIN tbl_expense_items ei 
+        ON e.expense_id = ei.expense_id
+      LEFT JOIN tbl_expense_category c 
+        ON e.category_id = c.id
+      LEFT JOIN tbl_payment pay
+        ON pay.source_type = 'expense'
+       AND pay.source_id   = e.expense_id
+       AND pay.branch_id   = e.branch_id
+       AND pay.zodu_id     = e.zodu_id
+
+      WHERE e.expense_id = $1
+      GROUP BY
+        e.expense_id,
+        c.category_name,
+        pay.total_amount,
+        pay.paid_amount
+    )
+
+    SELECT
+      ed.*,
+
+      -- payment history
+      (
+        SELECT COALESCE(
+          JSON_AGG(
+            JSON_BUILD_OBJECT(
+              'paid_amount', ph.paid_amount,
+              'payment_type', ph.payment_mode,
+              'created_at', ph.created_at
+            )
+            ORDER BY ph.created_at DESC
+          ),
+          '[]'
+        )
+        FROM tbl_payment_history ph
+        JOIN tbl_payment p2 ON p2.payment_id = ph.payment_id
+        WHERE p2.source_type = 'expense'
+          AND p2.source_id   = ed.expense_id
+      ) AS payment_history
+
+    FROM expense_data ed;
+    `;
+
+    const result = await conn.query(query, [expense_id]);
 
     if (result.rows.length === 0) {
       return null;
     }
 
-    // Also fetch expense items
-    const itemsResult = await conn.query(
-      `SELECT 
-        item_id,
-        item_name,
-        qty,
-        price
-      FROM tbl_expense_items
-      WHERE expense_id = $1`,
-      [expense_id]
-    );
-
-    const expense = result.rows[0];
-    expense.items = itemsResult.rows;
-
-
-    return expense;
+    return result.rows[0]; // ✅ single expense object
   } catch (err) {
-    console.error(" Error in getExpenseById:", err.message);
+    console.error("Error in getExpenseById:", err.message);
     throw new Error("Unable to fetch expense: " + err.message);
   }
 };
+
 
 
 
@@ -2797,54 +2842,111 @@ exports.deleteItem = async (id) => {
 
 exports.getPurchaseById = async (purchase_id) => {
   try {
-    const result = await conn.query(
-      `SELECT 
+    const query = `
+    WITH purchase_base AS (
+      SELECT
         p.purchase_id,
         p.zodu_id,
         p.branch_id,
         p.vendor_id,
         p.purchase_date,
         p.purchase_type,
-        p.attachment_url,
-        p.payment_type,
         p.notes,
+        p.attachment_url,
         p.created_at,
         p.updated_at,
-        v.vendor_name
+
+        COALESCE(pay.total_amount,0) AS total_amount,
+        COALESCE(pay.paid_amount,0)  AS paid_amount,
+        (COALESCE(pay.total_amount,0) - COALESCE(pay.paid_amount,0)) AS balance_amount,
+        pay.payment_id
+
       FROM tbl_purchase p
-      LEFT JOIN tbl_vendor v ON p.vendor_id = v.vendor_id
-      WHERE p.purchase_id = $1`,
-      [purchase_id]
-    );
+      LEFT JOIN tbl_payment pay
+        ON pay.source_type = 'purchase'
+       AND pay.source_id   = p.purchase_id
+       AND pay.branch_id   = p.branch_id
+       AND pay.zodu_id     = p.zodu_id
+      WHERE p.purchase_id = $1
+    ),
+
+    purchase_data AS (
+      SELECT
+        pb.*,
+
+        v.vendor_name,
+        v.vendor_phone,
+        v.vendor_email,
+        v.company_name,
+
+        COALESCE(
+          JSON_AGG(
+            JSON_BUILD_OBJECT(
+              'item_id', pi.item_id,
+              'item_name', pi.item_name,
+              'quantity', pi.qty,
+              'unit', pi.unit,
+              'price', pi.purchase_price,
+              'total', pi.total_price,
+              'category', c.name,
+              'category_id', pi.category_id
+            )
+          ) FILTER (WHERE pi.item_id IS NOT NULL),
+          '[]'
+        ) AS items
+
+      FROM purchase_base pb
+      LEFT JOIN tbl_purchase_items pi ON pb.purchase_id = pi.purchase_id
+      LEFT JOIN tbl_category c       ON pi.category_id = c.id
+      LEFT JOIN tbl_vendor v         ON pb.vendor_id   = v.vendor_id
+      GROUP BY
+        pb.purchase_id, pb.zodu_id, pb.branch_id,
+        pb.vendor_id, pb.purchase_date, pb.purchase_type,
+        pb.notes, pb.attachment_url,
+        pb.total_amount, pb.paid_amount, pb.balance_amount,
+        pb.payment_id,
+        pb.created_at, pb.updated_at,
+        v.vendor_name, v.vendor_phone,
+        v.vendor_email, v.company_name
+    )
+
+    SELECT
+      pd.*,
+
+      COALESCE(
+        (
+          SELECT JSON_AGG(
+            JSON_BUILD_OBJECT(
+              'payment_id', ph.payment_id,
+              'paid_amount', ph.paid_amount,
+              'payment_mode', ph.payment_mode,
+              'paid_date', ph.paid_date,
+              'created_at', TO_CHAR(ph.created_at,'DD-MON-YYYY HH12:MI AM')
+            )
+            ORDER BY ph.created_at DESC
+          )
+          FROM tbl_payment_history ph
+          WHERE ph.payment_id = pd.payment_id
+        ),
+        '[]'
+      ) AS payment_history
+
+    FROM purchase_data pd;
+    `;
+
+    const result = await conn.query(query, [purchase_id]);
 
     if (result.rows.length === 0) {
       return null;
     }
 
-   const itemsResult = await conn.query(
-  `SELECT 
-      pi.item_id,
-      pi.item_name,
-      pi.qty,
-      pi.unit,
-      pi.purchase_price,
-      c.name AS category_name
-   FROM tbl_purchase_items pi
-   LEFT JOIN tbl_category c ON pi.category_id = c.id
-   WHERE pi.purchase_id = $1`,
-  [purchase_id]
-);
-
-
-    const purchase = result.rows[0];
-    purchase.items = itemsResult.rows;
-
-    return purchase;
+    return result.rows[0]; // ✅ single purchase object
   } catch (err) {
-    console.error(" Error in getPurchaseById:", err.message);
+    console.error("Error in getPurchaseById:", err.message);
     throw new Error("Unable to fetch purchase: " + err.message);
   }
 };
+
 
 
 

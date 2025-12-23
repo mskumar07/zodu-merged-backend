@@ -559,7 +559,7 @@ router.put(
 );
 
 router.put(
-  "/api/edit/purchase", upload.array("attachment_url", 10),
+  "/api/edit/purchase",
   async (req, res) => {
     const purchaseData = req.body;
     console.log("purchase",purchaseData);
@@ -1015,6 +1015,33 @@ router.get("/get/expense-list/:branch_id", async (req, res) => {
 
     return res.status(200).json(data.data);
 
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.get("/get/purchase/:purchase_id", async (req, res) => {
+  try {
+    const { purchase_id } = req.params;
+    const data = await service.getPurchaseById(purchase_id);
+    if (!data.success)
+      return res.status(400).json({ message: data.message });
+    return res.status(200).json({ message: "Data Get Successfully", Data: data.data });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  } 
+});
+
+router.get("/get/expense-details/:expense_id", async (req, res) => {
+  try {
+    const { expense_id } = req.params;
+    const data = await service.getExpenseDetails(expense_id);
+
+    if (!data.success)
+      return res.status(400).json({ message: data.message });
+    return res.status(200).json({ message: "Data Get Successfully", Data: data.data });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: error.message });
