@@ -1333,6 +1333,15 @@ async function getExpenseListData(params) {
   }
 }
 
+async function getExpenseDetails(params) {
+  try {
+    const data = await repository.getExpenseById(params);
+    return { success: true, data };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+}
+
 async function createVendor(vendorData) {
   try {
 
@@ -1535,6 +1544,22 @@ async function editPurchase(purchaseData) {
     return {
       success: false,
       message: err.message
+    };
+  }
+}
+
+async function getPurchaseById(purchaseId) {
+  try {
+    const purchaseData = await repository.getPurchaseById(purchaseId);  
+    return {
+      success: true,
+      data: purchaseData,
+    };
+  } catch (error) {
+    console.error("Purchase Data getting Error", error);
+    return {
+      success: false,
+      message: error.message,
     };
   }
 }
