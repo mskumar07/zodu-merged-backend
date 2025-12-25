@@ -73,6 +73,8 @@ const menu_item_create = Joi.object({
   ).allow(null),
   item_code: Joi.string().required(), 
   menu_category_id: Joi.number().required(),
+  opening_stock: Joi.number().min(0).optional(),
+  alert_stock: Joi.number().min(0).optional(),
   sell_price: Joi.string().max(100).required(),
   purchase_price: Joi.string().max(100).allow(null),
   hsn_code: Joi.string().max(50).allow(null).optional(),

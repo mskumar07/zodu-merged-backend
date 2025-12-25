@@ -1378,7 +1378,6 @@ router.get("/api/report/:type/:zodu_id/:branch_id", async (req, res) => {
        search = "" 
     } = req.query;
 
-    console.log("check",search)
 
     const validTypes = ["restaurant", "orders", "purchase", "expense", "inventory"];
     const validFilters = ["today", "week", "month", "year", "custom"];
@@ -1469,6 +1468,32 @@ router.get("/api/report/:type/:zodu_id/:branch_id", async (req, res) => {
   }
 });
 
+router.get("/get/purchase/:purchase_id", async (req, res) => {
+  try {
+    const { purchase_id } = req.params;
+    const data = await service.getPurchaseById(purchase_id);
+    if (!data.success)
+      return res.status(400).json({ message: data.message });
+    return res.status(200).json({ message: "Data Get Successfully", Data: data.data });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  } 
+});
+
+router.get("/get/expense/:expense_id", async (req, res) => {
+  try {
+    const { expense_id } = req.params;
+    const data = await service.getExpenseById(expense_id);
+
+    if (!data.success)
+      return res.status(400).json({ message: data.message });
+    return res.status(200).json({ message: "Data Get Successfully", Data: data.data });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
 
 
 router.post("/add/hold_menu", async (req, res) => {
