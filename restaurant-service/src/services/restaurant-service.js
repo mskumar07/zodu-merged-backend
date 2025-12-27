@@ -1263,27 +1263,41 @@ async function editMenuItem(menuId, menuData) {
 
 
 async function createOrder(orderData) {
-
   try {
-    const newOrder = await repository.createOrder(orderData);
-    const neworderItem = await repository.createOrderedItems(orderData);
+    let newOrder = null;
+    let neworderItem = null;
     let newKot = null;
-    if (orderData.order_type === "Dine-In") {
+
+    if (orderData.order_type !== "Dine-In") {
+      newOrder = await repository.createOrder(orderData);
+      neworderItem = await repository.createOrderedItems(orderData);
+    } else {
+      newOrder = await repository.createtmpOrder(orderData);
+      neworderItem = await repository.createtmpOrderedItems(orderData);
+
+      // Create KOT only for Dine-In
       newKot = await repository.createKOT(orderData);
     }
+
     return {
       success: true,
       message: "Order created successfully",
-      data: { newOrder, neworderItem, newKot },
+      data: {
+        order: newOrder,
+        items: neworderItem,
+        kot: newKot,
+      },
     };
   } catch (err) {
     console.error("Error inserting Order:", err);
+
     return {
       success: false,
-      message: err.message,
+      message: err.message || "Failed to create order",
     };
   }
 }
+
 
 async function getPurchaseListData(
   branch_id,

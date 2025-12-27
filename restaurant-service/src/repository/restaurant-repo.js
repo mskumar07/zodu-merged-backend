@@ -1071,133 +1071,257 @@ exports.get_menuItem_data = async (branch_id, page, limit, search) => {
 
 
 
+// exports.updateFinalPayment = async (data) => {
+//   try {
+//     const { order_id, table_no, final_payment, items, zodu_id, branch_id,total_amt,payment_type } = data;
+
+
+//     await conn.query("BEGIN");
+
+//     // 1️⃣ UPDATE FINAL PAYMENT
+//   const noOfItems = Array.isArray(items) ? items.length : 0;
+
+//     // ✅ 3. UPDATE FINAL PAYMENT + TOTAL AMT + NO OF ITEMS
+//     const updateQuery = `
+//       UPDATE tbl_orders
+//       SET final_payment = $1,
+//           total_amt = $2,
+//           no_of_items = $3,
+//           payment_type = $6
+//       WHERE order_id = $4 AND table_no = $5
+//       RETURNING *;
+//     `;
+    
+//     const result = await conn.query(updateQuery, [
+//       final_payment, 
+//       total_amt, 
+//       noOfItems, 
+//       order_id, 
+//       table_no,
+//       payment_type
+//     ]);
+
+
+//     // 2️⃣ SYNC ORDERED ITEMS
+//     if (Array.isArray(items)) {
+
+//       // Fetch existing items from DB
+//       const dbItemsQuery = `
+//         SELECT * FROM tbl_ordered_items
+//         WHERE order_id = $1
+//       `;
+//       const dbItems = await conn.query(dbItemsQuery, [order_id]);
+
+//       // Convert to map for quick lookup
+//       const dbMap = new Map();
+//       dbItems.rows.forEach((x) => {
+//         // Create a unique key for lookup
+//         const key = `${x.item_id}-${x.variant_id || "null"}`;
+//         dbMap.set(key, x);
+//       });
+
+//       // Process incoming items
+//       for (const item of items) {
+//         const variantKey = `${item.menu_id}-${item.variant_id || "null"}`;
+//         const existsInDB = dbMap.get(variantKey);
+
+//         if (existsInDB) {
+//           // 🔵 ITEM EXISTS → OMIT DATA (DO NOTHING)
+//           // We remove it from the map so it doesn't get deleted in the next step,
+//           // but we skip the UPDATE query entirely.
+//           dbMap.delete(variantKey);
+//         } 
+//         else {
+//           // 🟢 NEW ITEM → INSERT
+//           // (If an item was added at the payment screen that wasn't there before)
+//           const insertQuery = `
+//             INSERT INTO tbl_ordered_items (
+//               zodu_id, branch_id, order_id,
+//               item_id, item_name, qty, price,
+//               item_unit, variant_id, variant_name
+//             )
+//             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+//           `;
+
+//           await conn.query(insertQuery, [
+//             zodu_id,
+//             branch_id,
+//             order_id,
+//             item.menu_id,
+//             item.name,
+//             item.qty,
+//             item.price,
+//             item.menu_unit,
+//             item.variant_id || null,
+//             item.variant_name || null
+//           ]);
+//         }
+//       }
+
+//       // 🔴 DELETE ITEMS (If removed from frontend)
+//       // Any item left in dbMap was present in DB but NOT in the incoming 'items' array
+//       for (const leftover of dbMap.values()) {
+//         const deleteQuery = `
+//           DELETE FROM tbl_ordered_items
+//           WHERE order_id = $1 AND item_id = $2 
+//             AND (${leftover.variant_id ? "variant_id = $3" : "variant_id IS NULL"})
+//         `;
+//         const deleteValues = leftover.variant_id
+//           ? [order_id, leftover.item_id, leftover.variant_id]
+//           : [order_id, leftover.item_id];
+
+//         await conn.query(deleteQuery, deleteValues);
+//       }
+//     }
+
+
+//     // 3️⃣ DELETE KOT ITEMS WHEN PAYMENT CLEARED
+//     if (final_payment === true && table_no) {
+//       const deleteKOT = `
+//         DELETE FROM tbl_kot_list
+//         WHERE table_no = $1 AND order_id = $2
+//       `;
+//       await conn.query(deleteKOT, [table_no, order_id]);
+//     }
+
+//     await conn.query("COMMIT");
+
+//     return {
+//       success: true,
+//       message: "Final payment updated & items synced (Existing ignored, missing deleted)",
+//       order: result.rows[0],
+//     };
+
+//   } catch (err) {
+//     await conn.query("ROLLBACK");
+//     throw new Error("Unable to update final payment: " + err.message);
+//   }
+// };
+
+
+
 exports.updateFinalPayment = async (data) => {
+  const {
+    order_id,
+    table_no,
+    final_payment,
+    payment_type,
+    zodu_id,
+    branch_id
+  } = data;
+
   try {
-    const { order_id, table_no, final_payment, items, zodu_id, branch_id,total_amt,payment_type } = data;
-
-
     await conn.query("BEGIN");
 
-    // 1️⃣ UPDATE FINAL PAYMENT
-  const noOfItems = Array.isArray(items) ? items.length : 0;
-
-    // ✅ 3. UPDATE FINAL PAYMENT + TOTAL AMT + NO OF ITEMS
-    const updateQuery = `
-      UPDATE tbl_orders
+    // 🔹 STEP 1: Update tmp order payment
+    const updateTmpOrder = `
+      UPDATE tbl_tmp_orders
       SET final_payment = $1,
-          total_amt = $2,
-          no_of_items = $3,
-          payment_type = $6
-      WHERE order_id = $4 AND table_no = $5
+          payment_type = $2
+      WHERE order_id = $3 AND table_no = $4
       RETURNING *;
     `;
-    
-    const result = await conn.query(updateQuery, [
-      final_payment, 
-      total_amt, 
-      noOfItems, 
-      order_id, 
+
+    const tmpOrderRes = await conn.query(updateTmpOrder, [
+      final_payment,
+      payment_type,
+      order_id,
       table_no,
-      payment_type
     ]);
 
-
-    // 2️⃣ SYNC ORDERED ITEMS
-    if (Array.isArray(items)) {
-
-      // Fetch existing items from DB
-      const dbItemsQuery = `
-        SELECT * FROM tbl_ordered_items
-        WHERE order_id = $1
-      `;
-      const dbItems = await conn.query(dbItemsQuery, [order_id]);
-
-      // Convert to map for quick lookup
-      const dbMap = new Map();
-      dbItems.rows.forEach((x) => {
-        // Create a unique key for lookup
-        const key = `${x.item_id}-${x.variant_id || "null"}`;
-        dbMap.set(key, x);
-      });
-
-      // Process incoming items
-      for (const item of items) {
-        const variantKey = `${item.menu_id}-${item.variant_id || "null"}`;
-        const existsInDB = dbMap.get(variantKey);
-
-        if (existsInDB) {
-          // 🔵 ITEM EXISTS → OMIT DATA (DO NOTHING)
-          // We remove it from the map so it doesn't get deleted in the next step,
-          // but we skip the UPDATE query entirely.
-          dbMap.delete(variantKey);
-        } 
-        else {
-          // 🟢 NEW ITEM → INSERT
-          // (If an item was added at the payment screen that wasn't there before)
-          const insertQuery = `
-            INSERT INTO tbl_ordered_items (
-              zodu_id, branch_id, order_id,
-              item_id, item_name, qty, price,
-              item_unit, variant_id, variant_name
-            )
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-          `;
-
-          await conn.query(insertQuery, [
-            zodu_id,
-            branch_id,
-            order_id,
-            item.menu_id,
-            item.name,
-            item.qty,
-            item.price,
-            item.menu_unit,
-            item.variant_id || null,
-            item.variant_name || null
-          ]);
-        }
-      }
-
-      // 🔴 DELETE ITEMS (If removed from frontend)
-      // Any item left in dbMap was present in DB but NOT in the incoming 'items' array
-      for (const leftover of dbMap.values()) {
-        const deleteQuery = `
-          DELETE FROM tbl_ordered_items
-          WHERE order_id = $1 AND item_id = $2 
-            AND (${leftover.variant_id ? "variant_id = $3" : "variant_id IS NULL"})
-        `;
-        const deleteValues = leftover.variant_id
-          ? [order_id, leftover.item_id, leftover.variant_id]
-          : [order_id, leftover.item_id];
-
-        await conn.query(deleteQuery, deleteValues);
-      }
+    if (tmpOrderRes.rowCount === 0) {
+      throw new Error("Temporary order not found");
     }
 
+    const tmpOrder = tmpOrderRes.rows[0];
 
-    // 3️⃣ DELETE KOT ITEMS WHEN PAYMENT CLEARED
-    if (final_payment === true && table_no) {
-      const deleteKOT = `
-        DELETE FROM tbl_kot_list
-        WHERE table_no = $1 AND order_id = $2
+    // 🔥 ONLY WHEN FINAL PAYMENT IS TRUE
+    if (final_payment === true) {
+
+      // 1️⃣ Move order → tbl_orders
+      const insertOrderQuery = `
+        INSERT INTO tbl_orders (
+          zodu_id, branch_id, table_no,
+          no_of_items, order_type,
+          customer_name, customer_phone,
+          total_amt, final_payment,
+          payment_type, order_id,
+          order_date, order_time
+        )
+        VALUES (
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13
+        )
+        RETURNING *;
       `;
-      await conn.query(deleteKOT, [table_no, order_id]);
+
+      const orderValues = [
+        tmpOrder.zodu_id,
+        tmpOrder.branch_id,
+        tmpOrder.table_no,
+        tmpOrder.no_of_items,
+        tmpOrder.order_type,
+        tmpOrder.customer_name,
+        tmpOrder.customer_phone,
+        tmpOrder.total_amt,
+        tmpOrder.final_payment,
+        tmpOrder.payment_type,
+        tmpOrder.order_id,
+        tmpOrder.order_date,
+        tmpOrder.order_time
+      ];
+
+      const orderResult = await conn.query(insertOrderQuery, orderValues);
+
+      // 2️⃣ Move order items
+      const insertItemsQuery = `
+        INSERT INTO tbl_ordered_items (
+          zodu_id, branch_id, order_id,
+          item_id, item_name, qty, price,
+          item_unit, variant_id, variant_name
+        )
+        SELECT
+          zodu_id, branch_id, order_id,
+          item_id, item_name, qty, price,
+          item_unit, variant_id, variant_name
+        FROM tbl_tmp_ordered_items
+        WHERE order_id = $1
+      `;
+
+      await conn.query(insertItemsQuery, [order_id]);
+
+      // 3️⃣ Delete temp items
+      await conn.query(
+        `DELETE FROM tbl_tmp_ordered_items WHERE order_id = $1`,
+        [order_id]
+      );
+
+      // 4️⃣ Delete temp order
+      await conn.query(
+        `DELETE FROM tbl_tmp_orders WHERE order_id = $1`,
+        [order_id]
+      );
+
+      await conn.query("COMMIT");
+
+      return {
+        success: true,
+        message: "Order completed and moved successfully",
+        order: orderResult.rows[0]
+      };
     }
 
     await conn.query("COMMIT");
 
     return {
       success: true,
-      message: "Final payment updated & items synced (Existing ignored, missing deleted)",
-      order: result.rows[0],
+      message: "Payment updated (not finalized yet)"
     };
 
   } catch (err) {
     await conn.query("ROLLBACK");
-    throw new Error("Unable to update final payment: " + err.message);
+    throw new Error("Final payment update failed: " + err.message);
   }
 };
-
 
 
 exports.get_ordered_data = async (branch_id) => {
@@ -1238,8 +1362,8 @@ exports.get_ordered_data = async (branch_id) => {
           )
         ) FILTER (WHERE k.item_id IS NOT NULL), '[]'
       ) AS kot_items
-    FROM tbl_orders o
-    LEFT JOIN tbl_ordered_items i ON o.order_id = i.order_id
+    FROM tbl_tmp_orders o
+    LEFT JOIN tbl_tmp_ordered_items i ON o.order_id = i.order_id
     LEFT JOIN tbl_menu_item mi ON i.item_id = mi.menu_id 
     LEFT JOIN tbl_kot_list k ON o.order_id = k.order_id
     WHERE o.branch_id = $1
@@ -2113,6 +2237,207 @@ exports.createOrderedItems = async (orderData) => {
   }
 }
 
+exports.createtmpOrder = async (orderData) => {
+  try {
+    await conn.query("BEGIN");
+
+    let result;
+
+    // 🟢 Check if Dine-In and order already exists
+    if (orderData.order_type === "Dine-In") {
+      const checkQuery = `
+        SELECT * FROM tbl_tmp_orders
+        WHERE order_id = $1 AND table_no = $2
+      `;
+      const checkValues = [orderData.order_id, orderData.table_no];
+      const existing = await conn.query(checkQuery, checkValues);
+
+      if (existing.rows.length > 0) {
+        // 🔁 Update existing Dine-In order
+        const updateQuery = `
+          UPDATE tbl_tmp_orders
+          SET 
+            total_amt = total_amt + $1,
+            no_of_items = no_of_items + $2,
+            final_payment = $3,
+            payment_type = $4,
+            order_time = CURRENT_TIMESTAMP
+          WHERE order_id = $5 AND table_no = $6
+          RETURNING *;
+        `;
+        const updateValues = [
+          orderData.total_amt,      // $1 new added total
+          orderData.no_of_items,    // $2 new added item count
+          orderData.final_payment,  // $3 final payment flag
+          orderData.payment_type,   // $4 payment type
+          orderData.order_id,       // $5
+          orderData.table_no        // $6
+        ];
+        result = await conn.query(updateQuery, updateValues);
+      } else {
+        // 🆕 Insert new Dine-In order
+        const insertQuery = `
+          INSERT INTO tbl_tmp_orders (
+            zodu_id, branch_id, table_no, no_of_items, order_type,
+            customer_name, customer_phone, total_amt, final_payment,
+            payment_type, order_id, order_date, order_time
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+          RETURNING *;
+        `;
+        const insertValues = [
+          orderData.zodu_id,         // $1
+          orderData.branch_id,       // $2
+          orderData.table_no,        // $3
+          orderData.no_of_items,     // $4
+          orderData.order_type,      // $5
+          orderData.customer_name,   // $6
+          orderData.customer_phone,  // $7
+          orderData.total_amt,       // $8
+          orderData.final_payment,   // $9
+          orderData.payment_type,    // $10
+          orderData.order_id,        // $11
+          orderData.order_date,      // $12
+          orderData.order_time       // $13
+        ];
+        result = await conn.query(insertQuery, insertValues);
+      }
+    } else {
+      // 🚫 Not Dine-In → Always insert new order
+      const insertQuery = `
+        INSERT INTO tbl_tmp_orders (
+          zodu_id, branch_id, no_of_items, order_type,
+          customer_name, customer_phone, total_amt, final_payment,
+          payment_type, order_id, order_date, order_time
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        RETURNING *;
+      `;
+      const insertValues = [
+        orderData.zodu_id,         // $1
+        orderData.branch_id,       // $2
+        orderData.no_of_items,     // $4
+        orderData.order_type,      // $5
+        orderData.customer_name,   // $6
+        orderData.customer_phone,  // $7
+        orderData.total_amt,       // $8
+        orderData.final_payment,   // $9
+        orderData.payment_type,    // $10
+        orderData.order_id,        // $11
+        orderData.order_date,      // $12
+        orderData.order_time       // $13
+      ];
+      result = await conn.query(insertQuery, insertValues);
+    }
+
+    await conn.query("COMMIT");
+    return result.rows[0];
+  } catch (err) {
+    await conn.query("ROLLBACK");
+    throw new Error("Unable to create or update order: " + err.message);
+  }
+};
+
+
+
+
+// ✅ Create or Update Ordered Items
+exports.createtmpOrderedItems = async (orderData) => {
+  try {
+    await conn.query('BEGIN');
+    const items = orderData.items;
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new Error("Items array is empty or invalid");
+    }
+
+    const insertedItems = [];
+
+    for (const item of items) {
+      const hasVariant = !!item.variant_id;
+
+      // ✅ Build dynamic check query based on variant existence
+      const checkQuery = hasVariant
+        ? `
+          SELECT * FROM tbl_tmp_ordered_items
+          WHERE order_id = $1 AND item_id = $2 AND variant_id = $3
+        `
+        : `
+          SELECT * FROM tbl_tmp_ordered_items
+          WHERE order_id = $1 AND item_id = $2 AND variant_id IS NULL
+        `;
+
+      const checkValues = hasVariant
+        ? [orderData.order_id, item.menu_id, item.variant_id]
+        : [orderData.order_id, item.menu_id];
+
+      const existingItem = await conn.query(checkQuery, checkValues);
+
+      if (existingItem.rows.length > 0) {
+        // 🟡 Item exists → update qty and price
+        const updateQuery = hasVariant
+          ? `
+            UPDATE tbl_tmp_ordered_items
+            SET qty = qty + $1
+            WHERE order_id = $2 AND item_id = $3 AND variant_id = $4
+            RETURNING *;
+          `
+          : `
+            UPDATE tbl_tmp_ordered_items
+            SET qty = qty + $1
+            WHERE order_id = $2 AND item_id = $3 AND variant_id IS NULL
+            RETURNING *;
+          `;
+
+        const updateValues = hasVariant
+          ? [item.qty, orderData.order_id, item.menu_id, item.variant_id]
+          : [item.qty, orderData.order_id, item.menu_id];
+
+        const result = await conn.query(updateQuery, updateValues);
+
+        insertedItems.push(result.rows[0]);
+      } else {
+        // 🟢 New item → insert (with or without variant)
+        const insertQuery = `
+          INSERT INTO tbl_tmp_ordered_items (
+            zodu_id,
+            branch_id,
+            order_id,
+            item_id,
+            item_name,
+            qty,
+            price,
+            item_unit,
+            variant_id,
+            variant_name
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          RETURNING *;
+        `;
+
+        const insertValues = [
+          orderData.zodu_id,
+          orderData.branch_id,
+          orderData.order_id,
+          item.menu_id,
+          item.name,
+          item.qty,
+          item.price,
+          item.menu_unit,
+          hasVariant ? item.variant_id : null,
+          hasVariant ? item.variant_name : null,
+        ];
+
+        const result = await conn.query(insertQuery, insertValues);
+        insertedItems.push(result.rows[0]);
+      }
+    }
+    await conn.query('COMMIT');
+    return insertedItems;
+  } catch (err) {
+    await conn.query('ROLLBACK');
+    throw new Error("Unable to create or update ordered items: " + err.message);
+  }
+}
 
 exports.createKOT = async (orderData) => {
   try {
@@ -2763,26 +3088,49 @@ exports.getExpenseById = async (expense_id) => {
         ) AS items
 
       FROM tbl_expense e
-      LEFT JOIN tbl_category c ON e.category_id = c.id
-      WHERE e.expense_id = $1`,
-      [expense_id]
-    );
+      LEFT JOIN tbl_expense_items ei 
+        ON e.expense_id = ei.expense_id
+      LEFT JOIN tbl_expense_category c 
+        ON e.category_id = c.id
+      LEFT JOIN tbl_payment pay
+        ON pay.source_type = 'expense'
+       AND pay.source_id   = e.expense_id
+       AND pay.branch_id   = e.branch_id
+       AND pay.zodu_id     = e.zodu_id
 
-    if (result.rows.length === 0) {
-      return null;
-    }
+      WHERE e.expense_id = $1
+      GROUP BY
+        e.expense_id,
+        c.category_name,
+        pay.total_amount,
+        pay.paid_amount
+    )
 
-    // Also fetch expense items
-    const itemsResult = await conn.query(
-      `SELECT 
-        item_id,
-        item_name,
-        qty,
-        price
-      FROM tbl_expense_items
-      WHERE expense_id = $1`,
-      [expense_id]
-    );
+    SELECT
+      ed.*,
+
+      -- payment history
+      (
+        SELECT COALESCE(
+          JSON_AGG(
+            JSON_BUILD_OBJECT(
+            'payment_id', ph.transaction_id,
+              'paid_amount', ph.paid_amount,
+              'payment_type', ph.payment_mode,
+              'created_at', ph.created_at
+            )
+            ORDER BY ph.created_at DESC
+          ),
+          '[]'
+        )
+        FROM tbl_payment_history ph
+        JOIN tbl_payment p2 ON p2.payment_id = ph.payment_id
+        WHERE p2.source_type = 'expense'
+          AND p2.source_id   = ed.expense_id
+      ) AS payment_history
+
+    FROM expense_data ed;
+    `;
 
     const result = await conn.query(query, [expense_id]);
 
@@ -2878,39 +3226,91 @@ exports.getPurchaseById = async (purchase_id) => {
         pay.payment_id
 
       FROM tbl_purchase p
-      LEFT JOIN tbl_vendor v ON p.vendor_id = v.vendor_id
-      WHERE p.purchase_id = $1`,
-      [purchase_id]
-    );
+      LEFT JOIN tbl_payment pay
+        ON pay.source_type = 'purchase'
+       AND pay.source_id   = p.purchase_id
+       AND pay.branch_id   = p.branch_id
+       AND pay.zodu_id     = p.zodu_id
+      WHERE p.purchase_id = $1
+    ),
+
+    purchase_data AS (
+      SELECT
+        pb.*,
+
+        v.vendor_name,
+        v.vendor_phone,
+        v.vendor_email,
+        v.company_name,
+
+        COALESCE(
+          JSON_AGG(
+            JSON_BUILD_OBJECT(
+              'item_id', pi.item_id,
+              'item_name', pi.item_name,
+              'quantity', pi.qty,
+              'unit', pi.unit,
+              'price', pi.purchase_price,
+              'total', pi.total_price,
+              'category', c.name,
+              'category_id', pi.category_id
+            )
+          ) FILTER (WHERE pi.item_id IS NOT NULL),
+          '[]'
+        ) AS items
+
+      FROM purchase_base pb
+      LEFT JOIN tbl_purchase_items pi ON pb.purchase_id = pi.purchase_id
+      LEFT JOIN tbl_category c       ON pi.category_id = c.id
+      LEFT JOIN tbl_vendor v         ON pb.vendor_id   = v.vendor_id
+      GROUP BY
+        pb.purchase_id, pb.zodu_id, pb.branch_id,
+        pb.vendor_id, pb.purchase_date, pb.purchase_type,
+        pb.notes, pb.attachment_url,
+        pb.total_amount, pb.paid_amount, pb.balance_amount,
+        pb.payment_id,
+        pb.created_at, pb.updated_at,
+        v.vendor_name, v.vendor_phone,
+        v.vendor_email, v.company_name
+    )
+
+    SELECT
+      pd.*,
+
+      COALESCE(
+        (
+          SELECT JSON_AGG(
+            JSON_BUILD_OBJECT(
+              'payment_id', ph.transaction_id,
+              'paid_amount', ph.paid_amount,
+              'payment_mode', ph.payment_mode,
+              'paid_date', ph.paid_date,
+              'created_at', TO_CHAR(ph.created_at,'DD-MON-YYYY HH12:MI AM')
+            )
+            ORDER BY ph.created_at DESC
+          )
+          FROM tbl_payment_history ph
+          WHERE ph.payment_id = pd.payment_id
+        ),
+        '[]'
+      ) AS payment_history
+
+    FROM purchase_data pd;
+    `;
+
+    const result = await conn.query(query, [purchase_id]);
 
     if (result.rows.length === 0) {
       return null;
     }
 
-   const itemsResult = await conn.query(
-  `SELECT 
-      pi.item_id,
-      pi.item_name,
-      pi.qty,
-      pi.unit,
-      pi.purchase_price,
-      c.name AS category_name
-   FROM tbl_purchase_items pi
-   LEFT JOIN tbl_category c ON pi.category_id = c.id
-   WHERE pi.purchase_id = $1`,
-  [purchase_id]
-);
-
-
-    const purchase = result.rows[0];
-    purchase.items = itemsResult.rows;
-
-    return purchase;
+    return result.rows[0]; // ✅ single purchase object
   } catch (err) {
     console.error("Error in getPurchaseById:", err.message);
     throw new Error("Unable to fetch purchase: " + err.message);
   }
 };
+
 
 
 
