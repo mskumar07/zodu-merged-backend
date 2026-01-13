@@ -408,19 +408,19 @@ router.put(
 router.delete("/api/delete/vendor/:id", async (req, res) => {
   try {
     const { id } = req.params;
-          await conn.query("BEGIN");
+    await conn.query("BEGIN");
     const data = await service.deleteVendor(id);
-    if(!data.success){
+    if (!data.success) {
       await conn.query("ROLLBACK");
       return res.status(400).json({ message: data.message });
     }
-return res.status(201).json({ data });
+    return res.status(201).json({ data });
   } catch (error) {
     console.error(error);
-        return res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message });
 
   }
-  }
+}
 );
 router.post(
   "/api/add/purchase_orders", upload.array("attachment_url", 10),
@@ -562,7 +562,7 @@ router.put(
   "/api/edit/purchase",
   async (req, res) => {
     const purchaseData = req.body;
-    console.log("purchase",purchaseData);
+    console.log("purchase", purchaseData);
 
     try {
       await conn.query("BEGIN");
@@ -592,7 +592,7 @@ router.put(
       }
 
       // Call service to handle business logic and DB update
-      const result = await service.editPurchase( input);
+      const result = await service.editPurchase(input);
 
       if (!result.success) {
         await conn.query("ROLLBACK");
@@ -646,7 +646,7 @@ router.put("/update/menustatus/:menu_status/:menuId", async (req, res) => {
   }
 })
 
-router.post("/add/expense-item",async (req, res) => {
+router.post("/add/expense-item", async (req, res) => {
   try {
     const edata = req.body;
     await conn.query("BEGIN");
@@ -655,20 +655,20 @@ router.post("/add/expense-item",async (req, res) => {
       edata
     );
 
-     if (errors) {
+    if (errors) {
       await conn.query("ROLLBACK");
       return res.status(400).json({ errors });
     }
     const data = await service.createExpenseItem(input);
-       if (!data.success) {
+    if (!data.success) {
       await conn.query("ROLLBACK");
       return res.status(400).json({ message: data.message });
     }
 
- await conn.query("COMMIT");
+    await conn.query("COMMIT");
     return res.status(201).json({ data });
 
-  }catch(error){
+  } catch (error) {
     await conn.query("ROLLBACK");
     console.error(error);
     return res.status(500).json({ error: error.message });
@@ -676,7 +676,7 @@ router.post("/add/expense-item",async (req, res) => {
 }
 )
 
-router.get("/get/expense-item/:branch_id",async (req, res) => {
+router.get("/get/expense-item/:branch_id", async (req, res) => {
   try {
     const { branch_id } = req.params;
     const data = await service.getExpAllItems(branch_id);
@@ -686,46 +686,46 @@ router.get("/get/expense-item/:branch_id",async (req, res) => {
       return res.status(500).json({ message: data.message });
     }
     return res.status(201).json({ message: "Data Get Successfully", Data: data.data });
-  } catch (error) { 
+  } catch (error) {
     await conn.query("ROLLBACK");
     console.error(error);
     return res.status(500).json({ error: error.message });
   }
 });
 
-router.put("/update/expense-item/:id/:branch_id",async (req, res) => {
-    try{
-      const { id,branch_id } = req.params
-      const { name } = req.body
-      const data =await service.editExpItem(id,branch_id,name)
-      if(!data.success){
-          await conn.query("ROLLBACK");
+router.put("/update/expense-item/:id/:branch_id", async (req, res) => {
+  try {
+    const { id, branch_id } = req.params
+    const { name } = req.body
+    const data = await service.editExpItem(id, branch_id, name)
+    if (!data.success) {
+      await conn.query("ROLLBACK");
       return res.status(400).json({ message: data.message });
-      }
-    return res.status(201).json({ data });
-
-    }catch(error){
- await conn.query("ROLLBACK");
-    console.error(error);
-    return res.status(500).json({ error: error.message });
     }
-  })
-
-router.delete("/delete/expense-item/:id",async (req, res) => {
-  try{
-    const {id} =req.params
-    const data =await service.removeExpItem(id)
-    if(!data.success){
-                await conn.query("ROLLBACK");
-      return res.status(500).json({ message: data.message });
-      }
     return res.status(201).json({ data });
 
-  }catch(error){
- await conn.query("ROLLBACK");
+  } catch (error) {
+    await conn.query("ROLLBACK");
     console.error(error);
     return res.status(500).json({ error: error.message });
-    
+  }
+})
+
+router.delete("/delete/expense-item/:id", async (req, res) => {
+  try {
+    const { id } = req.params
+    const data = await service.removeExpItem(id)
+    if (!data.success) {
+      await conn.query("ROLLBACK");
+      return res.status(500).json({ message: data.message });
+    }
+    return res.status(201).json({ data });
+
+  } catch (error) {
+    await conn.query("ROLLBACK");
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+
   }
 })
 
@@ -734,17 +734,17 @@ router.delete("/api/delete/expense/:id", async (req, res) => {
     const { id } = req.params;
     await conn.query("BEGIN");
     const data = await service.deleteExpense(id);
-    if(!data.success){
+    if (!data.success) {
       await conn.query("ROLLBACK");
       return res.status(400).json({ message: data.message });
     }
-return res.status(201).json({ data });
+    return res.status(201).json({ data });
   } catch (error) {
     console.error(error);
-        return res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message });
 
   }
-  }
+}
 );
 
 router.delete("/api/delete/purchase/:id", async (req, res) => {
@@ -752,17 +752,17 @@ router.delete("/api/delete/purchase/:id", async (req, res) => {
     const { id } = req.params;
     await conn.query("BEGIN");
     const data = await service.deletePurchase(id);
-    if(!data.success){
+    if (!data.success) {
       await conn.query("ROLLBACK");
       return res.status(400).json({ message: data.message });
     }
-return res.status(201).json({ data,message:"Purchase Deleted Successfully" });
+    return res.status(201).json({ data, message: "Purchase Deleted Successfully" });
   } catch (error) {
     console.error(error);
-        return res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message });
 
   }
-  }
+}
 );
 router.put("/api/update/inventory", async (req, res) => {
   try {
@@ -797,10 +797,10 @@ router.put("/api/update/inventory", async (req, res) => {
 })
 
 router.get("/get/category/:type/:branch_id", async (req, res) => {
-  
+
   try {
-     const { type,branch_id } = req.params;
-    const getCategoryData = await service.getCategoryData(type,branch_id);
+    const { type, branch_id } = req.params;
+    const getCategoryData = await service.getCategoryData(type, branch_id);
     if (!getCategoryData.success) return res.status(400).json({ message: getCategoryData.message });
     return res.status(201).json({ message: "Data Get Successfully", Data: getCategoryData.data });
   } catch (error) {
@@ -877,27 +877,27 @@ router.get("/get/expense-category/:branch_id", async (req, res) => {
 router.put("/update/expense-category/:id", async (req, res) => {
   try {
     const { name, branch_id } = req.body;
-    const{id} = req.params
-    const data = await service.updateExpenseCategory(name,id, branch_id)
-    if(!data.success) return res.status(400).json({ message: data.message });
+    const { id } = req.params
+    const data = await service.updateExpenseCategory(name, id, branch_id)
+    if (!data.success) return res.status(400).json({ message: data.message });
     return res.status(201).json({ message: "Data updated Successfully", Data: data.data });
 
-  }catch (error) {
+  } catch (error) {
     console.error(error);
     return res.status(500).json({ error: error.message });
   }
 
 })
 
-router.delete("/delete/expense-category/:id", async (req, res) => { 
+router.delete("/delete/expense-category/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    console.log("delete",id)
+    console.log("delete", id)
     const data = await service.deleteExpenseCategory(id);
-    if(!data.success) return res.status(400).json({message: data.message});
+    if (!data.success) return res.status(400).json({ message: data.message });
     return res.status(201).json({ message: "Data deleted Successfully", Data: data.data });
 
-  }catch (error) {
+  } catch (error) {
     console.log(error);
     return res.status(500).json({ error: error.message });
   }
@@ -922,7 +922,7 @@ router.post("/add/expense-category", async (req, res) => {
   try {
     const { zodu_id, branch_id, name } = req.body;
     const data = await service.addExpenseCategory(zodu_id, branch_id, name);
-     if (!data.success) return res.status(400).json({ message: data.message });
+    if (!data.success) return res.status(400).json({ message: data.message });
     return res.status(201).json({ message: "Data Get Successfully", Data: data.data });
   } catch (error) {
     console.error(error);
@@ -936,8 +936,8 @@ router.get("/get/inventory-list/:branch_id", async (req, res) => {
   try {
 
     const { branch_id } = req.params;
-    const {type,category} = req.query
-    const getInventoryListData = await service.getInventoryListData(branch_id, type,category);
+    const { type, category } = req.query
+    const getInventoryListData = await service.getInventoryListData(branch_id, type, category);
     if (!getInventoryListData.success) return res.status(400).json({ message: getInventoryListData.message });
     return res.status(201).json({ message: "Data Get Successfully", Data: getInventoryListData.data });
   } catch (error) {
@@ -989,9 +989,9 @@ router.get("/get/purchase-list/:branch_id", async (req, res) => {
 router.get("/get/expense-list/:branch_id", async (req, res) => {
   try {
     const { branch_id } = req.params;
-    const { 
-      page = 1, 
-      limit = 10, 
+    const {
+      page = 1,
+      limit = 10,
       search = "",
       filter = "All",          // All | Paid | Unpaid
       start_date,
@@ -1031,7 +1031,7 @@ router.get("/get/purchase/:purchase_id", async (req, res) => {
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: error.message });
-  } 
+  }
 });
 
 router.get("/get/expense-details/:expense_id", async (req, res) => {
@@ -1142,6 +1142,30 @@ router.get("/get/orders/:branch_id", async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 });
+
+router.get(
+  "/api/order/:zodu_id/:branch_id/:order_id",
+  async (req, res) => {
+    try {
+      const { zodu_id, branch_id, order_id } = req.params;
+
+      const result = await service.getSingleOrder(
+        zodu_id,
+        branch_id,
+        order_id
+      );
+
+      return res.status(200).json({
+        message: "Order fetched successfully",
+        data: result
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: error.message });
+    }
+  }
+);
+
 
 router.get("/get/units/:branch_id", async (req, res) => {
   try {
@@ -1322,39 +1346,19 @@ router.post("/api/completeorder", async (req, res) => {
   }
 })
 
-router.get("/api/dashboard/:zodu_id/:branch_id", async (req, res) => {
-
-  try {
-
-    const { zodu_id, branch_id } = req.params;
-
-    // Extract query parameters for pagination
-    const {
-      page = 1,
-      limit = 10,
-      sortBy = "created_at",
-      sortOrder = "desc"
-    } = req.query;
-
-    const getData = await service.get_dashboard(zodu_id, branch_id, {
-      page: parseInt(page),
-      limit: parseInt(limit),
-      sortBy,
-      sortOrder
-    });
-
-    if (!getData.success) return res.status(400).json({ message: getData.message });
-
-    return res.status(200).json({
-      message: "Data Get Successfully",
-      data: getData.data,
-      pagination: getData.pagination || {}
-    });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-})
+router.get("/api/dashboard/:zodu_id/:branch_id", async (req, res) => { 
+  try { 
+    const { zodu_id, branch_id } = req.params; 
+    const { ordersPage = 1, 
+      ordersLimit = 10, 
+      expensesPage = 1, expensesLimit = 10, topItemsPage = 1, topItemsLimit = 5, datePage = 1, dateLimit = 7, sortBy = "created_at", sortOrder = "desc" } = req.query; 
+      const getData = await service.get_dashboard(zodu_id, branch_id, { ordersPage: +ordersPage, ordersLimit: +ordersLimit, expensesPage: +expensesPage, expensesLimit: +expensesLimit, topItemsPage: +topItemsPage, topItemsLimit: +topItemsLimit, datePage: +datePage, dateLimit: +dateLimit, sortBy, sortOrder }); 
+      return res.status(200).json({ message: "Data Get Successfully", data: getData.data, pagination: getData.pagination }); 
+    } catch (error) { 
+      console.error(error); 
+      return res.status(500).json({ error: error.message }); 
+    } 
+  });
 
 
 
@@ -1402,13 +1406,16 @@ router.get("/api/report/:type/:zodu_id/:branch_id", async (req, res) => {
       sortBy = "order_date",
       sortOrder = "desc",
       top = 0,
-       search = "" 
+      search = ""
     } = req.query;
+
 
 
     const validTypes = ["restaurant", "orders", "purchase", "expense", "inventory"];
     const validFilters = ["today", "week", "month", "year", "custom"];
     const validSummaryTypes = ["all", "category"];  // ✅ only these two
+
+    console.log(type)
 
     // Adjust sortBy for other types
     if (type === "purchase" && sortBy === "order_date") {
@@ -1468,8 +1475,8 @@ router.get("/api/report/:type/:zodu_id/:branch_id", async (req, res) => {
         sortBy,
         sortOrder,
         top: parseInt(top),
-        summaryType,  
-        search, 
+        summaryType,
+        search,
       }
     );
 
@@ -1505,7 +1512,7 @@ router.get("/get/purchase/:purchase_id", async (req, res) => {
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: error.message });
-  } 
+  }
 });
 
 router.get("/get/expense/:expense_id", async (req, res) => {

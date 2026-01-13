@@ -9,6 +9,7 @@ const moment = require('moment/moment');
 const { DB_HOSTNAME, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY, BUCKET_NAME } = require('../config/index.js');
 const { getDateRange } = require("../utils/Date_Folder/getDate.js");
 const { get } = require('../api/restaurant-controller.js');
+const { getPagination, getMeta } = require('../utils/pagination.js');
 
 
 
@@ -624,22 +625,57 @@ async function get_Report(data) {
 
 }
 
-async function get_dashboard(zodu_id, branch_id, options = {}) {
+
+async function  get_dashboard (zodu_id, branch_id, options)  {
   try {
-    const DashboardData = await repository.getDashboard(zodu_id, branch_id, options);
+    const {
+      ordersPage = 1,
+      ordersLimit = 10,
+
+      expensesPage = 1,
+      expensesLimit = 10,
+
+      topItemsPage = 1,
+      topItemsLimit = 5,
+
+      datePage = 1,
+      dateLimit = 7,
+
+      sortOrder = "desc"
+    } = options;
+
+    const pagination = {
+      orders: getPagination({ page: ordersPage, limit: ordersLimit }),
+      expenses: getPagination({ page: expensesPage, limit: expensesLimit }),
+      topItems: getPagination({ page: topItemsPage, limit: topItemsLimit }),
+      datewise: getPagination({ page: datePage, limit: dateLimit }),
+    };
+
+    const result = await repository.getDashboard(
+      zodu_id,
+      branch_id,
+      pagination,
+      sortOrder
+    );
+
     return {
       success: true,
-      data: DashboardData.data || DashboardData,
-      pagination: DashboardData.pagination || {}
+      data: result.data,
+      pagination: {
+        orders: getMeta({ ...pagination.orders, total: result.counts.orders }),
+        expenses: getMeta({ ...pagination.expenses, total: result.counts.expenses }),
+        topItems: getMeta({ ...pagination.topItems, total: result.counts.topItems }),
+        datewise: getMeta({ ...pagination.datewise, total: result.counts.datewise })
+      }
     };
-  } catch (error) {
-    console.error("Dashboard error", error);
+  } catch (err) {
+    console.error("Dashboard Service Error:", err);
     return {
       success: false,
-      message: error.message
+      message: err.message
     };
   }
-}
+};
 
 // --- Orders Summary ---
 
@@ -1068,6 +1104,22 @@ async function get_ordered_data(data) {
     };
   }
 }
+
+async function getSingleOrder (zodu_id, branch_id, order_id) {
+  try {
+    const order = await repository.getSingleOrder(
+      zodu_id,
+      branch_id,
+      order_id
+    );
+
+    return order;
+  } catch (error) {
+    console.error("getSingleOrder error:", error);
+    throw new Error(error.message);
+  }
+};
+
 
 async function update_Final_payment(data) {
   try {
@@ -1972,7 +2024,6 @@ async function getExpenseSummary(
       search =""
     } = options;
 
-    console.log("myseatcj",search )
 
     const reportData = await repository.getExpenseSummary(
       zodu_id,
@@ -2214,5 +2265,6 @@ module.exports = {
   makePayment,
   deleteHoldMenu,
   getExpenseById,
-  getPurchaseById
+  getPurchaseById,
+  getSingleOrder
 };

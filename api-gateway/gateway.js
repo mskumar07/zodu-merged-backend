@@ -29,5 +29,10 @@ app.use('/checklist', createProxyMiddleware({
   changeOrigin: true
 }));
 
+app.use('/employee', createProxyMiddleware({
+  target: 'http://localhost:3003',
+  changeOrigin: true
+}));
+
 // Start the server
 app.listen(5000, () => console.log('API Gateway running on http://localhost:5000'));
