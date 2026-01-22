@@ -17,13 +17,16 @@ app.use(HandleErrorWithLogger);
 
 
 
-conn.connect()
-.then(res => {
-    logger.info('Database Connected at Checklist');
-  })
-  .catch(err => {
-    logger.error('Connection error:', err.stack);
-  });
+// ✅ SAFE DB CHECK (connect + release)
+(async () => {
+  try {
+    const client = await conn.connect();
+    logger.info('✅ Database connected');
+    client.release();
+  } catch (err) {
+    logger.error('❌ Database connection failed:', err.message);
+  }
+})();
 
 
 module.exports = app;
