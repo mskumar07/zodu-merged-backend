@@ -3,6 +3,7 @@ const { get, search } = require('../api/restaurant-controller');
 const conn = require('../database/connection');
 const { parseAttachments } = require('../utils/formatchanger');
 const { deleteFileFromMinIO } = require('../services/restaurant-service');
+const { calculateItemTax } = require('../utils/gstcalcukator');
 
 // ========== Company Repository Functions ==========
 
@@ -1206,122 +1207,154 @@ exports.updateFinalPayment = async (data) => {
     table_no,
     final_payment,
     payment_type,
-    zodu_id,
-    branch_id
+    discount_type,
+    discount_value,
+    items // FINAL ITEMS FROM UI
   } = data;
 
   try {
     await conn.query("BEGIN");
 
-    // 🔹 STEP 1: Update tmp order payment
-    const updateTmpOrder = `
-      UPDATE tbl_tmp_orders
-      SET final_payment = $1,
-          payment_type = $2
-      WHERE order_id = $3 AND table_no = $4
-      RETURNING *;
-    `;
-
-    const tmpOrderRes = await conn.query(updateTmpOrder, [
-      final_payment,
-      payment_type,
-      order_id,
-      table_no,
-    ]);
-
-    if (tmpOrderRes.rowCount === 0) {
-      throw new Error("Temporary order not found");
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new Error("No final items provided");
     }
 
-    const tmpOrder = tmpOrderRes.rows[0];
+    // 1️⃣ Replace tmp items with FINAL items (with GST)
+    await conn.query(`DELETE FROM tbl_tmp_ordered_items WHERE order_id=$1`, [order_id]);
 
-    // 🔥 ONLY WHEN FINAL PAYMENT IS TRUE
-    if (final_payment === true) {
+    let subtotal = 0;
+    let total_tax = 0;
+    let no_of_items = 0;
 
-      // 1️⃣ Move order → tbl_orders
-      const insertOrderQuery = `
-        INSERT INTO tbl_orders (
-          zodu_id, branch_id, table_no,
-          no_of_items, order_type,
-          customer_name, customer_phone,
-          total_amt, final_payment,
-          payment_type, order_id,
-          order_date, order_time
-        )
-        VALUES (
-          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13
-        )
-        RETURNING *;
-      `;
+    for (const item of items) {
+      const taxData = calculateItemTax(item);
 
-      const orderValues = [
-        tmpOrder.zodu_id,
-        tmpOrder.branch_id,
-        tmpOrder.table_no,
-        tmpOrder.no_of_items,
-        tmpOrder.order_type,
-        tmpOrder.customer_name,
-        tmpOrder.customer_phone,
-        tmpOrder.total_amt,
-        tmpOrder.final_payment,
-        tmpOrder.payment_type,
-        tmpOrder.order_id,
-        tmpOrder.order_date,
-        tmpOrder.order_time
-      ];
+      subtotal += taxData.subtotal;
+      total_tax += taxData.tax_amount;
+      no_of_items += Number(item.qty);
 
-      const orderResult = await conn.query(insertOrderQuery, orderValues);
-
-      // 2️⃣ Move order items
-      const insertItemsQuery = `
-        INSERT INTO tbl_ordered_items (
-          zodu_id, branch_id, order_id,
-          item_id, item_name, qty, price,
-          item_unit, variant_id, variant_name
-        )
-        SELECT
-          zodu_id, branch_id, order_id,
-          item_id, item_name, qty, price,
-          item_unit, variant_id, variant_name
-        FROM tbl_tmp_ordered_items
-        WHERE order_id = $1
-      `;
-
-      await conn.query(insertItemsQuery, [order_id]);
-
-      // 3️⃣ Delete temp items
       await conn.query(
-        `DELETE FROM tbl_tmp_ordered_items WHERE order_id = $1`,
-        [order_id]
+        `INSERT INTO tbl_tmp_ordered_items (
+          order_id,
+          item_id,
+          item_name,
+          qty,
+          price,
+          gst_percentage,
+          tax_amount,
+          cgst,
+          sgst,
+          tax_inclusive
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,false)`,
+        [
+          order_id,
+          item.item_id,
+          item.item_name,
+          item.qty,
+          item.price,
+          taxData.gst_percentage,
+          taxData.tax_amount,
+          taxData.cgst,
+          taxData.sgst
+        ]
       );
-
-      // 4️⃣ Delete temp order
-      await conn.query(
-        `DELETE FROM tbl_tmp_orders WHERE order_id = $1`,
-        [order_id]
-      );
-
-      await conn.query("COMMIT");
-
-      return {
-        success: true,
-        message: "Order completed and moved successfully",
-        order: orderResult.rows[0]
-      };
     }
+
+    // 2️⃣ Discount
+    let discount_amount = 0;
+    if (discount_type === "PERCENT") {
+      discount_amount = (subtotal * discount_value) / 100;
+    } else if (discount_type === "FLAT") {
+      discount_amount = discount_value;
+    }
+
+    const total_amt = subtotal + total_tax - discount_amount;
+
+    // 3️⃣ Insert FINAL order
+    const orderResult = await conn.query(
+      `INSERT INTO tbl_orders (
+        order_id,
+        table_no,
+        no_of_items,
+
+        subtotal,
+        total_tax,
+        total_amt,
+
+        discount_type,
+        discount_value,
+        discount_amount,
+
+        final_payment,
+        payment_type
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true,$10)
+      RETURNING *`,
+      [
+        order_id,
+        table_no,
+        no_of_items,
+        subtotal,
+        total_tax,
+        total_amt,
+        discount_type,
+        discount_value,
+        discount_amount,
+        payment_type
+      ]
+    );
+
+    // 4️⃣ Move FINAL items → main table
+    await conn.query(
+      `INSERT INTO tbl_ordered_items (
+        order_id,
+        item_id,
+        item_name,
+        qty,
+        price,
+        gst_percentage,
+        tax_amount,
+        cgst,
+        sgst,
+        tax_inclusive
+      )
+      SELECT
+        order_id,
+        item_id,
+        item_name,
+        qty,
+        price,
+        gst_percentage,
+        tax_amount,
+        cgst,
+        sgst,
+        tax_inclusive
+      FROM tbl_tmp_ordered_items
+      WHERE order_id=$1`,
+      [order_id]
+    );
+
+    // 5️⃣ Cleanup TMP
+    await conn.query(`DELETE FROM tbl_tmp_ordered_items WHERE order_id=$1`, [order_id]);
+    await conn.query(`DELETE FROM tbl_tmp_orders WHERE order_id=$1`, [order_id]);
 
     await conn.query("COMMIT");
 
     return {
       success: true,
-      message: "Payment updated (not finalized yet)"
+      message: "Order finalized successfully",
+      order: orderResult.rows[0]
     };
 
   } catch (err) {
     await conn.query("ROLLBACK");
-    throw new Error("Final payment update failed: " + err.message);
+    throw new Error("Final payment failed: " + err.message);
   }
 };
+
+
+
 
 
 exports.get_ordered_data = async (branch_id) => {
@@ -2032,122 +2065,6 @@ console.log(stockAlert,stockQty);
 };
 
 
-// ✅ Create or Update Order
-exports.createOrder = async (orderData) => {
-  try {
-    await conn.query("BEGIN");
-
-    let result;
-
-    // 🟢 Check if Dine-In and order already exists
-    if (orderData.order_type === "Dine-In") {
-      const checkQuery = `
-        SELECT * FROM tbl_orders
-        WHERE order_id = $1 AND table_no = $2
-      `;
-      const checkValues = [orderData.order_id, orderData.table_no];
-      const existing = await conn.query(checkQuery, checkValues);
-
-      if (existing.rows.length > 0) {
-        // 🔁 Update existing Dine-In order
-        const updateQuery = `
-          UPDATE tbl_orders
-          SET 
-            total_amt = total_amt + $1,
-            total_tax = total_tax + $2,
-            no_of_items = no_of_items + $3,
-            final_payment = $4,
-            payment_type = $5,
-            order_time = CURRENT_TIMESTAMP
-          WHERE order_id = $6 AND table_no = $7
-          RETURNING *;
-        `;
-
-        const updateValues = [
-          orderData.total_amt,     // $1 new item amount
-          orderData.total_tax,     // $2 new item tax
-          orderData.no_of_items,   // $3 new count added
-          orderData.final_payment, // $4 final payment flag
-          orderData.payment_type,  // $5 payment type
-          orderData.order_id,      // $6
-          orderData.table_no       // $7
-        ];
-
-        result = await conn.query(updateQuery, updateValues);
-
-      } else {
-        // 🆕 Insert new Dine-In order
-        const insertQuery = `
-          INSERT INTO tbl_orders (
-            zodu_id, branch_id, table_no, no_of_items, order_type,
-            customer_name, customer_phone, total_amt, total_tax,
-            final_payment, payment_type, order_id, order_date, order_time
-          )
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-          RETURNING *;
-        `;
-
-        const insertValues = [
-          orderData.zodu_id,        // $1
-          orderData.branch_id,      // $2
-          orderData.table_no,       // $3
-          orderData.no_of_items,    // $4
-          orderData.order_type,     // $5
-          orderData.customer_name,  // $6
-          orderData.customer_phone, // $7
-          orderData.total_amt,      // $8
-          orderData.total_tax,      // $9
-          orderData.final_payment,  // $10
-          orderData.payment_type,   // $11
-          orderData.order_id,       // $12
-          orderData.order_date,     // $13
-          orderData.order_time      // $14
-        ];
-
-        result = await conn.query(insertQuery, insertValues);
-      }
-
-    } else {
-      // 🚫 Not Dine-In → Always insert new order
-      const insertQuery = `
-        INSERT INTO tbl_orders (
-          zodu_id, branch_id, no_of_items, order_type,
-          customer_name, customer_phone, total_amt, total_tax,
-          final_payment, payment_type, order_id, order_date, order_time
-        )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-        RETURNING *;
-      `;
-
-      const insertValues = [
-        orderData.zodu_id,        // $1
-        orderData.branch_id,      // $2
-        orderData.no_of_items,    // $3
-        orderData.order_type,     // $4
-        orderData.customer_name,  // $5
-        orderData.customer_phone, // $6
-        orderData.total_amt,      // $7
-        orderData.total_tax,      // $8
-        orderData.final_payment,  // $9
-        orderData.payment_type,   // $10
-        orderData.order_id,       // $11
-        orderData.order_date,     // $12
-        orderData.order_time      // $13
-      ];
-
-      result = await conn.query(insertQuery, insertValues);
-    }
-
-    await conn.query("COMMIT");
-    return result.rows[0];
-
-  } catch (err) {
-    await conn.query("ROLLBACK");
-    throw new Error("Unable to create or update order: " + err.message);
-  }
-};
-
-
 exports.getSingleOrder = async (zodu_id, branch_id, order_id) => {
   const query = `
     SELECT 
@@ -2157,8 +2074,17 @@ exports.getSingleOrder = async (zodu_id, branch_id, order_id) => {
       o.order_type,
       o.payment_type,
       o.customer_name,
+
       o.no_of_items,
+
+      -- 💰 BILL SUMMARY
+      o.subtotal,
+      o.total_tax,
+      o.discount_type,
+      o.discount_value,
+      o.discount_amount,
       o.total_amt,
+
       (
         SELECT json_agg(
           json_build_object(
@@ -2166,12 +2092,20 @@ exports.getSingleOrder = async (zodu_id, branch_id, order_id) => {
             'qty', i.qty,
             'price', i.price,
             'amount', i.qty * i.price,
-            'unit', i.item_unit
+            'unit', i.item_unit,
+
+            -- 🧾 TAX DETAILS PER ITEM
+            'gst_percentage', i.gst_percentage,
+            'tax_amount', i.tax_amount,
+            'cgst', i.cgst,
+            'sgst', i.sgst,
+            'tax_inclusive', i.tax_inclusive
           )
         )
         FROM tbl_ordered_items i
         WHERE i.order_id = o.order_id
       ) AS items
+
     FROM tbl_orders o
     WHERE o.order_id = $1
       AND o.zodu_id = $2
@@ -2186,6 +2120,88 @@ exports.getSingleOrder = async (zodu_id, branch_id, order_id) => {
 
   return result.rows[0] || null;
 };
+
+
+
+// ✅ Create or Update Order
+exports.createOrder = async (orderData) => {
+  try {
+    await conn.query("BEGIN");
+
+    let subtotal = 0;
+    let total_tax = 0;
+    let no_of_items = 0;
+
+    for (const item of orderData.items) {
+      const taxData = calculateItemTax(item);
+      subtotal += taxData.subtotal;
+      total_tax += taxData.tax_amount;
+      no_of_items += Number(item.qty);
+    }
+
+    const discount_amount = Number(orderData.discount_amount || 0);
+    const total_amt = subtotal + total_tax - discount_amount;
+
+    const insertQuery = `
+      INSERT INTO tbl_orders (
+        zodu_id, branch_id, table_no,
+        no_of_items, order_type,
+        customer_name, customer_phone,
+
+        subtotal, total_tax, total_amt,
+        discount_type, discount_value, discount_amount,
+
+        final_payment, payment_type,
+        order_id, order_date, order_time
+      )
+      VALUES (
+        $1,$2,$3,$4,$5,$6,$7,
+        $8,$9,$10,
+        $11,$12,$13,
+        $14,$15,
+        $16,$17,$18
+      )
+      RETURNING *;
+    `;
+
+    const result = await conn.query(insertQuery, [
+      orderData.zodu_id,
+      orderData.branch_id,
+      orderData.table_no,
+      no_of_items,
+      orderData.order_type,
+      orderData.customer_name,
+      orderData.customer_phone,
+
+      subtotal,
+      total_tax,
+      total_amt,
+
+      orderData.discount_type,
+      orderData.discount_value,
+      discount_amount,
+
+      orderData.final_payment,
+      orderData.payment_type,
+
+      orderData.order_id,
+      orderData.order_date,
+      orderData.order_time
+    ]);
+
+    await conn.query("COMMIT");
+    return result.rows[0];
+
+  } catch (err) {
+    await conn.query("ROLLBACK");
+    throw new Error("Unable to create order: " + err.message);
+  }
+};
+
+
+
+
+
 
 
 
@@ -2245,35 +2261,46 @@ exports.createOrderedItems = async (orderData) => {
         insertedItems.push(result.rows[0]);
       } else {
         // 🟢 New item → insert (with or without variant)
-        const insertQuery = `
-          INSERT INTO tbl_ordered_items (
-            zodu_id,
-            branch_id,
-            order_id,
-            item_id,
-            item_name,
-            qty,
-            price,
-            item_unit,
-            variant_id,
-            variant_name
-          )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-          RETURNING *;
-        `;
+       const taxData = calculateItemTax(item);
 
-        const insertValues = [
-          orderData.zodu_id,
-          orderData.branch_id,
-          orderData.order_id,
-          item.menu_id,
-          item.name,
-          item.qty,
-          item.price,
-          item.menu_unit,
-          hasVariant ? item.variant_id : null,
-          hasVariant ? item.variant_name : null,
-        ];
+const insertQuery = `
+  INSERT INTO tbl_ordered_items (
+    zodu_id,
+    branch_id,
+    order_id,
+    item_id,
+    item_name,
+    qty,
+    price,
+    item_unit,
+    variant_id,
+    variant_name,
+    gst_percentage,
+    tax_amount,
+    cgst,
+    sgst,
+    tax_inclusive
+  )
+  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,false)
+  RETURNING *;
+`;
+
+const insertValues = [
+  orderData.zodu_id,
+  orderData.branch_id,
+  orderData.order_id,
+  item.menu_id,
+  item.name,
+  item.qty,
+  item.price,
+  item.menu_unit,
+  hasVariant ? item.variant_id : null,
+  hasVariant ? item.variant_name : null,
+  taxData.gst_percentage,
+  taxData.tax_amount,
+  taxData.cgst,
+  taxData.sgst
+];
 
         const result = await conn.query(insertQuery, insertValues);
         insertedItems.push(result.rows[0]);
@@ -2290,14 +2317,23 @@ exports.createOrderedItems = async (orderData) => {
 exports.createtmpOrder = async (orderData) => {
   try {
     await conn.query("BEGIN");
-    console.log("mydata",orderData)
+
+    let subtotal = 0;
+    let total_tax = 0;
+    let no_of_items = 0;
+
+    for (const item of orderData.items) {
+      const taxData = calculateItemTax(item);
+      subtotal += taxData.subtotal;
+      total_tax += taxData.tax_amount;
+      no_of_items += Number(item.qty);
+    }
+
+    const total_amt = subtotal + total_tax;
 
     let result;
 
-    const newItemsCount = orderData.no_of_items || 0;
-
     if (orderData.order_type === "Dine-In") {
-
       const checkQuery = `
         SELECT * FROM tbl_tmp_orders
         WHERE order_id = $1 AND table_no = $2
@@ -2308,89 +2344,92 @@ exports.createtmpOrder = async (orderData) => {
       ]);
 
       if (existing.rows.length > 0) {
-        // ✅ Update only total amount, NOT item count unless new item added
         const updateQuery = `
           UPDATE tbl_tmp_orders
           SET 
-            total_amt = total_amt + $1,
-            no_of_items = no_of_items + $2,
-            final_payment = $3,
-            payment_type = $4,
+            subtotal = subtotal + $1,
+            total_tax = total_tax + $2,
+            total_amt = total_amt + $3,
+            no_of_items = no_of_items + $4,
+            final_payment = $5,
+            payment_type = $6,
             order_time = CURRENT_TIMESTAMP
-          WHERE order_id = $5 AND table_no = $6
+          WHERE order_id = $7 AND table_no = $8
           RETURNING *;
         `;
 
-        const updateValues = [
-          orderData.total_amt,     // amount added
-          newItemsCount,           // only NEW items
+        result = await conn.query(updateQuery, [
+          subtotal,
+          total_tax,
+          total_amt,
+          no_of_items,
           orderData.final_payment,
           orderData.payment_type,
           orderData.order_id,
           orderData.table_no
-        ];
-
-        result = await conn.query(updateQuery, updateValues);
+        ]);
       } else {
-        // 🆕 Insert new order
         const insertQuery = `
           INSERT INTO tbl_tmp_orders (
-            zodu_id, branch_id, table_no, no_of_items,
-            order_type, customer_name, customer_phone,
-            total_amt, final_payment, payment_type,
+            zodu_id, branch_id, table_no,
+            no_of_items, order_type,
+            customer_name, customer_phone,
+            subtotal, total_tax, total_amt,
+            final_payment, payment_type,
             order_id, order_date, order_time
           )
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
           RETURNING *;
         `;
 
-        const insertValues = [
+        result = await conn.query(insertQuery, [
           orderData.zodu_id,
           orderData.branch_id,
           orderData.table_no,
-          newItemsCount,                 // only new items
+          no_of_items,
           orderData.order_type,
           orderData.customer_name,
           orderData.customer_phone,
-          orderData.total_amt,
+          subtotal,
+          total_tax,
+          total_amt,
           orderData.final_payment,
           orderData.payment_type,
           orderData.order_id,
           orderData.order_date,
           orderData.order_time
-        ];
-
-        result = await conn.query(insertQuery, insertValues);
+        ]);
       }
     } else {
-      // Non dine-in always fresh
+      // takeaway / delivery tmp (optional)
       const insertQuery = `
         INSERT INTO tbl_tmp_orders (
           zodu_id, branch_id, no_of_items, order_type,
-          customer_name, customer_phone, total_amt,
-          final_payment, payment_type, order_id,
-          order_date, order_time
+          customer_name, customer_phone,
+          subtotal, total_tax, total_amt,
+          final_payment, payment_type,
+          order_id, order_date, order_time
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
         RETURNING *;
       `;
 
-      const insertValues = [
+      result = await conn.query(insertQuery, [
         orderData.zodu_id,
         orderData.branch_id,
-        newItemsCount,
+        no_of_items,
         orderData.order_type,
         orderData.customer_name,
         orderData.customer_phone,
-        orderData.total_amt,
+        subtotal,
+        total_tax,
+        total_amt,
         orderData.final_payment,
         orderData.payment_type,
         orderData.order_id,
         orderData.order_date,
         orderData.order_time
-      ];
-
-      result = await conn.query(insertQuery, insertValues);
+      ]);
     }
 
     await conn.query("COMMIT");
@@ -2398,9 +2437,10 @@ exports.createtmpOrder = async (orderData) => {
 
   } catch (err) {
     await conn.query("ROLLBACK");
-    throw new Error("Unable to create or update order: " + err.message);
+    throw new Error("Unable to create or update tmp order: " + err.message);
   }
 };
+
 
 
 
@@ -2410,6 +2450,7 @@ exports.createtmpOrder = async (orderData) => {
 exports.createtmpOrderedItems = async (orderData) => {
   try {
     await conn.query('BEGIN');
+
     const items = orderData.items;
     if (!Array.isArray(items) || items.length === 0) {
       throw new Error("Items array is empty or invalid");
@@ -2419,8 +2460,9 @@ exports.createtmpOrderedItems = async (orderData) => {
 
     for (const item of items) {
       const hasVariant = !!item.variant_id;
+      const taxData = calculateItemTax(item);
 
-      // ✅ Build dynamic check query based on variant existence
+      // 🔍 Check existing
       const checkQuery = hasVariant
         ? `
           SELECT * FROM tbl_tmp_ordered_items
@@ -2438,30 +2480,57 @@ exports.createtmpOrderedItems = async (orderData) => {
       const existingItem = await conn.query(checkQuery, checkValues);
 
       if (existingItem.rows.length > 0) {
-        // 🟡 Item exists → update qty and price
+        // 🟡 UPDATE qty + tax
         const updateQuery = hasVariant
           ? `
             UPDATE tbl_tmp_ordered_items
-            SET qty = qty + $1
-            WHERE order_id = $2 AND item_id = $3 AND variant_id = $4
+            SET 
+              qty = qty + $1,
+              gst_percentage = $2,
+              tax_amount = tax_amount + $3,
+              cgst = cgst + $4,
+              sgst = sgst + $5
+            WHERE order_id = $6 AND item_id = $7 AND variant_id = $8
             RETURNING *;
           `
           : `
             UPDATE tbl_tmp_ordered_items
-            SET qty = qty + $1
-            WHERE order_id = $2 AND item_id = $3 AND variant_id IS NULL
+            SET 
+              qty = qty + $1,
+              gst_percentage = $2,
+              tax_amount = tax_amount + $3,
+              cgst = cgst + $4,
+              sgst = sgst + $5
+            WHERE order_id = $6 AND item_id = $7 AND variant_id IS NULL
             RETURNING *;
           `;
 
         const updateValues = hasVariant
-          ? [item.qty, orderData.order_id, item.menu_id, item.variant_id]
-          : [item.qty, orderData.order_id, item.menu_id];
+          ? [
+              item.qty,
+              taxData.gst_percentage,
+              taxData.tax_amount,
+              taxData.cgst,
+              taxData.sgst,
+              orderData.order_id,
+              item.menu_id,
+              item.variant_id
+            ]
+          : [
+              item.qty,
+              taxData.gst_percentage,
+              taxData.tax_amount,
+              taxData.cgst,
+              taxData.sgst,
+              orderData.order_id,
+              item.menu_id
+            ];
 
         const result = await conn.query(updateQuery, updateValues);
-
         insertedItems.push(result.rows[0]);
+
       } else {
-        // 🟢 New item → insert (with or without variant)
+        // 🟢 INSERT new with tax
         const insertQuery = `
           INSERT INTO tbl_tmp_ordered_items (
             zodu_id,
@@ -2473,9 +2542,14 @@ exports.createtmpOrderedItems = async (orderData) => {
             price,
             item_unit,
             variant_id,
-            variant_name
+            variant_name,
+            gst_percentage,
+            tax_amount,
+            cgst,
+            sgst,
+            tax_inclusive
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,false)
           RETURNING *;
         `;
 
@@ -2490,19 +2564,26 @@ exports.createtmpOrderedItems = async (orderData) => {
           item.menu_unit,
           hasVariant ? item.variant_id : null,
           hasVariant ? item.variant_name : null,
+          taxData.gst_percentage,
+          taxData.tax_amount,
+          taxData.cgst,
+          taxData.sgst
         ];
 
         const result = await conn.query(insertQuery, insertValues);
         insertedItems.push(result.rows[0]);
       }
     }
+
     await conn.query('COMMIT');
     return insertedItems;
+
   } catch (err) {
     await conn.query('ROLLBACK');
-    throw new Error("Unable to create or update ordered items: " + err.message);
+    throw new Error("Unable to create or update tmp ordered items: " + err.message);
   }
-}
+};
+
 
 exports.createKOT = async (orderData) => {
   try {

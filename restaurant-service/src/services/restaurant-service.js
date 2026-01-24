@@ -1316,39 +1316,34 @@ async function editMenuItem(menuId, menuData) {
 
 async function createOrder(orderData) {
   try {
-    let newOrder = null;
-    let neworderItem = null;
-    let newKot = null;
+    let order = null;
+    let items = null;
+    let kot = null;
 
-    if (orderData.order_type !== "Dine-In") {
-      newOrder = await repository.createOrder(orderData);
-      neworderItem = await repository.createOrderedItems(orderData);
-    } else {
-      newOrder = await repository.createtmpOrder(orderData);
-      neworderItem = await repository.createtmpOrderedItems(orderData);
-
-      // Create KOT only for Dine-In
-      newKot = await repository.createKOT(orderData);
+    // 🟢 DINE-IN = RUNNING TABLE (TMP ONLY)
+    if (orderData.order_type === "Dine-In") {
+      order = await repository.createtmpOrder(orderData);
+      items = await repository.createtmpOrderedItems(orderData);
+      kot = await repository.createKOT(orderData);
+    }
+    // 🟡 TAKEAWAY / DELIVERY = DIRECT FINAL ORDER
+    else {
+      order = await repository.createOrder(orderData);
+      items = await repository.createOrderedItems(orderData);
     }
 
     return {
       success: true,
       message: "Order created successfully",
-      data: {
-        order: newOrder,
-        items: neworderItem,
-        kot: newKot,
-      },
+      data: { order, items, kot },
     };
-  } catch (err) {
-    console.error("Error inserting Order:", err);
 
-    return {
-      success: false,
-      message: err.message || "Failed to create order",
-    };
+  } catch (err) {
+    console.error("Order Error:", err);
+    return { success: false, message: err.message };
   }
 }
+
 
 
 async function getPurchaseListData(
