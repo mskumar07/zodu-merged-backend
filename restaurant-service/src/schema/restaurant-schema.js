@@ -145,6 +145,11 @@ const order_create = Joi.object({
     .pattern(/^[0-9]{7,15}$/)
     .allow('', null),
   total_amt: Joi.number().precision(2).min(0).required(),
+   discount_type: Joi.string()
+    .valid('PERCENT', 'FLAT', 'Percent', 'Amount')
+    .allow(null, ''),
+
+  discount_value: Joi.number().precision(2).min(0).allow(null),
   items: Joi.array().items(itemSchema).min(1).required(),
   final_payment: Joi.boolean().required(),
   order_date: Joi.alternatives().try(
@@ -168,7 +173,7 @@ const purchase_order_create = Joi.object({
   paid_amount: Joi.number().precision(2).min(0).required(),
   purchase_type: Joi.string().max(50).required(),
   attachment_url: Joi.array().items(Joi.object()).optional(),
-  payment_type: Joi.string().valid("cash", "card", "upi", "credit").required(),
+  payment_type: Joi.string().valid("cash", "card", "upi", "credit").allow(null, ""),
   notes: Joi.string().allow("", null),
 
   // array of items
@@ -231,7 +236,7 @@ const expense_data = Joi.object({
   total_amount: Joi.number().precision(2).min(0).required(),
   paid_amount: Joi.number().precision(2).min(0).required(),
   attachment_url: Joi.array().optional().allow(null),
-  payment_type: Joi.string().valid("cash", "card", "upi", "credit").required(),
+  payment_type: Joi.string().valid("cash", "card", "upi", "credit").allow(null, ""),
   description: Joi.string().allow("", null),
 
   // array of items
