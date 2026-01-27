@@ -423,6 +423,7 @@ const getDashboardSummary = async ({
 
 
 const update = async (id, patch) => {
+  console.log("mumu",id,patch)
   const keys = Object.keys(patch);
   if (!keys.length) return findById(id);
 

@@ -1330,7 +1330,7 @@ router.post("/api/completeorder", async (req, res) => {
   try {
     const data = req.body
 
-    console.log(req.body)
+    console.log("complete",req.body)
     const orderData = await service.update_Final_payment(data);
 
     if (!orderData.success) {

@@ -72,6 +72,7 @@ const createTx = async (checklist_instance_id, taskId) => {
 };
 
 const removeByTaskId = async (task_id) => {
+  console.log("fromtaskinstancerepo",task_id)
   await db.query(
     `
     DELETE FROM tbl_task_instance

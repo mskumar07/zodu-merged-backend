@@ -134,6 +134,8 @@ const getChecklist = async (id) => checklistRepo.findById(id);
 const listChecklists = async (filter) => checklistRepo.list(filter);
 
 const updateChecklist = async (checklistId, payload) => {
+
+  console.log("new",payload,checklistId)
   const { checklist = {}, tasks = [], schedule, assignees = [] } = payload;
 
   try {
@@ -155,6 +157,8 @@ const updateChecklist = async (checklistId, payload) => {
     const existingTaskIds = existingTasks.map(t => t.id);
     const incomingTaskIds = tasks.filter(t => t.id).map(t => t.id);
 
+    console.log(existingTaskIds,incomingTaskIds)
+
     // ❌ removed tasks
     const removedTaskIds = existingTaskIds.filter(
       id => !incomingTaskIds.includes(id)
@@ -162,7 +166,7 @@ const updateChecklist = async (checklistId, payload) => {
 
     for (const taskId of removedTaskIds) {
       await taskRepo.remove(taskId);
-      await taskInstanceRepo.removeByTaskId(taskId);
+      // await taskInstanceRepo.removeByTaskId(taskId);
     }
 
     /* -------------------------------------------------

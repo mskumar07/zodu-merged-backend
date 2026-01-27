@@ -82,17 +82,35 @@ const findById = async (id) => {
 };
 
 const update = async (id, patch) => {
-  const keys = Object.keys(patch);
+  console.log("data i get",id,patch)
+  // Remove undefined & null values
+  const filteredPatch = Object.fromEntries(
+    Object.entries(patch).filter(
+      ([_, v]) => v !== undefined && v !== null
+    )
+  );
+
+  const keys = Object.keys(filteredPatch);
   if (!keys.length) return findById(id);
+
   const sets = keys.map((k, i) => `${k} = $${i + 1}`);
-  const vals = keys.map(k => patch[k]);
+  const vals = keys.map(k => filteredPatch[k]);
   vals.push(id);
-  const q = `UPDATE tbl_task SET ${sets.join(', ')} WHERE id = $${keys.length + 1} RETURNING *`;
+
+  const q = `
+    UPDATE tbl_task
+    SET ${sets.join(', ')}
+    WHERE id = $${keys.length + 1}
+    RETURNING *
+  `;
+
   const res = await db.query(q, vals);
   return res.rows[0];
 };
 
+
 const remove = async (id) => {
+  console.log("fromtaskrepo",id)
   await db.query('DELETE FROM tbl_task WHERE id = $1', [id]);
   return true;
 };

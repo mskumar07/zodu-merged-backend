@@ -1072,286 +1072,11 @@ exports.get_menuItem_data = async (branch_id, page, limit, search) => {
 
 
 
-// exports.updateFinalPayment = async (data) => {
-//   try {
-//     const { order_id, table_no, final_payment, items, zodu_id, branch_id,total_amt,payment_type } = data;
-
-
-//     await conn.query("BEGIN");
-
-//     // 1️⃣ UPDATE FINAL PAYMENT
-//   const noOfItems = Array.isArray(items) ? items.length : 0;
-
-//     // ✅ 3. UPDATE FINAL PAYMENT + TOTAL AMT + NO OF ITEMS
-//     const updateQuery = `
-//       UPDATE tbl_orders
-//       SET final_payment = $1,
-//           total_amt = $2,
-//           no_of_items = $3,
-//           payment_type = $6
-//       WHERE order_id = $4 AND table_no = $5
-//       RETURNING *;
-//     `;
-    
-//     const result = await conn.query(updateQuery, [
-//       final_payment, 
-//       total_amt, 
-//       noOfItems, 
-//       order_id, 
-//       table_no,
-//       payment_type
-//     ]);
-
-
-//     // 2️⃣ SYNC ORDERED ITEMS
-//     if (Array.isArray(items)) {
-
-//       // Fetch existing items from DB
-//       const dbItemsQuery = `
-//         SELECT * FROM tbl_ordered_items
-//         WHERE order_id = $1
-//       `;
-//       const dbItems = await conn.query(dbItemsQuery, [order_id]);
-
-//       // Convert to map for quick lookup
-//       const dbMap = new Map();
-//       dbItems.rows.forEach((x) => {
-//         // Create a unique key for lookup
-//         const key = `${x.item_id}-${x.variant_id || "null"}`;
-//         dbMap.set(key, x);
-//       });
-
-//       // Process incoming items
-//       for (const item of items) {
-//         const variantKey = `${item.menu_id}-${item.variant_id || "null"}`;
-//         const existsInDB = dbMap.get(variantKey);
-
-//         if (existsInDB) {
-//           // 🔵 ITEM EXISTS → OMIT DATA (DO NOTHING)
-//           // We remove it from the map so it doesn't get deleted in the next step,
-//           // but we skip the UPDATE query entirely.
-//           dbMap.delete(variantKey);
-//         } 
-//         else {
-//           // 🟢 NEW ITEM → INSERT
-//           // (If an item was added at the payment screen that wasn't there before)
-//           const insertQuery = `
-//             INSERT INTO tbl_ordered_items (
-//               zodu_id, branch_id, order_id,
-//               item_id, item_name, qty, price,
-//               item_unit, variant_id, variant_name
-//             )
-//             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-//           `;
-
-//           await conn.query(insertQuery, [
-//             zodu_id,
-//             branch_id,
-//             order_id,
-//             item.menu_id,
-//             item.name,
-//             item.qty,
-//             item.price,
-//             item.menu_unit,
-//             item.variant_id || null,
-//             item.variant_name || null
-//           ]);
-//         }
-//       }
-
-//       // 🔴 DELETE ITEMS (If removed from frontend)
-//       // Any item left in dbMap was present in DB but NOT in the incoming 'items' array
-//       for (const leftover of dbMap.values()) {
-//         const deleteQuery = `
-//           DELETE FROM tbl_ordered_items
-//           WHERE order_id = $1 AND item_id = $2 
-//             AND (${leftover.variant_id ? "variant_id = $3" : "variant_id IS NULL"})
-//         `;
-//         const deleteValues = leftover.variant_id
-//           ? [order_id, leftover.item_id, leftover.variant_id]
-//           : [order_id, leftover.item_id];
-
-//         await conn.query(deleteQuery, deleteValues);
-//       }
-//     }
-
-
-//     // 3️⃣ DELETE KOT ITEMS WHEN PAYMENT CLEARED
-//     if (final_payment === true && table_no) {
-//       const deleteKOT = `
-//         DELETE FROM tbl_kot_list
-//         WHERE table_no = $1 AND order_id = $2
-//       `;
-//       await conn.query(deleteKOT, [table_no, order_id]);
-//     }
-
-//     await conn.query("COMMIT");
-
-//     return {
-//       success: true,
-//       message: "Final payment updated & items synced (Existing ignored, missing deleted)",
-//       order: result.rows[0],
-//     };
-
-//   } catch (err) {
-//     await conn.query("ROLLBACK");
-//     throw new Error("Unable to update final payment: " + err.message);
-//   }
-// };
 
 
 
-exports.updateFinalPayment = async (data) => {
-  const {
-    order_id,
-    table_no,
-    final_payment,
-    payment_type,
-    discount_type,
-    discount_value,
-    items // FINAL ITEMS FROM UI
-  } = data;
 
-  try {
-    await conn.query("BEGIN");
 
-    if (!Array.isArray(items) || items.length === 0) {
-      throw new Error("No final items provided");
-    }
-
-    // 1️⃣ Replace tmp items with FINAL items (with GST)
-    await conn.query(`DELETE FROM tbl_tmp_ordered_items WHERE order_id=$1`, [order_id]);
-
-    let subtotal = 0;
-    let total_tax = 0;
-    let no_of_items = 0;
-
-    for (const item of items) {
-      const taxData = calculateItemTax(item);
-
-      subtotal += taxData.subtotal;
-      total_tax += taxData.tax_amount;
-      no_of_items += Number(item.qty);
-
-      await conn.query(
-        `INSERT INTO tbl_tmp_ordered_items (
-          order_id,
-          item_id,
-          item_name,
-          qty,
-          price,
-          gst_percentage,
-          tax_amount,
-          cgst,
-          sgst,
-          tax_inclusive
-        )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,false)`,
-        [
-          order_id,
-          item.item_id,
-          item.item_name,
-          item.qty,
-          item.price,
-          taxData.gst_percentage,
-          taxData.tax_amount,
-          taxData.cgst,
-          taxData.sgst
-        ]
-      );
-    }
-
-    // 2️⃣ Discount
-    let discount_amount = 0;
-    if (discount_type === "PERCENT") {
-      discount_amount = (subtotal * discount_value) / 100;
-    } else if (discount_type === "FLAT") {
-      discount_amount = discount_value;
-    }
-
-    const total_amt = subtotal + total_tax - discount_amount;
-
-    // 3️⃣ Insert FINAL order
-    const orderResult = await conn.query(
-      `INSERT INTO tbl_orders (
-        order_id,
-        table_no,
-        no_of_items,
-
-        subtotal,
-        total_tax,
-        total_amt,
-
-        discount_type,
-        discount_value,
-        discount_amount,
-
-        final_payment,
-        payment_type
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true,$10)
-      RETURNING *`,
-      [
-        order_id,
-        table_no,
-        no_of_items,
-        subtotal,
-        total_tax,
-        total_amt,
-        discount_type,
-        discount_value,
-        discount_amount,
-        payment_type
-      ]
-    );
-
-    // 4️⃣ Move FINAL items → main table
-    await conn.query(
-      `INSERT INTO tbl_ordered_items (
-        order_id,
-        item_id,
-        item_name,
-        qty,
-        price,
-        gst_percentage,
-        tax_amount,
-        cgst,
-        sgst,
-        tax_inclusive
-      )
-      SELECT
-        order_id,
-        item_id,
-        item_name,
-        qty,
-        price,
-        gst_percentage,
-        tax_amount,
-        cgst,
-        sgst,
-        tax_inclusive
-      FROM tbl_tmp_ordered_items
-      WHERE order_id=$1`,
-      [order_id]
-    );
-
-    // 5️⃣ Cleanup TMP
-    await conn.query(`DELETE FROM tbl_tmp_ordered_items WHERE order_id=$1`, [order_id]);
-    await conn.query(`DELETE FROM tbl_tmp_orders WHERE order_id=$1`, [order_id]);
-
-    await conn.query("COMMIT");
-
-    return {
-      success: true,
-      message: "Order finalized successfully",
-      order: orderResult.rows[0]
-    };
-
-  } catch (err) {
-    await conn.query("ROLLBACK");
-    throw new Error("Final payment failed: " + err.message);
-  }
-};
 
 
 
@@ -2139,7 +1864,18 @@ exports.createOrder = async (orderData) => {
       no_of_items += Number(item.qty);
     }
 
-    const discount_amount = Number(orderData.discount_amount || 0);
+    // ✅ Normalize discount type
+    const discountType = orderData.discount_type
+      ? orderData.discount_type.toUpperCase()
+      : null;
+
+    let discount_amount = 0;
+    if (discountType === "PERCENT") {
+      discount_amount = (subtotal * Number(orderData.discount_value || 0)) / 100;
+    } else if (discountType === "FLAT") {
+      discount_amount = Number(orderData.discount_value || 0);
+    }
+
     const total_amt = subtotal + total_tax - discount_amount;
 
     const insertQuery = `
@@ -2177,9 +1913,9 @@ exports.createOrder = async (orderData) => {
       total_tax,
       total_amt,
 
-      orderData.discount_type,
+      discountType,                 // ✅ normalized
       orderData.discount_value,
-      discount_amount,
+      discount_amount,              // ✅ calculated
 
       orderData.final_payment,
       orderData.payment_type,
@@ -2198,14 +1934,6 @@ exports.createOrder = async (orderData) => {
   }
 };
 
-
-
-
-
-
-
-
-// ✅ Create or Update Ordered Items
 exports.createOrderedItems = async (orderData) => {
   try {
     await conn.query('BEGIN');
@@ -2441,12 +2169,6 @@ exports.createtmpOrder = async (orderData) => {
   }
 };
 
-
-
-
-
-
-// ✅ Create or Update Ordered Items
 exports.createtmpOrderedItems = async (orderData) => {
   try {
     await conn.query('BEGIN');
@@ -2581,6 +2303,226 @@ exports.createtmpOrderedItems = async (orderData) => {
   } catch (err) {
     await conn.query('ROLLBACK');
     throw new Error("Unable to create or update tmp ordered items: " + err.message);
+  }
+};
+
+exports.updateFinalPayment = async (data) => {
+  const {
+    zodu_id,
+    branch_id,
+    order_id,
+    table_no,
+    payment_type,
+    discount_type,
+    discount_value,
+    items
+  } = data;
+
+  try {
+    await conn.query("BEGIN");
+
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new Error("No final items provided");
+    }
+
+    // 0️⃣ Read temp order date & time
+    const tmpOrderRes = await conn.query(
+      `SELECT order_date, order_time, order_type 
+       FROM tbl_tmp_orders 
+       WHERE order_id=$1`,
+      [order_id]
+    );
+
+    if (tmpOrderRes.rowCount === 0) {
+      throw new Error("Temp order not found");
+    }
+
+    const { order_date, order_time, order_type } = tmpOrderRes.rows[0];
+
+    // 1️⃣ Clear tmp items
+    await conn.query(
+      `DELETE FROM tbl_tmp_ordered_items WHERE order_id=$1`,
+      [order_id]
+    );
+
+    let subtotal = 0;     // without tax
+    let total_tax = 0;    // only tax
+    let no_of_items = 0;
+
+    // 2️⃣ Insert items with proper tax logic
+    for (const item of items) {
+      const qty = Number(item.qty);
+      const price = Number(item.price);
+      const gst = Number(item.gst_percentage ?? item.tax ?? 0);
+      const taxInclusive = item.tax_inclusive === true;
+
+      let base = 0;
+      let tax = 0;
+
+      if (taxInclusive) {
+        const total = price * qty;
+        base = (total * 100) / (100 + gst);
+        tax = total - base;
+      } else {
+        base = price * qty;
+        tax = (base * gst) / 100;
+      }
+
+      const cgst = tax / 2;
+      const sgst = tax / 2;
+
+      subtotal += base;
+      total_tax += tax;
+      no_of_items += qty;
+
+      await conn.query(
+        `INSERT INTO tbl_tmp_ordered_items (
+          zodu_id,
+          branch_id,
+          order_id,
+          item_id,
+          item_name,
+          qty,
+          price,
+          gst_percentage,
+          tax_amount,
+          cgst,
+          sgst,
+          tax_inclusive
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [
+          zodu_id,
+          branch_id,
+          order_id,
+          item.menu_id,
+          item.name,
+          qty,
+          price,
+          gst,
+          tax,
+          cgst,
+          sgst,
+          taxInclusive
+        ]
+      );
+    }
+
+    // 3️⃣ Calculate discount
+    const discountType = discount_type ? discount_type.toUpperCase() : null;
+
+    let discount_amount = 0;
+    if (discountType === "PERCENT") {
+      discount_amount = (subtotal * Number(discount_value || 0)) / 100;
+    } else if (discountType === "FLAT") {
+      discount_amount = Number(discount_value || 0);
+    }
+
+    if (discount_amount > subtotal) discount_amount = subtotal;
+
+    const total_amt = subtotal + total_tax - discount_amount;
+
+    // 4️⃣ Insert final order
+    const orderResult = await conn.query(
+      `INSERT INTO tbl_orders (
+        zodu_id,
+        branch_id,
+        order_id,
+        table_no,
+        order_type,
+        no_of_items,
+
+        subtotal,
+        total_tax,
+        total_amt,
+
+        discount_type,
+        discount_value,
+        discount_amount,
+
+        final_payment,
+        payment_type,
+        order_date,
+        order_time
+      )
+      VALUES (
+        $1,$2,$3,$4,$5,$6,
+        $7,$8,$9,
+        $10,$11,$12,
+        true,$13,$14,$15
+      )
+      RETURNING *`,
+      [
+        zodu_id,
+        branch_id,
+        order_id,
+        table_no,
+        order_type,
+        no_of_items,
+
+        subtotal,
+        total_tax,
+        total_amt,
+
+        discountType,
+        discount_value,
+        discount_amount,
+
+        payment_type,
+        order_date,
+        order_time
+      ]
+    );
+
+    // 5️⃣ Move tmp → final items
+    await conn.query(
+      `INSERT INTO tbl_ordered_items (
+        zodu_id,
+        branch_id,
+        order_id,
+        item_id,
+        item_name,
+        qty,
+        price,
+        gst_percentage,
+        tax_amount,
+        cgst,
+        sgst,
+        tax_inclusive
+      )
+      SELECT
+        zodu_id,
+        branch_id,
+        order_id,
+        item_id,
+        item_name,
+        qty,
+        price,
+        gst_percentage,
+        tax_amount,
+        cgst,
+        sgst,
+        tax_inclusive
+      FROM tbl_tmp_ordered_items
+      WHERE order_id=$1`,
+      [order_id]
+    );
+
+    // 6️⃣ Cleanup temp
+    await conn.query(`DELETE FROM tbl_tmp_ordered_items WHERE order_id=$1`, [order_id]);
+    await conn.query(`DELETE FROM tbl_tmp_orders WHERE order_id=$1`, [order_id]);
+
+    await conn.query("COMMIT");
+
+    return {
+      success: true,
+      message: "Order finalized successfully",
+      order: orderResult.rows[0]
+    };
+
+  } catch (err) {
+    await conn.query("ROLLBACK");
+    throw new Error("Final payment failed: " + err.message);
   }
 };
 
