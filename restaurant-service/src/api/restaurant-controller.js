@@ -1346,19 +1346,57 @@ router.post("/api/completeorder", async (req, res) => {
   }
 })
 
-router.get("/api/dashboard/:zodu_id/:branch_id", async (req, res) => { 
-  try { 
-    const { zodu_id, branch_id } = req.params; 
-    const { ordersPage = 1, 
-      ordersLimit = 10, 
-      expensesPage = 1, expensesLimit = 10, topItemsPage = 1, topItemsLimit = 5, datePage = 1, dateLimit = 7, sortBy = "created_at", sortOrder = "desc" } = req.query; 
-      const getData = await service.get_dashboard(zodu_id, branch_id, { ordersPage: +ordersPage, ordersLimit: +ordersLimit, expensesPage: +expensesPage, expensesLimit: +expensesLimit, topItemsPage: +topItemsPage, topItemsLimit: +topItemsLimit, datePage: +datePage, dateLimit: +dateLimit, sortBy, sortOrder }); 
-      return res.status(200).json({ message: "Data Get Successfully", data: getData.data, pagination: getData.pagination }); 
-    } catch (error) { 
-      console.error(error); 
-      return res.status(500).json({ error: error.message }); 
-    } 
-  });
+router.get("/api/dashboard/:zodu_id/:branch_id", async (req, res) => {
+  try {
+    const { zodu_id, branch_id } = req.params;
+
+    const {
+      ordersPage = 1,
+      ordersLimit = 10,
+      expensesPage = 1,
+      expensesLimit = 10,
+      topItemsPage = 1,
+      topItemsLimit = 5,
+      datePage = 1,
+      dateLimit = 7,
+      sortOrder = "desc",
+
+      // 👇 NEW
+      dateType = "today", // today | yesterday | week | 30days | custom
+      fromDate,
+      toDate
+    } = req.query;
+
+    const getData = await service.get_dashboard(
+      zodu_id,
+      branch_id,
+      {
+        ordersPage: +ordersPage,
+        ordersLimit: +ordersLimit,
+        expensesPage: +expensesPage,
+        expensesLimit: +expensesLimit,
+        topItemsPage: +topItemsPage,
+        topItemsLimit: +topItemsLimit,
+        datePage: +datePage,
+        dateLimit: +dateLimit,
+        sortOrder,
+        dateType,
+        fromDate,
+        toDate
+      }
+    );
+
+    return res.status(200).json({
+      message: "Data Get Successfully",
+      data: getData.data,
+      pagination: getData.pagination
+    });
+
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
 
 
 
@@ -1392,68 +1430,34 @@ router.post("/api/add/inventory", async (req, res) => {
 });
 
 
-
 router.get("/api/report/:type/:zodu_id/:branch_id", async (req, res) => {
   try {
     const { type, zodu_id, branch_id } = req.params;
+
     let {
       filterType = "year",
       start_date,
       end_date,
-      summaryType = "all",   // all | category
       page = 1,
       limit = 30,
-      sortBy = "order_date",
+      sortBy = "updated_at",
       sortOrder = "desc",
-      top = 0,
-      search = ""
+      search = "",
+      reportView = "normal",
+      year,
+      stockFilter = "all" // ✅ ADD THIS
     } = req.query;
 
+    const filterMap = {
+      daily: "today",
+      weekly: "week",
+      monthly: "month",
+      yearly: "year",
+    };
+    filterType = filterMap[filterType] || filterType;
 
+    console.log(start_date,end_date,filterType)
 
-    const validTypes = ["restaurant", "orders", "purchase", "expense", "inventory"];
-    const validFilters = ["today", "week", "month", "year", "custom"];
-    const validSummaryTypes = ["all", "category"];  // ✅ only these two
-
-    console.log(type)
-
-    // Adjust sortBy for other types
-    if (type === "purchase" && sortBy === "order_date") {
-      sortBy = "purchase_date";
-    }
-    if (type === "expense" && sortBy === "order_date") {
-      sortBy = "expense_date";
-    }
-    if (type === "inventory" && sortBy === "order_date") {
-      sortBy = "created_at";
-    }
-
-    // Validate type
-    if (!validTypes.includes(type)) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Invalid type. Must be restaurant, orders, purchase, expense, inventory.",
-      });
-    }
-
-    // Validate summaryType
-    if (!validSummaryTypes.includes(summaryType)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid summaryType. Must be all or category.",
-      });
-    }
-
-    // Validate date filter
-    const validation = validateDateFilter(filterType, start_date, end_date);
-    if (!validation.valid) {
-      return res
-        .status(400)
-        .json({ success: false, message: validation.message });
-    }
-
-    // Map type → service fn
     const serviceMap = {
       orders: service.getOrdersSummary,
       purchase: service.getPurchaseSummary,
@@ -1461,46 +1465,281 @@ router.get("/api/report/:type/:zodu_id/:branch_id", async (req, res) => {
       inventory: service.getInventorySummary,
     };
 
-    const getDataFn = serviceMap[type];
+    year = year ? Number(year) : new Date().getFullYear();
 
-    const getData = await getDataFn(
+    const result = await serviceMap[type](
       zodu_id,
       branch_id,
       filterType,
       start_date,
       end_date,
       {
-        page: parseInt(page),
-        limit: parseInt(limit),
+        page: Number(page),
+        limit: Number(limit),
         sortBy,
         sortOrder,
-        top: parseInt(top),
-        summaryType,
         search,
+        reportView,
+        year,
+        stockFilter // ✅ PASS IT
       }
     );
 
-    if (!getData?.success) {
-      return res.status(400).json({
-        success: false,
-        message: getData?.message || "Failed to fetch data",
-      });
-    }
+    if (!result?.success) return res.status(400).json(result);
 
     return res.status(200).json({
       success: true,
-      message: `${type} summary fetched successfully`,
-      data: getData.data,
-      pagination: getData.pagination || {},
+      data: result.data,
+      pagination: result.pagination || {},
+    });
+
+  } catch (err) {
+    console.error("REPORT ERROR:", err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.get("/api/report/orders", async (req, res) => {
+  try {
+    const { filtered_type = "all_orders", zodu_id, branch_id, page = 1, limit = 10, start_date, end_date, year,search } = req.query;
+
+    if (!zodu_id || !branch_id) {
+      return res.status(400).json({ success: false, message: "zodu_id and branch_id are required" });
+    }
+
+    if (filtered_type === "date_wise" && (!start_date || !end_date)) {
+      return res.status(400).json({ success: false, message: "start_date and end_date are required for date_wise filter" });
+    }
+
+    const pageNum = Number(page);
+    const limitNum = Number(limit);
+
+    const result = await service.getReportServices(zodu_id, branch_id, pageNum, limitNum, filtered_type, start_date, end_date, year,search);
+
+    if (!result.success) {
+      return res.status(400).json({ success: false, message: result.message });
+    }
+
+    let response;
+
+    if (filtered_type === "date_wise") {
+      response = {
+        success: true,
+        datewise_summary: result.datewise_summary,
+        totalAmount: result.totalAmount,
+        totalItems: result.totalItems,
+        pagination: result.pagination,
+      };
+    } else if (filtered_type === "month_year_wise") {
+      response = {
+        success: true,
+        monthly_summary: result.monthly_summary,
+        totalAmount: result.totalAmount,
+        totalItems: result.totalItems,
+      };
+    } else {
+      response = {
+        success: true,
+        all_orders: result.data,
+        totalAmount: result.totalAmount,
+        totalItems: result.totalItems,
+        pagination: result.pagination,
+      };
+    }
+
+    return res.status(200).json(response);
+  } catch (err) {
+    console.error("REPORT ERROR:", err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.get("/api/report/purchase", async (req, res) => {
+  try {
+    const { filtered_type = "all_orders", zodu_id, branch_id, page = 1, limit = 10, start_date, end_date, year } = req.query;
+    if (!zodu_id || !branch_id) {
+      return res.status(400).json({ success: false, message: "zodu_id and branch_id are required" });
+    }
+    if (filtered_type === "date_wise" && (!start_date || !end_date)) {
+      return res.status(400).json({ success: false, message: "start_date and end_date are required for date_wise filter" });
+    }
+    const pageNum = Number(page);
+    const limitNum = Number(limit);
+    const result = await service.getPurchaseReportServices(zodu_id, branch_id, pageNum, limitNum, filtered_type, start_date, end_date, year);
+    if (!result.success) {
+      return res.status(400).json({ success: false, message: result.message });
+    }
+    let response;
+    const overallTotals = {
+      over_all_purchase: result.over_all_purchase,
+      over_all_total_amount: result.totalAmount,
+      over_all_total_paid: result.totalPaid,
+      over_all_total_due: result.totalDue,
+    };
+    if (filtered_type === "date_wise") {
+      response = {
+        success: true,
+        datewise_summary: result.datewise_summary,
+        ...overallTotals,
+        pagination: result.pagination,
+      };
+    } else if (filtered_type === "month_year_wise") {
+      response = {
+        success: true,
+        monthly_summary: result.monthly_summary,
+        ...overallTotals,
+      };
+    } else {
+      response = {
+        success: true,
+        all_orders: result.data,
+        ...overallTotals,
+        pagination: result.pagination,
+      };
+    }
+    return res.status(200).json(response);
+  } catch (err) {
+    console.error("REPORT ERROR:", err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.get("/get/report/order-category", async (req, res) => {
+  try {
+    const {
+      zodu_id,
+      branch_id,
+      page = 1,
+      limit = 10,
+      search = ""   // ✅ correct param
+    } = req.query;
+
+    const data = await service.getReportCategory(
+      zodu_id,
+      branch_id,
+      Number(page),
+      Number(limit),
+      search
+    );
+
+    if (!data.success)
+      return res.status(400).json({ message: data.message });
+
+    return res.status(200).json({
+      message: "Data Get Successfully",
+      summary: data.summary,
+      pagination: data.pagination,
+      Data: data.data
     });
   } catch (error) {
-    console.error("Error in /api/report:", error);
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+
+router.get("/api/report/expense", async (req, res) => {
+  try {
+    const {
+      filtered_type = "all_expense",
+      zodu_id,
+      branch_id,
+      page = 1,
+      limit = 10,
+      start_date,
+      end_date,
+      year
+    } = req.query;
+
+    if (!zodu_id || !branch_id) {
+      return res.status(400).json({
+        success: false,
+        message: "zodu_id and branch_id are required"
+      });
+    }
+
+    if (filtered_type === "date_wise" && (!start_date || !end_date)) {
+      return res.status(400).json({
+        success: false,
+        message: "start_date and end_date are required for date_wise filter"
+      });
+    }
+
+    const pageNum = Number(page);
+    const limitNum = Number(limit);
+
+    const result = await service.getExpenseReportServices(
+      zodu_id,
+      branch_id,
+      pageNum,
+      limitNum,
+      filtered_type,
+      start_date,
+      end_date,
+      year
+    );
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        message: result.message
+      });
+    }
+
+    let response;
+
+    /* ================= DATE WISE ================= */
+    if (filtered_type === "date_wise") {
+      response = {
+        success: true,
+        datewise_summary: result.datewise_summary,
+        totalBills: result.totalBills,
+        totalAmount: result.totalAmount,
+        totalPaid: result.totalPaid,
+        totalUnpaid: result.totalUnpaid,
+        totalItems: result.totalItems,
+        pagination: result.pagination
+      };
+    }
+
+    /* ================= MONTH / YEAR WISE ================= */
+    else if (filtered_type === "month_year_wise") {
+      response = {
+        success: true,
+        monthly_summary: result.monthly_summary,
+        totalBills: result.totalBills,
+        totalAmount: result.totalAmount,
+        totalPaid: result.totalPaid,
+        totalUnpaid: result.totalUnpaid,
+        totalItems: result.totalItems
+      };
+    }
+
+    /* ================= ALL EXPENSE LIST ================= */
+    else {
+      response = {
+        success: true,
+        all_orders: result.data,
+        totalBills: result.totalBills,
+        totalAmount: result.totalAmount,
+        totalPaid: result.totalPaid,
+        totalUnpaid: result.totalUnpaid,
+        totalItems: result.totalItems,
+        pagination: result.pagination
+      };
+    }
+
+    return res.status(200).json(response);
+
+  } catch (err) {
+    console.error("REPORT ERROR:", err);
     return res.status(500).json({
       success: false,
-      message: error.message || "Internal Server Error",
+      message: err.message
     });
   }
 });
+
 
 router.get("/get/purchase/:purchase_id", async (req, res) => {
   try {
@@ -1591,6 +1830,94 @@ router.post("/api/payment/pay", async (req, res) => {
   }
 });
 
+
+// router.get("/api/report/expense", async (req, res) => {
+//   try {
+//     const {
+//       filtered_type = "all_expense",
+//       zodu_id,
+//       branch_id,
+//       page = 1,
+//       limit = 10,
+//       start_date,
+//       end_date,
+//       year
+//     } = req.query;
+//     if (!zodu_id || !branch_id) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "zodu_id and branch_id are required"
+//       });
+//     }
+//     if (filtered_type === "date_wise" && (!start_date || !end_date)) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "start_date and end_date are required for date_wise filter"
+//       });
+//     }
+//     const pageNum = Number(page);
+//     const limitNum = Number(limit);
+//     const result = await service.getExpenseReportServices(
+//       zodu_id,
+//       branch_id,
+//       pageNum,
+//       limitNum,
+//       filtered_type,
+//       start_date,
+//       end_date,
+//       year
+//     );
+//     if (!result.success) {
+//       return res.status(400).json({
+//         success: false,
+//         message: result.message
+//       });
+//     }
+//     let response;
+//     if (filtered_type === "date_wise") {
+//       response = {
+//         success: true,
+//         datewise_summary: result.datewise_summary,
+//         totalBills: result.totalBills,
+//         totalAmount: result.totalAmount,
+//         totalPaid: result.totalPaid,
+//         totalUnpaid: result.totalUnpaid,
+//         totalItems: result.totalItems,
+//         pagination: result.pagination
+//       };
+//     }
+//     else if (filtered_type === "month_year_wise") {
+//       response = {
+//         success: true,
+//         monthly_summary: result.allYear,
+//         totalBills: result.totalBills,
+//         totalAmount: result.totalAmount,
+//         totalPaid: result.totalPaid,
+//         totalUnpaid: result.totalUnpaid,
+//         totalItems: result.totalItems
+//       };
+//     }
+//     else {
+//       response = {
+//         success: true,
+//         all_orders: result.data,
+//         totalBills: result.totalBills,
+//         totalAmount: result.totalAmount,
+//         totalPaid: result.totalPaid,
+//         totalUnpaid: result.totalUnpaid,
+//         totalItems: result.totalItems,
+//         pagination: result.pagination
+//       };
+//     }
+//     return res.status(200).json(response);
+//   } catch (err) {
+//     console.error("REPORT ERROR:", err);
+//     return res.status(500).json({
+//       success: false,
+//       message: err.message
+//     });
+//   }
+// });
 
 
 module.exports = router;

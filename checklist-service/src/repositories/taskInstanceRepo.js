@@ -18,31 +18,58 @@ const findById = async (id) => {
   return res.rows[0];
 };
 
-const complete = async (task_id, user_id ) => {
-  console.log(task_id,user_id)
-  const q = `
-    UPDATE tbl_task_instance ti
-    SET
-      status = 'completed',
-      completed_at = now(),
-      completed_by = $2
-    FROM tbl_task t
-    JOIN tbl_checklist_assignees ca
-      ON ca.checklist_id = t.checklist_id
-    WHERE ti.task_id = $1
-      AND ti.task_id = t.id
-      AND ca.user_id = $2
-    RETURNING ti.*;
-  `;
+const complete = async (task_id, user_id, status) => {
+  const client = await db.connect();
 
-  const res = await db.query(q, [task_id, user_id]);
+  try {
+    await client.query("BEGIN");
 
-  if (res.rowCount === 0) {
-    throw new Error('User not assigned to this checklist or invalid task');
+    // 1️⃣ Update task instance
+    const taskQuery = `
+      UPDATE tbl_task_instance ti
+      SET
+        status = $3,
+        completed_at = now(),
+        completed_by = $2
+      FROM tbl_task t
+      JOIN tbl_checklist_assignees ca
+        ON ca.checklist_id = t.checklist_id
+      WHERE ti.task_id = $1
+        AND ti.task_id = t.id
+        AND ca.user_id = $2
+      RETURNING ti.*, t.checklist_id;
+    `;
+
+    const taskRes = await client.query(taskQuery, [task_id, user_id, status]);
+
+    if (taskRes.rowCount === 0) {
+      throw new Error("User not assigned to this checklist or invalid task");
+    }
+
+    const checklistId = taskRes.rows[0].checklist_id;
+
+    // 2️⃣ If task is NOT completed → checklist must be pending
+    if (status !== "completed") {
+      const checklistQuery = `
+        UPDATE tbl_checklist_instance
+        SET status = 'pending'
+        WHERE checklist_id = $1;
+      `;
+
+      await client.query(checklistQuery, [checklistId]);
+    }
+
+    await client.query("COMMIT");
+
+    return taskRes.rows[0];
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
   }
-
-  return res.rows[0];
 };
+
 
 
 const update = async (id, patch) => {

@@ -155,7 +155,7 @@ async getAttendanceHistory(employeeId, limit = 10, offset = 0, month = null, sta
     );
   }
 
-  async getTeamEmployeeList(branch, date = 'CURRENT_DATE') {
+async getTeamEmployeeList(branch, date = 'CURRENT_DATE') {
     const dateQuery = date === 'CURRENT_DATE' ? 'CURRENT_DATE' : `'${date}'`;
 
     return db.query(
@@ -163,13 +163,18 @@ async getAttendanceHistory(employeeId, limit = 10, offset = 0, month = null, sta
           e.employee_id,
           e.name,
           e.role,
+          edm.department_id, -- Added from the mapping table
           COALESCE(a.status, 'Absent') AS status,
           TO_CHAR(a.check_in, 'HH:MI AM') AS check_in,
           TO_CHAR(a.check_out, 'HH:MI AM') AS check_out
         FROM tbl_employees e
+        -- Join the mapping table
+        LEFT JOIN tbl_employee_department_map edm 
+          ON e.employee_id = edm.employee_id
+        -- Existing attendance join
         LEFT JOIN tbl_attendance a 
-        ON a.employee_id = e.employee_id 
-        AND a.attendance_date = ${dateQuery}
+          ON a.employee_id = e.employee_id 
+          AND a.attendance_date = ${dateQuery}
         WHERE e.branch_id = $1
         ORDER BY e.name`, 
       [branch]

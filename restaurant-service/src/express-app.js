@@ -12,6 +12,7 @@ app.use(cors());
 app.use(httpLogger);
 
 app.use('/', resRouter);
+app.use('/api/dashboard', require('./api/dashboard-controller'));
 
 app.use(HandleErrorWithLogger);
 

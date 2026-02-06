@@ -122,7 +122,7 @@ const inventorySchema =
 const itemSchema = Joi.object({
   menu_id: Joi.string().max(100).required(),
   name: Joi.string().max(200).required(),
-qty: Joi.number().positive().required(),
+  qty: Joi.number().precision(2).required(),
   price: Joi.number().precision(2).min(0).required(),
   image: Joi.string().allow(null, ''),
   tax: Joi.number().precision(2).min(0).required(),
@@ -173,7 +173,7 @@ const purchase_order_create = Joi.object({
   paid_amount: Joi.number().precision(2).min(0).required(),
   purchase_type: Joi.string().max(50).required(),
   attachment_url: Joi.array().items(Joi.object()).optional(),
-  payment_type: Joi.string().valid("cash", "card", "upi", "credit").allow(null, ""),
+  payment_type: Joi.string().allow(null, ""),
   notes: Joi.string().allow("", null),
 
   // array of items
@@ -206,7 +206,7 @@ const purchase_order_update = Joi.object({
   paid_amount: Joi.number().precision(2).min(0).optional(),
   purchase_type: Joi.string().max(50).optional(),
   attachment_url: Joi.array().items(Joi.object()).optional(),
-  payment_type: Joi.string().valid("cash", "card", "upi", "credit").optional(),
+  payment_type: Joi.string().optional(),
   notes: Joi.string().allow("", null).optional(),
 
   // array of items
@@ -236,7 +236,7 @@ const expense_data = Joi.object({
   total_amount: Joi.number().precision(2).min(0).required(),
   paid_amount: Joi.number().precision(2).min(0).required(),
   attachment_url: Joi.array().optional().allow(null),
-  payment_type: Joi.string().valid("cash", "card", "upi", "credit").allow(null, ""),
+  payment_type: Joi.string().allow(null, ""),
   description: Joi.string().allow("", null),
 
   // array of items
@@ -262,7 +262,7 @@ const expense_data_update = Joi.object({
   total_amount: Joi.number().precision(2).min(0).optional(),
   paid_amount: Joi.number().precision(2).min(0).optional(),
   attachment_url: Joi.array().optional().allow(null),
-  payment_type: Joi.string().valid("cash", "card", "upi", "credit").optional(),
+  payment_type: Joi.string().optional(),
   description: Joi.string().allow("", null).optional(),
 
   // array of items

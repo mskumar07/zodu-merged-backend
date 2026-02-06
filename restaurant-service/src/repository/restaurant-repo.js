@@ -1,11 +1,16 @@
 const moment = require('moment/moment');
 const { get, search } = require('../api/restaurant-controller');
 const conn = require('../database/connection');
-const { parseAttachments } = require('../utils/formatchanger');
+const { parseAttachments, calculateOrderSummary, calculateDiscount } = require('../utils/formatchanger');
 const { deleteFileFromMinIO } = require('../services/restaurant-service');
 const { calculateItemTax } = require('../utils/gstcalcukator');
 
 // ========== Company Repository Functions ==========
+
+const purchaseSortFields = ["purchase_date", "purchase_id"];
+const expenseSortFields = ["expense_date", "expense_id"];
+const orderSortFields = ["order_date", "order_id", "total_amt", "no_of_items"];
+
 
 
 exports.createCompany = async (companyData) => {
@@ -162,6 +167,977 @@ exports.get_expense_category_data = async (branch_id) => {
   }
 
 }
+
+// exports.get_all_report_data = async (zodu_id, branch_id, page = 1, limit = 10, filtered_type, start_date, end_date, year) => {
+//   try {
+//     const offset = (page - 1) * limit;
+//     const isDateWise = filtered_type === "date_wise" && start_date && end_date;
+//     const isMonthYearWise = filtered_type === "month_year_wise" && year;
+
+//     // ─── month_year_wise: year filter + GROUP BY month ───
+//     if (isMonthYearWise) {
+//       const yearNum = Number(year);
+
+//       const totalQuery = `
+//         SELECT
+//           COUNT(*)          AS total_count,
+//           SUM(total_amt)    AS all_total_amount,
+//           SUM(no_of_items)  AS all_items_total
+//         FROM tbl_orders
+//         WHERE zodu_id = $1
+//           AND branch_id = $2
+//           AND EXTRACT(YEAR FROM created_at) = $3`;
+
+//       const monthlyQuery = `
+//         SELECT
+//           EXTRACT(MONTH FROM created_at)::int                AS month_number,
+//           to_char(created_at, 'Month')                       AS month,
+//           COUNT(*)                                           AS total_orders,
+//           COALESCE(SUM(total_amt), 0)                        AS total_amount
+//         FROM tbl_orders
+//         WHERE zodu_id = $1
+//           AND branch_id = $2
+//           AND EXTRACT(YEAR FROM created_at) = $3
+//         GROUP BY EXTRACT(MONTH FROM created_at), to_char(created_at, 'Month')
+//         ORDER BY month_number ASC`;
+
+//       const [totalResult, monthlyResult] = await Promise.all([
+//         conn.query(totalQuery, [zodu_id, branch_id, yearNum]),
+//         conn.query(monthlyQuery, [zodu_id, branch_id, yearNum])
+//       ]);
+
+//       // Fill all 12 months (set 0 for months with no data)
+//       const monthNames = [
+//         "January", "February", "March", "April", "May", "June",
+//         "July", "August", "September", "October", "November", "December"
+//       ];
+//       const monthMap = {};
+//       for (const row of monthlyResult.rows) {
+//         monthMap[row.month_number] = row;
+//       }
+//       const monthly_summary = monthNames.map((name, i) => {
+//         const m = monthMap[i + 1];
+//         return {
+//           month_number: i + 1,
+//           month: name,
+//           total_orders: Number(m?.total_orders || 0),
+//           total_amount: Number(m?.total_amount || 0),
+//         };
+//       });
+
+//       return {
+//         rows: [],
+//         totals: totalResult.rows[0],
+//         monthly_summary,
+//       };
+//     }
+
+//     // ─── all_orders / date_wise ───
+//     let dateFilter = "";
+//     const baseParams = [zodu_id, branch_id];
+
+//     if (isDateWise) {
+//       dateFilter = ` AND created_at::date BETWEEN $3 AND $4`;
+//       baseParams.push(start_date, end_date);
+//     }
+
+//     const limitIdx = `$${baseParams.length + 1}`;
+//     const offsetIdx = `$${baseParams.length + 2}`;
+
+//     const query = `
+//         SELECT
+//         to_char(created_at, 'DD-Mon-YYYY') AS created_at,
+//         order_id,
+//         order_type,
+//         no_of_items,
+//         total_tax,
+//         total_amt,
+//         payment_type
+//       FROM tbl_orders
+//       WHERE zodu_id = $1
+//         AND branch_id = $2
+//         ${dateFilter}
+//       ORDER BY created_at DESC
+//       LIMIT ${limitIdx} OFFSET ${offsetIdx}`;
+
+//     const totalQuery = `
+//       SELECT
+//         COUNT(*)          AS total_count,
+//         SUM(total_amt)    AS all_total_amount,
+//         SUM(no_of_items)  AS all_items_total
+//       FROM tbl_orders
+//       WHERE zodu_id = $1
+//         AND branch_id = $2
+//         ${dateFilter}`;
+
+//     const queries = [
+//       conn.query(query, [...baseParams, limit, offset]),
+//       conn.query(totalQuery, baseParams)
+//     ];
+
+//     if (isDateWise) {
+//       const datewiseQuery = `
+//         SELECT
+//           to_char(created_at::date, 'DD-Mon-YYYY') AS created_at,
+//           COUNT(*)                            AS total_orders,
+//           SUM(total_amt)                      AS all_total_amount
+//         FROM tbl_orders
+//         WHERE zodu_id = $1
+//           AND branch_id = $2
+//           AND created_at::date BETWEEN $3 AND $4
+//         GROUP BY created_at::date
+//         ORDER BY created_at::date ASC
+//         LIMIT $5 OFFSET $6`;
+
+//       queries.push(conn.query(datewiseQuery, [...baseParams, limit, offset]));
+//     }
+
+//     const results = await Promise.all(queries);
+//     console.log("Report Data Results:", results);
+//     return {
+//       rows: results[0].rows,
+//       totals: results[1].rows[0],
+//       datewise_summary: isDateWise ? results[2].rows : []
+//     };
+//   } catch (err) {
+//     throw new Error("Unable to fetch report data: " + err.message);
+//   }
+// }
+
+exports.get_all_report_data = async (zodu_id, branch_id, page = 1, limit = 10, filtered_type, start_date, end_date, year) => {
+  try {
+    const offset = (page - 1) * limit;
+    const isDateWise = filtered_type === "date_wise" && start_date && end_date;
+    const isMonthYearWise = filtered_type === "month_year_wise";
+
+    // ─── month_year_wise: single query with window functions for totals ───
+    if (isMonthYearWise) {
+      const monthNames = [
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"
+      ];
+
+      if (year && year !== '' && year !== 'null' && year !== 'undefined') {
+        // ---- SPECIFIC YEAR: month-wise breakdown (Jan–Dec) ----
+        const parsedYear = parseInt(year, 10);
+        const params = [zodu_id, branch_id, parsedYear];
+
+        const query = `
+          SELECT
+            EXTRACT(MONTH FROM created_at)::int         AS month_number,
+            COUNT(*)                                    AS total_orders,
+            COALESCE(SUM(total_amt), 0)                 AS total_amount,
+            SUM(COUNT(*)) OVER()                        AS total_count,
+            COALESCE(SUM(SUM(total_amt)) OVER(), 0)     AS all_total_amount,
+            COALESCE(SUM(SUM(no_of_items)) OVER(), 0)   AS all_items_total
+          FROM tbl_orders
+          WHERE zodu_id = $1
+            AND branch_id = $2
+            AND EXTRACT(YEAR FROM created_at)::int = $3
+          GROUP BY month_number
+          ORDER BY month_number ASC`;
+
+        const { rows } = await conn.query(query, params);
+
+        const monthMap = {};
+        let yearTotalOrders = 0;
+        let yearTotalAmount = 0;
+        const totals = rows.length > 0
+          ? { total_count: rows[0].total_count, all_total_amount: rows[0].all_total_amount, all_items_total: rows[0].all_items_total }
+          : { total_count: 0, all_total_amount: 0, all_items_total: 0 };
+
+        for (const row of rows) {
+          monthMap[row.month_number] = row;
+          yearTotalOrders += Number(row.total_orders);
+          yearTotalAmount += Number(row.total_amount);
+        }
+
+        return {
+          rows: [],
+          totals,
+          monthly_summary: [{
+            year: parsedYear,
+            total_orders: yearTotalOrders,
+            total_amount: yearTotalAmount,
+            months: monthNames.map((name, i) => ({
+              month_number: i + 1,
+              month: name,
+              total_orders: Number(monthMap[i + 1]?.total_orders || 0),
+              total_amount: Number(monthMap[i + 1]?.total_amount || 0),
+            }))
+          }],
+        };
+      }
+
+      // ---- NO YEAR: all years ascending, each with month-wise breakdown ----
+      const params = [zodu_id, branch_id];
+
+      const query = `
+        SELECT
+          EXTRACT(YEAR FROM created_at)::int            AS year,
+          EXTRACT(MONTH FROM created_at)::int           AS month_number,
+          COUNT(*)                                      AS total_orders,
+          COALESCE(SUM(total_amt), 0)                   AS total_amount,
+          SUM(COUNT(*)) OVER()                          AS total_count,
+          COALESCE(SUM(SUM(total_amt)) OVER(), 0)       AS all_total_amount,
+          COALESCE(SUM(SUM(no_of_items)) OVER(), 0)     AS all_items_total
+        FROM tbl_orders
+        WHERE zodu_id = $1
+          AND branch_id = $2
+        GROUP BY year, month_number
+        ORDER BY year ASC, month_number ASC`;
+
+      const { rows } = await conn.query(query, params);
+
+      const yearMap = {};
+      const totals = rows.length > 0
+        ? { total_count: rows[0].total_count, all_total_amount: rows[0].all_total_amount, all_items_total: rows[0].all_items_total }
+        : { total_count: 0, all_total_amount: 0, all_items_total: 0 };
+
+      for (const row of rows) {
+        const y = row.year;
+        if (!yearMap[y]) {
+          yearMap[y] = { total_orders: 0, total_amount: 0, months: {} };
+        }
+        yearMap[y].months[row.month_number] = row;
+        yearMap[y].total_orders += Number(row.total_orders);
+        yearMap[y].total_amount += Number(row.total_amount);
+      }
+
+      return {
+        rows: [],
+        totals,
+        monthly_summary: Object.keys(yearMap)
+          .sort((a, b) => a - b)
+          .map(y => ({
+            year: Number(y),
+            total_orders: yearMap[y].total_orders,
+            total_amount: yearMap[y].total_amount,
+            months: monthNames.map((name, i) => ({
+              month_number: i + 1,
+              month: name,
+              total_orders: Number(yearMap[y].months[i + 1]?.total_orders || 0),
+              total_amount: Number(yearMap[y].months[i + 1]?.total_amount || 0),
+            }))
+          })),
+      };
+    }
+
+    /* =====================================================
+       ALL EXPENSES / DATE WISE — CTE to scan table once
+    ===================================================== */
+    let dateFilter = "";
+    const baseParams = [zodu_id, branch_id];
+    if (isDateWise) {
+      dateFilter = ` AND created_at::date BETWEEN $3 AND $4`;
+      baseParams.push(start_date, end_date);
+    }
+    const limitIdx = `$${baseParams.length + 1}`;
+    const offsetIdx = `$${baseParams.length + 2}`;
+
+    const cteQuery = `
+      WITH filtered AS (
+        SELECT order_id, created_at, order_type, no_of_items, total_tax, total_amt, payment_type, order_date, order_time
+        FROM tbl_orders
+        WHERE zodu_id = $1
+          AND branch_id = $2
+          ${dateFilter}
+      ),
+      totals AS (
+        SELECT
+          COUNT(*)          AS total_count,
+          SUM(total_amt)    AS all_total_amount,
+          SUM(no_of_items)  AS all_items_total
+        FROM filtered
+      )
+      SELECT
+          TO_CHAR(
+        f.created_at,
+        'DD Mon YYYY, HH12:MI AM (Dy)'
+      ) AS created_at,
+        f.order_id,
+        f.order_type,
+        f.no_of_items,
+        f.total_tax,
+        f.total_amt,
+        f.payment_type,
+        t.total_count,
+        t.all_total_amount,
+        t.all_items_total
+      FROM filtered f, totals t
+      ORDER BY f.created_at DESC
+      LIMIT ${limitIdx} OFFSET ${offsetIdx}`;
+
+    const queries = [conn.query(cteQuery, [...baseParams, limit, offset])];
+
+    if (isDateWise) {
+      const datewiseQuery = `
+        SELECT
+          to_char(created_at::date, 'DD-Mon-YYYY') AS created_at,
+          COUNT(*)                            AS total_orders,
+          SUM(total_amt)                      AS all_total_amount
+        FROM tbl_orders
+        WHERE zodu_id = $1
+          AND branch_id = $2
+          AND created_at::date BETWEEN $3 AND $4
+        GROUP BY created_at::date
+        ORDER BY created_at::date ASC
+        LIMIT $5 OFFSET $6`;
+
+      queries.push(conn.query(datewiseQuery, [...baseParams, limit, offset]));
+    }
+
+    const results = await Promise.all(queries);
+
+    const listRows = results[0].rows;
+    const totals = listRows.length > 0
+      ? { total_count: listRows[0].total_count, all_total_amount: listRows[0].all_total_amount, all_items_total: listRows[0].all_items_total }
+      : { total_count: 0, all_total_amount: 0, all_items_total: 0 };
+
+    // Strip totals columns from row data
+    const rows = listRows.map(({ total_count, all_total_amount, all_items_total, ...row }) => row);
+
+    return {
+      rows,
+      totals,
+      datewise_summary: isDateWise ? results[1].rows : []
+    };
+  } catch (err) {
+    throw new Error("Unable to fetch report data: " + err.message);
+  }
+};
+
+exports.get_purchase_report_data = async (zodu_id, branch_id, page = 1, limit = 10, filtered_type, start_date, end_date, year) => {
+  try {
+    const offset = (page - 1) * limit;
+    const isDateWise = filtered_type === "date_wise" && start_date && end_date;
+    const isMonthYearWise = filtered_type === "month_year_wise";
+
+    // ─── month_year_wise: single query with window functions for totals ───
+    if (isMonthYearWise) {
+      const monthNames = [
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"
+      ];
+
+      if (year && year !== '' && year !== 'null' && year !== 'undefined') {
+        // ---- SPECIFIC YEAR: month-wise breakdown (Jan–Dec) ----
+        const parsedYear = parseInt(year, 10);
+        const params = [zodu_id, branch_id, parsedYear];
+
+        const query = `
+          SELECT
+            EXTRACT(MONTH FROM p.created_at)::int                   AS month_number,
+            COUNT(DISTINCT p.purchase_id)                           AS total_bills,
+            COALESCE(SUM(pay.total_amount), 0)                     AS total_amount,
+            SUM(COUNT(DISTINCT p.purchase_id)) OVER()              AS total_count,
+            COALESCE(SUM(SUM(pay.total_amount)) OVER(), 0)         AS all_total_amount,
+            COALESCE(SUM(SUM(pay.paid_amount)) OVER(), 0)          AS all_total_paid,
+            COALESCE(SUM(SUM(pay.balance_amount)) OVER(), 0)       AS all_total_due
+          FROM tbl_purchase p
+          LEFT JOIN tbl_payment pay
+            ON pay.source_id   = p.purchase_id
+           AND pay.source_type = 'purchase'
+           AND pay.branch_id   = p.branch_id
+           AND pay.zodu_id     = p.zodu_id
+          WHERE p.zodu_id = $1
+            AND p.branch_id = $2
+            AND EXTRACT(YEAR FROM p.created_at)::int = $3
+          GROUP BY month_number
+          ORDER BY month_number ASC`;
+
+        const { rows } = await conn.query(query, params);
+
+        const monthMap = {};
+        let yearTotalBills = 0;
+        let yearTotalAmount = 0;
+        const totals = rows.length > 0
+          ? { total_count: rows[0].total_count, all_total_amount: rows[0].all_total_amount, all_total_paid: rows[0].all_total_paid, all_total_due: rows[0].all_total_due }
+          : { total_count: 0, all_total_amount: 0, all_total_paid: 0, all_total_due: 0 };
+
+        for (const row of rows) {
+          monthMap[row.month_number] = row;
+          yearTotalBills += Number(row.total_bills);
+          yearTotalAmount += Number(row.total_amount);
+        }
+
+        return {
+          rows: [],
+          totals,
+          monthly_summary: [{
+            year: parsedYear,
+            total_bills: yearTotalBills,
+            total_amount: yearTotalAmount,
+            months: monthNames.map((name, i) => ({
+              month_number: i + 1,
+              month: name,
+              total_bills: Number(monthMap[i + 1]?.total_bills || 0),
+              total_amount: Number(monthMap[i + 1]?.total_amount || 0),
+            }))
+          }],
+        };
+      }
+
+      // ---- NO YEAR: all years ascending, each with month-wise breakdown ----
+      const params = [zodu_id, branch_id];
+
+      const query = `
+        SELECT
+          EXTRACT(YEAR FROM p.created_at)::int                    AS year,
+          EXTRACT(MONTH FROM p.created_at)::int                   AS month_number,
+          COUNT(DISTINCT p.purchase_id)                           AS total_bills,
+          COALESCE(SUM(pay.total_amount), 0)                     AS total_amount,
+          SUM(COUNT(DISTINCT p.purchase_id)) OVER()              AS total_count,
+          COALESCE(SUM(SUM(pay.total_amount)) OVER(), 0)         AS all_total_amount,
+          COALESCE(SUM(SUM(pay.paid_amount)) OVER(), 0)          AS all_total_paid,
+          COALESCE(SUM(SUM(pay.balance_amount)) OVER(), 0)       AS all_total_due
+        FROM tbl_purchase p
+        LEFT JOIN tbl_payment pay
+          ON pay.source_id   = p.purchase_id
+         AND pay.source_type = 'purchase'
+         AND pay.branch_id   = p.branch_id
+         AND pay.zodu_id     = p.zodu_id
+        WHERE p.zodu_id = $1
+          AND p.branch_id = $2
+        GROUP BY year, month_number
+        ORDER BY year ASC, month_number ASC`;
+
+      const { rows } = await conn.query(query, params);
+
+      const yearMap = {};
+      const totals = rows.length > 0
+        ? { total_count: rows[0].total_count, all_total_amount: rows[0].all_total_amount, all_total_paid: rows[0].all_total_paid, all_total_due: rows[0].all_total_due }
+        : { total_count: 0, all_total_amount: 0, all_total_paid: 0, all_total_due: 0 };
+
+      for (const row of rows) {
+        const y = row.year;
+        if (!yearMap[y]) {
+          yearMap[y] = { total_bills: 0, total_amount: 0, months: {} };
+        }
+        yearMap[y].months[row.month_number] = row;
+        yearMap[y].total_bills += Number(row.total_bills);
+        yearMap[y].total_amount += Number(row.total_amount);
+      }
+
+      return {
+        rows: [],
+        totals,
+        monthly_summary: Object.keys(yearMap)
+          .sort((a, b) => a - b)
+          .map(y => ({
+            year: Number(y),
+            total_bills: yearMap[y].total_bills,
+            total_amount: yearMap[y].total_amount,
+            months: monthNames.map((name, i) => ({
+              month_number: i + 1,
+              month: name,
+              total_bills: Number(yearMap[y].months[i + 1]?.total_bills || 0),
+              total_amount: Number(yearMap[y].months[i + 1]?.total_amount || 0),
+            }))
+          })),
+      };
+    }
+
+    /* =====================================================
+       ALL PURCHASES / DATE WISE — CTE to scan table once
+    ===================================================== */
+    let dateFilter = "";
+    const baseParams = [zodu_id, branch_id];
+    if (isDateWise) {
+      dateFilter = ` AND p.created_at::date BETWEEN $3 AND $4`;
+      baseParams.push(start_date, end_date);
+    }
+    const limitIdx = `$${baseParams.length + 1}`;
+    const offsetIdx = `$${baseParams.length + 2}`;
+
+    const cteQuery = `
+      WITH purchase_base AS (
+        SELECT p.purchase_id, p.vendor_id, p.created_at, p.zodu_id, p.branch_id
+        FROM tbl_purchase p
+        WHERE p.zodu_id = $1
+          AND p.branch_id = $2
+          ${dateFilter}
+      ),
+      totals AS (
+        SELECT
+          COUNT(*)                            AS total_count,
+          COALESCE(SUM(pay.total_amount), 0)  AS all_total_amount,
+          COALESCE(SUM(pay.paid_amount), 0)   AS all_total_paid,
+          COALESCE(SUM(pay.balance_amount), 0) AS all_total_due
+        FROM purchase_base pb
+        LEFT JOIN tbl_payment pay
+          ON pay.source_id   = pb.purchase_id
+         AND pay.source_type = 'purchase'
+         AND pay.branch_id   = pb.branch_id
+         AND pay.zodu_id     = pb.zodu_id
+      )
+      SELECT
+        pb.purchase_id,
+        to_char(pb.created_at, 'DD-Mon-YYYY HH12:MI AM (Dy)') AS created_at,
+        v.vendor_name,
+        COALESCE(pay.total_amount, 0)  AS total_amount,
+        COALESCE(pay.paid_amount, 0)   AS paid_amount,
+        COALESCE(pay.balance_amount, 0) AS balance_amount,
+        c.name,
+        c.id AS category_id,
+        t.total_count,
+        t.all_total_amount,
+        t.all_total_paid,
+        t.all_total_due
+      FROM purchase_base pb
+      LEFT JOIN tbl_purchase_items pi ON pi.purchase_id = pb.purchase_id
+      LEFT JOIN tbl_category c ON c.id = pi.category_id
+      LEFT JOIN tbl_vendor v ON v.vendor_id = pb.vendor_id
+      LEFT JOIN tbl_payment pay
+        ON pay.source_id   = pb.purchase_id
+       AND pay.source_type = 'purchase'
+       AND pay.branch_id   = pb.branch_id
+       AND pay.zodu_id     = pb.zodu_id
+      CROSS JOIN totals t
+      ORDER BY pb.created_at DESC
+      LIMIT ${limitIdx} OFFSET ${offsetIdx}`;
+
+    const queries = [conn.query(cteQuery, [...baseParams, limit, offset])];
+
+    if (isDateWise) {
+      const datewiseQuery = `
+        SELECT
+          to_char(p.created_at::date, 'DD-Mon-YYYY') AS created_at,
+          COUNT(DISTINCT p.purchase_id)               AS total_purchases,
+          COALESCE(SUM(pay.total_amount), 0)          AS all_total_amount
+        FROM tbl_purchase p
+        LEFT JOIN tbl_payment pay
+          ON pay.source_id   = p.purchase_id
+         AND pay.source_type = 'purchase'
+         AND pay.branch_id   = p.branch_id
+         AND pay.zodu_id     = p.zodu_id
+        WHERE p.zodu_id = $1
+          AND p.branch_id = $2
+          AND p.created_at::date BETWEEN $3 AND $4
+        GROUP BY p.created_at::date
+        ORDER BY p.created_at::date ASC
+        LIMIT $5 OFFSET $6`;
+
+      queries.push(conn.query(datewiseQuery, [...baseParams, limit, offset]));
+    }
+
+    const results = await Promise.all(queries);
+
+    const listRows = results[0].rows;
+    const totals = listRows.length > 0
+      ? { total_count: listRows[0].total_count, all_total_amount: listRows[0].all_total_amount, all_total_paid: listRows[0].all_total_paid, all_total_due: listRows[0].all_total_due }
+      : { total_count: 0, all_total_amount: 0, all_total_paid: 0, all_total_due: 0 };
+
+    const rows = listRows.map(({ total_count, all_total_amount, all_total_paid, all_total_due, ...row }) => row);
+
+    return {
+      rows,
+      totals,
+      datewise_summary: isDateWise ? results[1].rows : []
+    };
+  } catch (err) {
+    throw new Error("Unable to fetch purchase report data: " + err.message);
+  }
+};
+
+exports.get_expense_report = async (
+  zodu_id,
+  branch_id,
+  page = 1,
+  limit = 10,
+  filtered_type = "all_expenses",
+  start_date,
+  end_date,
+  year
+) => {
+  try {
+    const offset = (page - 1) * limit;
+    const isDateWise =
+      filtered_type === "date_wise" && start_date && end_date;
+    const isMonthYearWise =
+      filtered_type === "month_year_wise";
+    const getOverallSummary = async (extraWhere = "", params = []) => {
+      const summaryQuery = `
+        SELECT
+          COUNT(DISTINCT e.expense_id)        AS "totalBills",
+          COALESCE(SUM(i.total),0)            AS "totalAmount",
+          COALESCE(SUM(p.paid_amount),0)      AS "totalPaid",
+          COALESCE(SUM(p.balance_amount),0)   AS "totalUnpaid",
+          COUNT(i.id)                         AS "totalItems"
+        FROM tbl_expense e
+        LEFT JOIN tbl_expense_items i
+          ON i.expense_id = e.expense_id
+        LEFT JOIN tbl_payment p
+          ON p.source_id = e.expense_id
+         AND p.source_type = 'expense'
+        WHERE e.zodu_id = $1
+          AND e.branch_id = $2
+          ${extraWhere}
+      `;
+
+      const { rows } = await conn.query(summaryQuery, params);
+      return rows[0];
+    };
+    if (isDateWise) {
+      const params = [zodu_id, branch_id, start_date, end_date];
+      const dateWiseQuery = `
+        SELECT
+          to_char(e.expense_date,'DD-Mon-YYYY') AS created_at,
+          COUNT(DISTINCT e.expense_id)          AS total_expense,
+          COALESCE(SUM(i.total),0)              AS all_total_amount
+        FROM tbl_expense e
+        LEFT JOIN tbl_expense_items i
+          ON i.expense_id = e.expense_id
+        WHERE e.zodu_id = $1
+          AND e.branch_id = $2
+          AND e.expense_date BETWEEN $3 AND $4
+        GROUP BY e.expense_date
+        ORDER BY e.expense_date DESC
+        LIMIT $5 OFFSET $6
+      `;
+      const countQuery = `
+        SELECT COUNT(*) AS total_records
+        FROM (
+          SELECT expense_date
+          FROM tbl_expense
+          WHERE zodu_id = $1
+            AND branch_id = $2
+            AND expense_date BETWEEN $3 AND $4
+          GROUP BY expense_date
+        ) t
+      `;
+      const [dateRes, countRes, overall_summary] = await Promise.all([
+        conn.query(dateWiseQuery, [...params, limit, offset]),
+        conn.query(countQuery, params),
+        getOverallSummary("AND e.expense_date BETWEEN $3 AND $4", params)
+      ]);
+      const totalRecords = Number(countRes.rows[0].total_records);
+      const totalPages = Math.ceil(totalRecords / limit);
+      return {
+        rows: [],
+        datewise_summary: dateRes.rows,
+        overall_summary,
+        pagination: {
+          page,
+          limit,
+          totalRecords,
+          totalPages
+        }
+      };
+    }
+    if (isMonthYearWise) {
+      const monthNames = [
+        "January","February","March","April","May","June",
+        "July","August","September","October","November","December"
+      ];
+      if (year) {
+        const parsedYear = parseInt(year, 10);
+        const params = [zodu_id, branch_id, parsedYear];
+        const monthlyQuery = `
+          SELECT
+            EXTRACT(MONTH FROM e.expense_date)::int AS month_number,
+            COUNT(DISTINCT e.expense_id)            AS total_bills,
+            COALESCE(SUM(i.total), 0)               AS total_amount
+          FROM tbl_expense e
+          LEFT JOIN tbl_expense_items i
+            ON i.expense_id = e.expense_id
+          WHERE e.zodu_id = $1
+            AND e.branch_id = $2
+            AND EXTRACT(YEAR FROM e.expense_date)::int = $3
+          GROUP BY month_number
+          ORDER BY month_number
+        `;
+        const [monthRes, overall_summary] = await Promise.all([
+          conn.query(monthlyQuery, params),
+          getOverallSummary(
+            "AND EXTRACT(YEAR FROM e.expense_date)::int = $3",
+            params
+          )
+        ]);
+        const map = {};
+        let yearTotalBills = 0;
+        let yearTotalAmount = 0;
+        monthRes.rows.forEach(r => {
+          map[r.month_number] = r;
+          yearTotalBills += Number(r.total_bills);
+          yearTotalAmount += Number(r.total_amount);
+        });
+
+        return {
+          rows: [],
+          monthly_summary: [{
+            year: parsedYear,
+            total_bills: yearTotalBills,
+            total_amount: yearTotalAmount,
+            months: monthNames.map((m, i) => ({
+              month_number: i + 1,
+              month: m,
+              total_bills: Number(map[i + 1]?.total_bills || 0),
+              total_amount: Number(map[i + 1]?.total_amount || 0)
+            }))
+          }],
+          overall_summary
+        };
+      }
+      const params = [zodu_id, branch_id];
+      const allYearMonthQuery = `
+        SELECT
+          EXTRACT(YEAR FROM e.expense_date)::int  AS year,
+          EXTRACT(MONTH FROM e.expense_date)::int AS month_number,
+          COUNT(DISTINCT e.expense_id)            AS total_bills,
+          COALESCE(SUM(i.total), 0)               AS total_amount
+        FROM tbl_expense e
+        LEFT JOIN tbl_expense_items i
+          ON i.expense_id = e.expense_id
+        WHERE e.zodu_id = $1
+          AND e.branch_id = $2
+        GROUP BY year, month_number
+        ORDER BY year ASC, month_number ASC
+      `;
+      const [dataRes, overall_summary] = await Promise.all([
+        conn.query(allYearMonthQuery, params),
+        getOverallSummary("", params)
+      ]);
+      const yearMap = {};
+      dataRes.rows.forEach(r => {
+        const y = r.year;
+        if (!yearMap[y]) {
+          yearMap[y] = { total_bills: 0, total_amount: 0, months: {} };
+        }
+        yearMap[y].months[r.month_number] = r;
+        yearMap[y].total_bills += Number(r.total_bills);
+        yearMap[y].total_amount += Number(r.total_amount);
+      });
+      return {
+        rows: [],
+        monthly_summary: Object.keys(yearMap)
+          .sort((a, b) => a - b)
+          .map(y => ({
+            year: Number(y),
+            total_bills: yearMap[y].total_bills,
+            total_amount: yearMap[y].total_amount,
+            months: monthNames.map((m, i) => ({
+              month_number: i + 1,
+              month: m,
+              total_bills: Number(yearMap[y].months[i + 1]?.total_bills || 0),
+              total_amount: Number(yearMap[y].months[i + 1]?.total_amount || 0)
+            }))
+          })),
+        overall_summary
+      };
+    }
+    const params = [zodu_id, branch_id];
+    const listQuery = `
+      SELECT
+        to_char(e.created_at,'DD-Mon-YYYY HH12:MI AM (Dy)') AS expense_date,
+        e.expense_id,
+        c.category_name,
+        COALESCE(SUM(i.total),0)             AS total_amount,
+        COALESCE(p.paid_amount,0)            AS paid_amount,
+        COALESCE(p.balance_amount,0)         AS due_amount
+      FROM tbl_expense e
+      LEFT JOIN tbl_expense_items i
+        ON i.expense_id = e.expense_id
+      LEFT JOIN tbl_expense_category c
+        ON c.id = e.category_id
+      LEFT JOIN tbl_payment p
+        ON p.source_id = e.expense_id
+       AND p.source_type = 'expense'
+      WHERE e.zodu_id = $1
+        AND e.branch_id = $2
+      GROUP BY
+        e.expense_id,
+        e.expense_date,
+        c.category_name,
+        p.paid_amount,
+        p.balance_amount
+      ORDER BY e.expense_date DESC
+      LIMIT $3 OFFSET $4
+    `;
+
+    const countQuery = `
+      SELECT COUNT(DISTINCT expense_id) AS total_records
+      FROM tbl_expense
+      WHERE zodu_id = $1
+        AND branch_id = $2
+    `;
+
+    const [listRes, countRes, overall_summary] = await Promise.all([
+      conn.query(listQuery, [...params, limit, offset]),
+      conn.query(countQuery, params),
+      getOverallSummary("", params)
+    ]);
+
+    const totalRecords = Number(countRes.rows[0].total_records);
+    const totalPages = Math.ceil(totalRecords / limit);
+
+    return {
+      rows: listRes.rows,
+      overall_summary,
+      pagination: {
+        page,
+        limit,
+        totalRecords,
+        totalPages
+      }
+    };
+
+  } catch (err) {
+    throw new Error("Expense report error: " + err.message);
+  }
+};
+
+exports.get_category_item_wise_report = async (
+  zodu_id,
+  branch_id,
+  page = 1,
+  limit = 10,
+  search = ""
+) => {
+  try {
+    const offset = (page - 1) * limit;
+
+    const params = [zodu_id, branch_id];
+    let searchFilter = "";
+
+    if (search && search.trim() !== "") {
+      params.push(`%${search}%`);
+      searchFilter = `
+        AND (
+          c.name ILIKE $3
+          OR oi.item_name ILIKE $3
+        )
+      `;
+    }
+    const countQuery = `
+      SELECT COUNT(DISTINCT c.id)::int AS total_count
+      FROM tbl_ordered_items oi
+      JOIN tbl_menu_item mi
+        ON mi.menu_id = oi.item_id
+       AND mi.zodu_id = oi.zodu_id
+       AND mi.branch_id = oi.branch_id
+      JOIN tbl_category c
+        ON c.id = mi.menu_category_id
+      WHERE oi.zodu_id = $1
+        AND oi.branch_id = $2
+        ${searchFilter}
+    `;
+    const dataQuery = `
+      WITH aggregated AS (
+        SELECT
+          c.id            AS category_id,
+          c.name          AS category_name,
+          mi.menu_id      AS item_id,
+          oi.item_name,
+          SUM(oi.qty)::numeric(10,2) AS total_qty,
+          SUM(oi.total_amount)::numeric(10,2) AS total_amount
+        FROM tbl_ordered_items oi
+        JOIN tbl_menu_item mi
+          ON mi.menu_id = oi.item_id
+         AND mi.zodu_id = oi.zodu_id
+         AND mi.branch_id = oi.branch_id
+        JOIN tbl_category c
+          ON c.id = mi.menu_category_id
+        WHERE oi.zodu_id = $1
+          AND oi.branch_id = $2
+          ${searchFilter}
+        GROUP BY
+          c.id, c.name,
+          mi.menu_id,
+          oi.item_name
+      ),
+      paged_categories AS (
+        SELECT DISTINCT category_id, category_name
+        FROM aggregated
+        ORDER BY category_name
+        LIMIT $${params.length + 1}
+        OFFSET $${params.length + 2}
+      )
+      SELECT a.*
+      FROM aggregated a
+      JOIN paged_categories pc
+        ON pc.category_id = a.category_id
+      ORDER BY
+        a.category_name ASC,
+        a.item_name ASC
+    `;
+    const summaryQuery = `
+      SELECT
+        COUNT(DISTINCT oi.order_id)::int AS total_orders,
+        COALESCE(SUM(oi.qty),0)::numeric AS total_qty,
+        COALESCE(SUM(oi.total_amount),0)::numeric AS total_amount
+      FROM tbl_ordered_items oi
+      JOIN tbl_menu_item mi
+        ON mi.menu_id = oi.item_id
+       AND mi.zodu_id = oi.zodu_id
+       AND mi.branch_id = oi.branch_id
+      JOIN tbl_category c
+        ON c.id = mi.menu_category_id
+      WHERE oi.zodu_id = $1
+        AND oi.branch_id = $2
+        ${searchFilter}
+    `;
+
+    const [countRes, dataRes, summaryRes] = await Promise.all([
+      conn.query(countQuery, params),
+      conn.query(dataQuery, [...params, limit, offset]),
+      conn.query(summaryQuery, params)
+    ]);
+
+    /* ============================
+       TRANSFORM → ACCORDION
+    ============================ */
+
+    const categoryMap = {};
+
+    for (const row of dataRes.rows) {
+      if (!categoryMap[row.category_id]) {
+        categoryMap[row.category_id] = {
+          category_id: row.category_id,
+          category_name: row.category_name,
+          total_qty: 0,
+          total_amount: 0,
+          items: []
+        };
+      }
+
+      categoryMap[row.category_id].total_qty += Number(row.total_qty);
+      categoryMap[row.category_id].total_amount += Number(row.total_amount);
+
+      categoryMap[row.category_id].items.push({
+        item_id: row.item_id,
+        item_name: row.item_name,
+        total_qty: Number(row.total_qty),
+        total_amount: Number(row.total_amount)
+      });
+    }
+
+    const totalRecords = Number(countRes.rows[0].total_count);
+    const totalPages = Math.ceil(totalRecords / limit);
+
+    return {
+      overall_summary: {
+        total_orders: Number(summaryRes.rows[0].total_orders),
+        total_qty: Number(summaryRes.rows[0].total_qty),
+        total_amount: Number(summaryRes.rows[0].total_amount)
+      },
+      rows: Object.values(categoryMap),
+      pagination: {
+        page,
+        limit,
+        totalRecords,
+        totalPages
+      }
+    };
+  } catch (err) {
+    throw new Error(
+      "Unable to fetch category/item wise report: " + err.message
+    );
+  }
+};
+
+
+
 
 
 
@@ -1859,19 +2835,22 @@ exports.createOrder = async (orderData) => {
 
     for (const item of orderData.items) {
       const taxData = calculateItemTax(item);
+
       subtotal += taxData.subtotal;
       total_tax += taxData.tax_amount;
-      no_of_items += Number(item.qty);
+
+      // ✅ FIX: count items, NOT quantity
+      no_of_items += 1;
     }
 
-    // ✅ Normalize discount type
     const discountType = orderData.discount_type
       ? orderData.discount_type.toUpperCase()
       : null;
 
     let discount_amount = 0;
     if (discountType === "PERCENT") {
-      discount_amount = (subtotal * Number(orderData.discount_value || 0)) / 100;
+      discount_amount =
+        (subtotal * Number(orderData.discount_value || 0)) / 100;
     } else if (discountType === "FLAT") {
       discount_amount = Number(orderData.discount_value || 0);
     }
@@ -1904,7 +2883,7 @@ exports.createOrder = async (orderData) => {
       orderData.zodu_id,
       orderData.branch_id,
       orderData.table_no,
-      no_of_items,
+      no_of_items, // ✅ integer now
       orderData.order_type,
       orderData.customer_name,
       orderData.customer_phone,
@@ -1913,9 +2892,9 @@ exports.createOrder = async (orderData) => {
       total_tax,
       total_amt,
 
-      discountType,                 // ✅ normalized
+      discountType,
       orderData.discount_value,
-      discount_amount,              // ✅ calculated
+      discount_amount,
 
       orderData.final_payment,
       orderData.payment_type,
@@ -1934,14 +2913,16 @@ exports.createOrder = async (orderData) => {
   }
 };
 
+
 exports.createOrderedItems = async (orderData) => {
   try {
+
     await conn.query('BEGIN');
     const items = orderData.items;
     if (!Array.isArray(items) || items.length === 0) {
       throw new Error("Items array is empty or invalid");
     }
-
+console.log("myitems",items)
     const insertedItems = [];
 
     for (const item of items) {
@@ -2052,9 +3033,12 @@ exports.createtmpOrder = async (orderData) => {
 
     for (const item of orderData.items) {
       const taxData = calculateItemTax(item);
+
       subtotal += taxData.subtotal;
       total_tax += taxData.tax_amount;
-      no_of_items += Number(item.qty);
+
+      // ✅ FIX: count rows, not qty
+      no_of_items += 1;
     }
 
     const total_amt = subtotal + total_tax;
@@ -2066,6 +3050,7 @@ exports.createtmpOrder = async (orderData) => {
         SELECT * FROM tbl_tmp_orders
         WHERE order_id = $1 AND table_no = $2
       `;
+
       const existing = await conn.query(checkQuery, [
         orderData.order_id,
         orderData.table_no
@@ -2114,7 +3099,7 @@ exports.createtmpOrder = async (orderData) => {
           orderData.zodu_id,
           orderData.branch_id,
           orderData.table_no,
-          no_of_items,
+          no_of_items, // ✅ integer now
           orderData.order_type,
           orderData.customer_name,
           orderData.customer_phone,
@@ -2129,7 +3114,6 @@ exports.createtmpOrder = async (orderData) => {
         ]);
       }
     } else {
-      // takeaway / delivery tmp (optional)
       const insertQuery = `
         INSERT INTO tbl_tmp_orders (
           zodu_id, branch_id, no_of_items, order_type,
@@ -2145,7 +3129,7 @@ exports.createtmpOrder = async (orderData) => {
       result = await conn.query(insertQuery, [
         orderData.zodu_id,
         orderData.branch_id,
-        no_of_items,
+        no_of_items, // ✅ integer now
         orderData.order_type,
         orderData.customer_name,
         orderData.customer_phone,
@@ -2168,6 +3152,7 @@ exports.createtmpOrder = async (orderData) => {
     throw new Error("Unable to create or update tmp order: " + err.message);
   }
 };
+
 
 exports.createtmpOrderedItems = async (orderData) => {
   try {
@@ -2345,9 +3330,9 @@ exports.updateFinalPayment = async (data) => {
       [order_id]
     );
 
-    let subtotal = 0;     // without tax
-    let total_tax = 0;    // only tax
-    let no_of_items = 0;
+    let subtotal = 0;     
+    let total_tax = 0;    
+    let no_of_items = 0;  // ✅ count rows only
 
     // 2️⃣ Insert items with proper tax logic
     for (const item of items) {
@@ -2373,7 +3358,9 @@ exports.updateFinalPayment = async (data) => {
 
       subtotal += base;
       total_tax += tax;
-      no_of_items += qty;
+
+      // ✅ FIX: count items, NOT quantity
+      no_of_items += 1;
 
       await conn.query(
         `INSERT INTO tbl_tmp_ordered_items (
@@ -2458,7 +3445,7 @@ exports.updateFinalPayment = async (data) => {
         order_id,
         table_no,
         order_type,
-        no_of_items,
+        no_of_items, // ✅ integer now
 
         subtotal,
         total_tax,
@@ -2525,6 +3512,8 @@ exports.updateFinalPayment = async (data) => {
     throw new Error("Final payment failed: " + err.message);
   }
 };
+
+
 
 
 exports.createKOT = async (orderData) => {
@@ -3608,31 +4597,133 @@ if (Array.isArray(attachmentURL)) {
   } 
 };
 
-exports.getDashboard = async (zodu_id, branch_id, pagination, sortOrder) => {
+exports.getDashboard = async (zodu_id, branch_id, pagination, sortOrder, dateFilter) => {
   const order = sortOrder === "asc" ? "ASC" : "DESC";
 
-  const {
-    orders,
-    expenses,
-    topItems,
-    datewise
-  } = pagination;
 
-  /** ======================
-   * SUMMARY
-   ====================== */
+  const { orders, expenses, topItems, datewise } = pagination;
+
+  // =========================
+  // DATE FILTER (default = today)
+  // =========================
+  let orderDateCondition = `AND o.order_date = CURRENT_DATE`;
+  let expenseDateCondition = `AND e.updated_at::date = CURRENT_DATE`;
+  let paymentDateCondition = `AND p.updated_at::date = CURRENT_DATE`;
+
+  if (dateFilter?.dateType === "today") {
+    orderDateCondition = `AND o.order_date = CURRENT_DATE`;
+    expenseDateCondition = `AND e.updated_at::date = CURRENT_DATE`;
+    paymentDateCondition = `AND p.updated_at::date = CURRENT_DATE`;
+  }
+
+  else if (dateFilter?.dateType === "yesterday") {
+    orderDateCondition = `AND o.order_date = CURRENT_DATE - INTERVAL '1 day'`;
+    expenseDateCondition = `AND e.updated_at::date = CURRENT_DATE - INTERVAL '1 day'`;
+    paymentDateCondition = `AND p.updated_at::date = CURRENT_DATE - INTERVAL '1 day'`;
+  }
+
+  else if (dateFilter?.dateType === "thisWeek") {
+    orderDateCondition = `AND o.order_date >= date_trunc('week', CURRENT_DATE)`;
+    expenseDateCondition = `AND e.updated_at::date >= date_trunc('week', CURRENT_DATE)`;
+    paymentDateCondition = `AND p.updated_at::date >= date_trunc('week', CURRENT_DATE)`;
+  }
+
+  else if (dateFilter?.dateType === "last7Days") {
+    orderDateCondition = `AND o.order_date >= CURRENT_DATE - INTERVAL '7 days'`;
+    expenseDateCondition = `AND e.updated_at::date >= CURRENT_DATE - INTERVAL '7 days'`;
+    paymentDateCondition = `AND p.updated_at::date >= CURRENT_DATE - INTERVAL '7 days'`;
+  }
+
+  else if (dateFilter?.dateType === "last14Days") {
+    orderDateCondition = `AND o.order_date >= CURRENT_DATE - INTERVAL '14 days'`;
+    expenseDateCondition = `AND e.updated_at::date >= CURRENT_DATE - INTERVAL '14 days'`;
+    paymentDateCondition = `AND p.updated_at::date >= CURRENT_DATE - INTERVAL '14 days'`;
+  }
+
+  else if (dateFilter?.dateType === "last30Days") {
+    orderDateCondition = `AND o.order_date >= CURRENT_DATE - INTERVAL '30 days'`;
+    expenseDateCondition = `AND e.updated_at::date >= CURRENT_DATE - INTERVAL '30 days'`;
+    paymentDateCondition = `AND p.updated_at::date >= CURRENT_DATE - INTERVAL '30 days'`;
+  }
+
+  else if (dateFilter?.dateType === "thisMonth") {
+    orderDateCondition = `AND o.order_date >= date_trunc('month', CURRENT_DATE)`;
+    expenseDateCondition = `AND e.updated_at::date >= date_trunc('month', CURRENT_DATE)`;
+    paymentDateCondition = `AND p.updated_at::date >= date_trunc('month', CURRENT_DATE)`;
+  }
+
+  else if (dateFilter?.dateType === "lastMonth") {
+    orderDateCondition = `
+      AND o.order_date >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month')
+      AND o.order_date < date_trunc('month', CURRENT_DATE)
+    `;
+    expenseDateCondition = `
+      AND e.updated_at::date >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month')
+      AND e.updated_at::date < date_trunc('month', CURRENT_DATE)
+    `;
+    paymentDateCondition = `
+      AND p.updated_at::date >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month')
+      AND p.updated_at::date < date_trunc('month', CURRENT_DATE)
+    `;
+  }
+
+  else if (dateFilter?.dateType === "thisQuarter") {
+    orderDateCondition = `AND o.order_date >= date_trunc('quarter', CURRENT_DATE)`;
+    expenseDateCondition = `AND e.updated_at::date >= date_trunc('quarter', CURRENT_DATE)`;
+    paymentDateCondition = `AND p.updated_at::date >= date_trunc('quarter', CURRENT_DATE)`;
+  }
+
+  else if (dateFilter?.dateType === "lastQuarter") {
+    orderDateCondition = `
+      AND o.order_date >= date_trunc('quarter', CURRENT_DATE - INTERVAL '3 month')
+      AND o.order_date < date_trunc('quarter', CURRENT_DATE)
+    `;
+    expenseDateCondition = `
+      AND e.updated_at::date >= date_trunc('quarter', CURRENT_DATE - INTERVAL '3 month')
+      AND e.updated_at::date < date_trunc('quarter', CURRENT_DATE)
+    `;
+    paymentDateCondition = `
+      AND p.updated_at::date >= date_trunc('quarter', CURRENT_DATE - INTERVAL '3 month')
+      AND p.updated_at::date < date_trunc('quarter', CURRENT_DATE)
+    `;
+  }
+
+  else if (dateFilter?.dateType === "custom" && dateFilter.fromDate && dateFilter.toDate) {
+    orderDateCondition = `AND o.order_date BETWEEN '${dateFilter.fromDate}' AND '${dateFilter.toDate}'`;
+    expenseDateCondition = `AND e.updated_at::date BETWEEN '${dateFilter.fromDate}' AND '${dateFilter.toDate}'`;
+    paymentDateCondition = `AND p.updated_at::date BETWEEN '${dateFilter.fromDate}' AND '${dateFilter.toDate}'`;
+  }
+
+  // ======================
+  // SUMMARY
+  // ======================
   const summaryQuery = `
     SELECT
-      (SELECT COUNT(*) FROM tbl_orders WHERE zodu_id=$1 AND branch_id=$2 AND final_payment=true) AS total_orders,
-      (SELECT COALESCE(SUM(total_amt),0) FROM tbl_orders WHERE zodu_id=$1 AND branch_id=$2 AND final_payment=true) AS total_sales,
-      (SELECT COALESCE(SUM(total_amount),0) FROM tbl_payment WHERE zodu_id=$1 AND branch_id=$2 AND source_type='expense') AS total_expense,
-      (SELECT COUNT(*) FROM tbl_inventory WHERE zodu_id=$1 AND branch_id=$2 AND stock_qty <= stock_alert) AS low_stocks
+      (SELECT COUNT(*) 
+       FROM tbl_orders o
+       WHERE o.zodu_id=$1 AND o.branch_id=$2 AND o.final_payment=true ${orderDateCondition}
+      ) AS total_orders,
+
+      (SELECT COALESCE(SUM(o.total_amt),0) 
+       FROM tbl_orders o
+       WHERE o.zodu_id=$1 AND o.branch_id=$2 AND o.final_payment=true ${orderDateCondition}
+      ) AS total_sales,
+
+      (SELECT COALESCE(SUM(p.total_amount),0) 
+       FROM tbl_payment p
+       WHERE p.zodu_id=$1 AND p.branch_id=$2 AND p.source_type='expense' ${paymentDateCondition}
+      ) AS total_expense,
+
+      (SELECT COUNT(*) 
+       FROM tbl_inventory 
+       WHERE zodu_id=$1 AND branch_id=$2 AND stock_qty <= stock_alert
+      ) AS low_stocks
   `;
   const summaryRes = await conn.query(summaryQuery, [zodu_id, branch_id]);
 
-  /** ======================
-   * ORDERS
-   ====================== */
+  // ======================
+  // ORDERS
+  // ======================
   const ordersQuery = `
     SELECT 
       o.order_id,
@@ -3640,15 +4731,18 @@ exports.getDashboard = async (zodu_id, branch_id, pagination, sortOrder) => {
       o.no_of_items,
       COALESCE(SUM(oi.qty),0) AS total_qty,
       o.order_type,
-TO_CHAR(
-  o.order_date + o.order_time::interval,
-  'DD Mon YYYY, HH12:MI AM (Dy)'
-) AS formatted_date
+      TO_CHAR(
+        o.order_date + o.order_time::interval,
+        'DD Mon YYYY, HH12:MI AM (Dy)'
+      ) AS formatted_date
     FROM tbl_orders o
     LEFT JOIN tbl_ordered_items oi ON oi.order_id = o.order_id
-    WHERE o.zodu_id = $1 AND o.branch_id = $2 AND o.final_payment = true
+    WHERE o.zodu_id = $1 
+      AND o.branch_id = $2 
+      AND o.final_payment = true
+      ${orderDateCondition}
     GROUP BY o.order_id
-    ORDER BY o.order_date ${order}
+    ORDER BY o.created_at ${order}
     LIMIT $3 OFFSET $4;
   `;
 
@@ -3660,13 +4754,15 @@ TO_CHAR(
   ]);
 
   const ordersCount = await conn.query(
-    `SELECT COUNT(*) FROM tbl_orders WHERE zodu_id=$1 AND branch_id=$2 AND final_payment=true`,
+    `SELECT COUNT(*) 
+     FROM tbl_orders o
+     WHERE o.zodu_id=$1 AND o.branch_id=$2 AND o.final_payment=true ${orderDateCondition}`,
     [zodu_id, branch_id]
   );
 
-  /** ======================
-   * TOP ITEMS
-   ====================== */
+  // ======================
+  // TOP ITEMS
+  // ======================
   const topItemsQuery = `
     SELECT 
       m.menu_name,
@@ -3679,7 +4775,9 @@ TO_CHAR(
     JOIN tbl_menu_item m ON m.menu_id = i.item_id
     LEFT JOIN tbl_category c ON c.id = m.menu_category_id
     LEFT JOIN tbl_units u ON u.id = m.menu_unit
-    WHERE o.zodu_id = $1 AND o.branch_id = $2
+    WHERE o.zodu_id = $1 
+      AND o.branch_id = $2
+      ${orderDateCondition}
     GROUP BY m.menu_name, c.name, u.short_name
     ORDER BY total_qty DESC
     LIMIT $3 OFFSET $4;
@@ -3692,16 +4790,19 @@ TO_CHAR(
     topItems.offset
   ]);
 
-  const topItemsCount = await conn.query(`
-    SELECT COUNT(DISTINCT item_id)
-    FROM tbl_ordered_items oi
-    JOIN tbl_orders o ON o.order_id = oi.order_id
-    WHERE o.zodu_id = $1 AND o.branch_id = $2
-  `, [zodu_id, branch_id]);
+  const topItemsCount = await conn.query(
+    `SELECT COUNT(DISTINCT i.item_id)
+     FROM tbl_ordered_items i
+     JOIN tbl_orders o ON o.order_id = i.order_id
+     WHERE o.zodu_id = $1 
+       AND o.branch_id = $2
+       ${orderDateCondition}`,
+    [zodu_id, branch_id]
+  );
 
-  /** ======================
-   * DATEWISE
-   ====================== */
+  // ======================
+  // DATEWISE (NO FILTER)
+  // ======================
   const datewiseQuery = `
     SELECT 
       order_date::date AS date,
@@ -3721,52 +4822,46 @@ TO_CHAR(
     datewise.offset
   ]);
 
-  const datewiseCount = await conn.query(`
-    SELECT COUNT(DISTINCT order_date)
-    FROM tbl_orders
-    WHERE zodu_id = $1 AND branch_id = $2
-  `, [zodu_id, branch_id]);
+  const datewiseCount = await conn.query(
+    `SELECT COUNT(DISTINCT order_date)
+     FROM tbl_orders
+     WHERE zodu_id = $1 AND branch_id = $2`,
+    [zodu_id, branch_id]
+  );
 
-  /** ======================
-   * EXPENSES
-   ====================== */
+  // ======================
+  // EXPENSES
+  // ======================
   const expenseQuery = `
-   SELECT 
-  e.expense_id,
-  c.category_name,
+    SELECT 
+      e.expense_id,
+      c.category_name,
 
-  COALESCE(p.total_amount, 0) AS total_amount,
-  COALESCE(p.paid_amount, 0) AS paid_amount,
-  (COALESCE(p.total_amount, 0) - COALESCE(p.paid_amount, 0)) AS due_amount,
+      COALESCE(p.total_amount, 0) AS total_amount,
+      COALESCE(p.paid_amount, 0) AS paid_amount,
+      (COALESCE(p.total_amount, 0) - COALESCE(p.paid_amount, 0)) AS due_amount,
 
-  COUNT(i.id) AS item_count,
-
-  e.updated_at
-FROM tbl_expense e
-
-LEFT JOIN tbl_expense_category c 
-  ON c.id = e.category_id
-
-LEFT JOIN tbl_payment p 
-  ON p.source_id = e.expense_id
-  AND p.source_type = 'expense'
-
-LEFT JOIN tbl_expense_items i 
-  ON i.expense_id = e.expense_id
-
-WHERE e.zodu_id = $1 
-  AND e.branch_id = $2
-
-GROUP BY 
-  e.expense_id,
-  c.category_name,
-  p.total_amount,
-  p.paid_amount,
-  e.updated_at
-
-ORDER BY e.updated_at ${order}
-LIMIT $3 OFFSET $4;
-
+      COUNT(i.id) AS item_count,
+      e.updated_at
+    FROM tbl_expense e
+    LEFT JOIN tbl_expense_category c 
+      ON c.id = e.category_id
+    LEFT JOIN tbl_payment p 
+      ON p.source_id = e.expense_id
+      AND p.source_type = 'expense'
+    LEFT JOIN tbl_expense_items i 
+      ON i.expense_id = e.expense_id
+    WHERE e.zodu_id = $1 
+      AND e.branch_id = $2
+      ${expenseDateCondition}
+    GROUP BY 
+      e.expense_id,
+      c.category_name,
+      p.total_amount,
+      p.paid_amount,
+      e.updated_at
+    ORDER BY e.updated_at ${order}
+    LIMIT $3 OFFSET $4;
   `;
 
   const expensesRes = await conn.query(expenseQuery, [
@@ -3776,10 +4871,12 @@ LIMIT $3 OFFSET $4;
     expenses.offset
   ]);
 
-  const expensesCount = await conn.query(`
-    SELECT COUNT(*) FROM tbl_expense
-    WHERE zodu_id = $1 AND branch_id = $2
-  `, [zodu_id, branch_id]);
+  const expensesCount = await conn.query(
+    `SELECT COUNT(*) 
+     FROM tbl_expense e
+     WHERE e.zodu_id = $1 AND e.branch_id = $2 ${expenseDateCondition}`,
+    [zodu_id, branch_id]
+  );
 
   return {
     data: {
@@ -3798,754 +4895,470 @@ LIMIT $3 OFFSET $4;
   };
 };
 
-// ========================
-// ORDERS
-// ========================
-exports.getOrdersSummary = async (
-  zodu_id,
-  branch_id,
-  start_date,
-  end_date,
-  options = {}
-) => {
+
+
+exports.getOrdersSummary = async (zodu_id, branch_id, start_date, end_date, options = {}) => {
   try {
-    const {
+    let {
       page = 1,
       limit = 10,
       sortBy = "order_date",
       sortOrder = "desc",
-      search = ""
+      search = "",
+      reportView = "normal", // normal | monthwise | yearwise
+      year = new Date().getFullYear(),
     } = options;
 
+    if (!orderSortFields.includes(sortBy)) sortBy = "order_date";
+    if (!["asc", "desc"].includes(sortOrder.toLowerCase())) sortOrder = "desc";
+
     const offset = (page - 1) * limit;
-    const order = sortOrder.toLowerCase() === "asc" ? "ASC" : "DESC";
 
-    // Allowed sortable columns
-    const allowedSort = ["order_date", "total_amt", "no_of_items"];
-    const sortColumn = allowedSort.includes(sortBy) ? sortBy : "order_date";
+    /* ================= MONTHWISE ================= */
+if (reportView === "monthwise") {
+  const selectedYear = Number(options.year) || new Date().getFullYear();
 
-    const query = `
-WITH summary AS (
-  SELECT 
+  const chart = await conn.query(
+    `
+    SELECT
+      TO_CHAR(order_date,'Mon, YYYY') AS month,
+      EXTRACT(MONTH FROM order_date) AS month_no,
       COUNT(*) AS total_orders,
-      COALESCE(SUM(total_amt), 0) AS total_amount,
-      COALESCE(SUM(no_of_items), 0) AS total_quantity
-  FROM tbl_orders
-  WHERE zodu_id = $1 
-    AND branch_id = $2 
-    AND final_payment = TRUE
-    AND order_date BETWEEN $3 AND $4
-    AND (
-        $7 = '' OR 
-        order_id ILIKE '%' || $7 || '%' OR
-        customer_name ILIKE '%' || $7 || '%'
-    )
-),
+      COALESCE(SUM(total_amt),0) AS total_amount
+    FROM tbl_orders
+    WHERE zodu_id=$1
+      AND branch_id=$2
+      AND final_payment=TRUE
+      AND EXTRACT(YEAR FROM order_date) = $3
+    GROUP BY month, month_no
+    ORDER BY month_no
+    LIMIT $4 OFFSET $5
+    `,
+    [zodu_id, branch_id, selectedYear, limit, offset]
+  );
 
-order_list AS (
-  SELECT 
-      o.order_id, o.order_date, o.order_time, o.order_type,
-      o.payment_type, o.customer_name, o.no_of_items, o.total_amt,
-       TO_CHAR(
-        o.order_date + o.order_time::interval,
-        'DD Mon YYYY, HH12:MI AM (Dy)'
-      ) AS formatted_date,
-      (
-        SELECT COALESCE(SUM(qty), 0)
-        FROM tbl_ordered_items 
-        WHERE order_id = o.order_id
-      ) AS total_qty,
-      (
-        SELECT json_agg(
-          json_build_object(
-            'item_name', item_name,
-            'qty', qty,
-            'price', price,
-            'amount', qty * price,
-            'unit', item_unit
+  const summary = await conn.query(
+    `
+    SELECT COUNT(*) AS total_orders,
+           COALESCE(SUM(total_amt),0) AS total_amount
+    FROM tbl_orders
+    WHERE zodu_id=$1
+      AND branch_id=$2
+      AND final_payment=TRUE
+      AND EXTRACT(YEAR FROM order_date) = $3
+    `,
+    [zodu_id, branch_id, selectedYear]
+  );
+
+  const count = await conn.query(
+    `
+    SELECT COUNT(DISTINCT EXTRACT(MONTH FROM order_date)) AS total
+    FROM tbl_orders
+    WHERE zodu_id=$1
+      AND branch_id=$2
+      AND final_payment=TRUE
+      AND EXTRACT(YEAR FROM order_date) = $3
+    `,
+    [zodu_id, branch_id, selectedYear]
+  );
+
+  const total = Number(count.rows[0].total  || 0);
+const totalPages = Math.ceil(total / limit);
+
+  return {
+    success: true,
+    data: { summary: summary.rows[0], chart: chart.rows },
+    pagination: { page, limit, total: Number(count.rows[0].total), totalPages }
+  };
+}
+
+
+    /* ================= YEARWISE ================= */
+    if (reportView === "yearwise") {
+      const chart = await conn.query(
+        `
+        SELECT
+          EXTRACT(YEAR FROM order_date) AS year,
+          COUNT(*) AS total_orders,
+          COALESCE(SUM(total_amt),0) AS total_amount
+        FROM tbl_orders
+        WHERE zodu_id=$1 AND branch_id=$2
+          AND final_payment=TRUE
+        GROUP BY year
+        ORDER BY year
+        LIMIT $3 OFFSET $4
+        `,
+        [zodu_id, branch_id, limit, offset]
+      );
+
+      const summary = await conn.query(
+        `
+        SELECT COUNT(*) AS total_orders,
+               COALESCE(SUM(total_amt),0) AS total_amount
+        FROM tbl_orders
+        WHERE zodu_id=$1 AND branch_id=$2
+          AND final_payment=TRUE
+        `,
+        [zodu_id, branch_id]
+      );
+
+      const count = await conn.query(
+        `
+        SELECT COUNT(DISTINCT EXTRACT(YEAR FROM order_date)) AS total
+        FROM tbl_orders
+        WHERE zodu_id=$1 AND branch_id=$2
+          AND final_payment=TRUE
+        `,
+        [zodu_id, branch_id]
+      );
+const totalPages = Math.ceil(Number(count.rows[0].total) / limit);
+
+      return { success: true, data: { summary: summary.rows[0], chart: chart.rows },
+        pagination: { page, limit, total: Number(count.rows[0].total), totalPages } };
+    }
+
+    /* ================= DATEWISE (NORMAL) ================= */
+    const result = await conn.query(
+      `
+      WITH base AS (
+        SELECT order_id,  TO_CHAR(created_at, 'DD Mon YYYY, HH12:MI AM (Dy)') AS order_date, customer_name, total_amt, no_of_items,payment_type
+        FROM tbl_orders
+        WHERE zodu_id=$1 AND branch_id=$2
+          AND final_payment=TRUE
+          AND order_date BETWEEN $3 AND $4
+          AND (
+            $7='' OR order_id ILIKE '%'||$7||'%' OR customer_name ILIKE '%'||$7||'%'
           )
-        )
-        FROM tbl_ordered_items 
-        WHERE order_id = o.order_id
-      ) AS items
-  FROM tbl_orders o
-  WHERE 
-      o.zodu_id = $1 
-      AND o.branch_id = $2 
-      AND o.final_payment = TRUE
-      AND o.order_date BETWEEN $3 AND $4
-      AND (
-          $7 = '' OR 
-          o.order_id ILIKE '%' || $7 || '%' OR
-          o.customer_name ILIKE '%' || $7 || '%'
+      ),
+      summary AS (
+        SELECT COUNT(*) AS total_orders,
+               COALESCE(SUM(total_amt),0) AS total_amount,
+               COALESCE(SUM(no_of_items),0) AS total_quantity
+        FROM base
+      ),
+      list AS (
+        SELECT * FROM base
+        ORDER BY ${sortBy} ${sortOrder}
+        LIMIT $5 OFFSET $6
       )
-  ORDER BY ${sortColumn} ${order}
-  LIMIT $5 OFFSET $6
-),
-
-category_item_agg AS (
-  SELECT 
-      COALESCE(c.name, 'Others') AS category_name,
-      mi.menu_name AS item_name,
-      SUM(oi.qty) AS total_qty,
-      SUM(oi.qty * oi.price) AS total_amount,
-      oi.item_unit AS unit
-  FROM tbl_ordered_items oi
-  JOIN tbl_orders o ON o.order_id = oi.order_id
-  LEFT JOIN tbl_menu_item mi ON mi.menu_id = oi.item_id
-  LEFT JOIN tbl_category c ON c.id = mi.menu_category_id
-  WHERE 
-      o.zodu_id = $1 
-      AND o.branch_id = $2 
-      AND o.final_payment = TRUE
-      AND o.order_date BETWEEN $3 AND $4
-      AND (
-          $7 = '' OR
-          mi.menu_name ILIKE '%' || $7 || '%' OR
-          c.name ILIKE '%' || $7 || '%'
-      )
-  GROUP BY category_name, mi.menu_name, unit
-),
-
-category_wise_summary AS (
-  SELECT 
-      category_name,
-      SUM(total_qty) AS total_qty,
-      SUM(total_amount) AS total_amount,
-      JSON_AGG(
-        json_build_object(
-          'item_name', item_name,
-          'qty', total_qty,
-          'amount', total_amount,
-          'unit', unit
-        ) ORDER BY total_amount DESC
-      ) AS items
-  FROM category_item_agg
-  GROUP BY category_name
-  ORDER BY total_amount DESC
-)
-
-SELECT 
-    s.*,
-    COALESCE((SELECT json_agg(ol) FROM order_list ol), '[]') AS orders,
-    COALESCE((SELECT json_agg(cws) FROM category_wise_summary cws), '[]') AS category_wise_summary
-FROM summary s;
-`;
-
-    const result = await conn.query(query, [
-      zodu_id, branch_id, start_date, end_date, limit, offset, search
-    ]);
-
-    const countQuery = `
-      SELECT COUNT(*) AS total
-      FROM tbl_orders
-      WHERE 
-        zodu_id = $1 
-        AND branch_id = $2 
-        AND final_payment = TRUE
-        AND order_date BETWEEN $3 AND $4
-        AND (
-            $5 = '' OR
-            order_id ILIKE '%' || $5 || '%' OR
-            customer_name ILIKE '%' || $5 || '%'
-        )
-    `;
-
-    const countResult = await conn.query(countQuery, [
-      zodu_id, branch_id, start_date, end_date, search
-    ]);
-
-    const total = Number(countResult.rows[0]?.total || 0);
-    const totalPages = Math.ceil(total / limit);
-
-    return {
-      success: true,
-      data: result.rows[0] || {},
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages
-      }
-    };
-
-  } catch (error) {
-    console.error("getOrdersSummary() error:", error);
-    return { success: false, error: error.message };
-  }
-};
-
-
-
-// exports.getPurchaseSummary = async (
-//   zodu_id,
-//   branch_id,
-//   start_date,
-//   end_date,
-//   options = {}
-// ) => {
-//   try {
-//     const {
-//       page = 1,
-//       limit = 10,
-//       sortBy = "purchase_date",
-//       sortOrder = "asc",
-//       search = ""
-//     } = options;
-
-//     const offset = (page - 1) * limit;
-
-//     const query = `
-// WITH purchase_base AS (
-//   SELECT p.purchase_id,
-//          p.purchase_date,
-//          v.vendor_name,
-         
-//          COALESCE(pay.total_amount,0) AS total_amount,
-//          COALESCE(pay.paid_amount,0)  AS paid_amount,
-//          (COALESCE(pay.total_amount,0) - COALESCE(pay.paid_amount,0)) AS balance_amount
-
-//   FROM tbl_purchase p
-//   LEFT JOIN tbl_vendor v ON v.vendor_id=p.vendor_id
-
-//   LEFT JOIN tbl_payment pay
-//     ON pay.source_type='purchase'
-//    AND pay.source_id=p.purchase_id
-//    AND pay.branch_id=p.branch_id
-//    AND pay.zodu_id=p.zodu_id
-
-//   WHERE p.zodu_id=$1
-//     AND p.branch_id=$2
-//     AND p.purchase_date BETWEEN $3 AND $4
-// ),
-
-// summary AS (
-//   SELECT COUNT(*) AS total_purchase_count,
-//          COALESCE(SUM(total_amount),0) AS total_amount,
-//          COALESCE(SUM(paid_amount),0) AS total_paid,
-//          COALESCE(SUM(balance_amount),0) AS total_balance
-//   FROM purchase_base
-// ),
-
-// purchase_list AS (
-//   SELECT
-//      pb.purchase_id,
-//      pb.purchase_date,
-//      pb.total_amount,
-//      pb.paid_amount,
-//      pb.balance_amount,
-//      pb.vendor_name,
-//      (
-//        SELECT json_agg(
-//          json_build_object(
-//            'item_name',pi.item_name,
-//            'qty',pi.qty,
-//            'unit',pi.unit,
-//            'price',pi.purchase_price,
-//            'total',pi.total_price,
-//            'category_name',COALESCE(c.name,'Others')
-//          )
-//        )
-//        FROM tbl_purchase_items pi
-//        LEFT JOIN tbl_category c ON c.id=pi.category_id
-//        WHERE pi.purchase_id=pb.purchase_id
-//      ) AS items
-
-//   FROM purchase_base pb
-//   WHERE
-//       $7='' OR
-//       pb.purchase_id ILIKE '%'||$7||'%' OR
-//       pb.vendor_name ILIKE '%'||$7||'%'
-//   ORDER BY ${sortBy} ${sortOrder}
-//   LIMIT $5 OFFSET $6
-// ),
-
-// category_item_agg AS (
-//   SELECT COALESCE(c.name,'Others') AS category_name,
-//          i.item_name,
-//          SUM(i.qty) AS total_qty,
-//          SUM(i.total_price) AS total_amount
-//   FROM tbl_purchase_items i
-//   JOIN tbl_purchase p ON p.purchase_id=i.purchase_id
-//   LEFT JOIN tbl_category c ON c.id=i.category_id
-
-//   WHERE p.zodu_id=$1 AND p.branch_id=$2
-//     AND p.purchase_date BETWEEN $3 AND $4
-//     AND (
-//       $7='' OR
-//       c.name ILIKE '%'||$7||'%'
-//     )
-//   GROUP BY category_name, i.item_name
-// ),
-
-// category_wise_summary AS (
-//   SELECT category_name,
-//          SUM(total_qty) AS total_qty,
-//          SUM(total_amount) AS total_amount,
-//          JSON_AGG(
-//            json_build_object(
-//              'item_name', item_name,
-//              'qty', total_qty,
-//              'amount', total_amount
-//            ) ORDER BY total_amount DESC
-//          ) AS items
-//   FROM category_item_agg
-//   GROUP BY category_name
-//   ORDER BY total_amount DESC
-// )
-
-// SELECT s.*,
-//        COALESCE((SELECT json_agg(pl) FROM purchase_list pl),'[]') AS purchases,
-//        COALESCE((SELECT json_agg(cws) FROM category_wise_summary cws),'[]') AS category_wise_summary
-// FROM summary s;
-// `;
-
-//     const result = await conn.query(query, [
-//       zodu_id, branch_id, start_date, end_date, limit, offset, search
-//     ]);
-
-//     return { success:true, data: result.rows[0] };
-
-//   } catch (err) {
-//     return { success:false, message: err.message };
-//   }
-// };
-exports.getPurchaseSummary = async (
-  zodu_id,
-  branch_id,
-  start_date,
-  end_date,
-  options = {}
-) => {
-  try {
-    const {
-      page = 1,
-      limit = 10,
-      sortBy = "purchase_date",
-      sortOrder = "asc",
-      search = ""
-    } = options;
-
-    const offset = (page - 1) * limit;
-
-    const query = `
-WITH purchase_base AS (
-  SELECT 
-      p.purchase_id,
-      p.purchase_date,
-      v.vendor_name,
-      pay.payment_id,
-      p.attachment_url,
-      COALESCE(pay.total_amount, 0) AS total_amount,
-      COALESCE(pay.paid_amount, 0)  AS paid_amount,
-      (COALESCE(pay.total_amount, 0) - COALESCE(pay.paid_amount, 0)) AS balance_amount
-  FROM tbl_purchase p
-  LEFT JOIN tbl_vendor v ON v.vendor_id = p.vendor_id
-  LEFT JOIN tbl_payment pay
-      ON pay.source_type = 'purchase'
-     AND pay.source_id = p.purchase_id
-     AND pay.branch_id = p.branch_id
-     AND pay.zodu_id = p.zodu_id
-  WHERE 
-      p.zodu_id = $1
-      AND p.branch_id = $2
-      AND p.purchase_date BETWEEN $3 AND $4
-),
-
-summary AS (
-  SELECT 
-      COUNT(*) AS total_purchase_count,
-      COALESCE(SUM(total_amount), 0) AS total_amount,
-      COALESCE(SUM(paid_amount), 0) AS total_paid,
-      COALESCE(SUM(balance_amount), 0) AS total_balance
-  FROM purchase_base
-),
-
-purchase_list AS (
-  SELECT
-     pb.purchase_id,
-     pb.purchase_date,
-     pb.attachment_url,
-     pb.total_amount,
-     pb.paid_amount,
-     pb.balance_amount,
-     pb.vendor_name,
-
-     (
-       SELECT json_agg(
-         json_build_object(
-           'item_name', pi.item_name,
-           'qty', pi.qty,
-           'unit', COALESCE(u.short_name, ''),
-           'price', pi.purchase_price,
-           'total', pi.total_price,
-           'category_name', COALESCE(c.name, 'Others')
-         )
-       )
-       FROM tbl_purchase_items pi
-       LEFT JOIN tbl_category c ON c.id = pi.category_id
-       LEFT JOIN tbl_units u ON u.id = pi.unit
-       WHERE pi.purchase_id = pb.purchase_id
-     ) AS items,
-
-     (
-       SELECT json_agg(
-         json_build_object(
-           'payment_id', ph.transaction_id,
-           'paid_amount', ph.paid_amount,
-           'payment_type', ph.payment_mode,
-           'created_at', ph.created_at
-         ) ORDER BY ph.created_at DESC
-       )
-       FROM tbl_payment_history ph
-       WHERE ph.payment_id = pb.payment_id
-     ) AS payment_history
-
-  FROM purchase_base pb
-  WHERE
-      $7 = '' OR
-      pb.purchase_id::text ILIKE '%' || $7 || '%' OR
-      pb.vendor_name ILIKE '%' || $7 || '%'
-  ORDER BY ${sortBy} ${sortOrder}
-  LIMIT $5 OFFSET $6
-),
-
-category_item_agg AS (
-  SELECT
-      COALESCE(c.name, 'Others') AS category_name,
-      i.item_name,
-      SUM(i.qty) AS total_qty,
-      SUM(i.total_price) AS total_amount,
-      COALESCE(u.short_name, '') AS unit
-  FROM tbl_purchase_items i
-  JOIN tbl_purchase p ON p.purchase_id = i.purchase_id
-  LEFT JOIN tbl_category c ON c.id = i.category_id
-  LEFT JOIN tbl_units u ON u.id = i.unit
-  WHERE 
-      p.zodu_id = $1 
-      AND p.branch_id = $2
-      AND p.purchase_date BETWEEN $3 AND $4
-      AND ($7 = '' OR c.name ILIKE '%' || $7 || '%')
-  GROUP BY category_name, i.item_name, u.short_name
-),
-
-category_wise_summary AS (
-  SELECT
-      category_name,
-      SUM(total_qty) AS total_qty,
-      SUM(total_amount) AS total_amount,
-      JSON_AGG(
-        json_build_object(
-           'item_name', item_name,
-           'qty', total_qty,
-           'amount', total_amount,
-           'unit', unit
-        ) ORDER BY total_amount DESC
-      ) AS items
-  FROM category_item_agg
-  GROUP BY category_name
-  ORDER BY total_amount DESC
-)
-
-SELECT 
-    s.*,
-    COALESCE((SELECT json_agg(pl) FROM purchase_list pl), '[]') AS purchases,
-    COALESCE((SELECT json_agg(cws) FROM category_wise_summary cws), '[]') AS category_wise_summary
-FROM summary s;
-`;
-
-    const result = await conn.query(query, [
-      zodu_id,
-      branch_id,
-      start_date,
-      end_date,
-      limit,
-      offset,
-      search
-    ]);
-
-    return { success: true, data: result.rows[0] };
+      SELECT s.*, COALESCE((SELECT json_agg(l) FROM list l),'[]') AS orders
+      FROM summary s;
+      `,
+      [zodu_id, branch_id, start_date, end_date, limit, offset, search]
+    );
+const total = Number(result.rows[0].total_orders);
+const totalPages = Math.ceil(total / limit);
+    return { success: true, data: result.rows[0], pagination: { page, limit, total, totalPages } };
 
   } catch (err) {
+    console.error("Orders Repo Error:", err);
     return { success: false, message: err.message };
   }
 };
 
 
 
+exports.getPurchaseSummary = async (zodu_id, branch_id, start_date, end_date, options = {}) => {
+  try {
+    let { page=1, limit=10, sortOrder="desc", search="", reportView="normal" } = options;
+    const selectedYear = Number(options.year) || new Date().getFullYear();
+    const offset = (page-1)*limit;
 
-// exports.getExpenseSummary = async (
-//   zodu_id,
-//   branch_id,
-//   start_date,
-//   end_date,
-//   options = {}
-// ) => {
-//   try {
-//     const {
-//       page = 1,
-//       limit = 10,
-//       sortBy = "expense_date",
-//       sortOrder = "desc",
-//       search = ""
-//     } = options;
+    if (reportView==="monthwise") {
+      const chart = await conn.query(`
+        SELECT TO_CHAR(p.purchase_date,'Mon, YYYY') AS month,
+               EXTRACT(MONTH FROM p.purchase_date) AS month_no,
+               COUNT(*) AS total_items,
+               COALESCE(SUM(pay.total_amount),0) AS total_amount
+        FROM tbl_purchase p
+        LEFT JOIN tbl_payment pay
+          ON pay.source_type='purchase' AND pay.source_id=p.purchase_id
+         AND pay.branch_id=p.branch_id AND pay.zodu_id=p.zodu_id
+        WHERE p.zodu_id=$1 AND p.branch_id=$2
+          AND EXTRACT(YEAR FROM p.purchase_date)=$3
+        GROUP BY month, month_no ORDER BY month_no
+        LIMIT $4 OFFSET $5`,
+        [zodu_id, branch_id, selectedYear, limit, offset]
+      );
 
-//     const offset = (page - 1) * limit;
+      const summary = await conn.query(`
+        SELECT COUNT(*) AS total_items,
+               COALESCE(SUM(pay.total_amount),0) AS total_amount
+        FROM tbl_purchase p
+        LEFT JOIN tbl_payment pay
+          ON pay.source_type='purchase' AND pay.source_id=p.purchase_id
+         AND pay.branch_id=p.branch_id AND pay.zodu_id=p.zodu_id
+        WHERE p.zodu_id=$1 AND p.branch_id=$2
+          AND EXTRACT(YEAR FROM p.purchase_date)=$3`,
+        [zodu_id, branch_id, selectedYear]
+      );
 
-//     const query = `
-// WITH expense_base AS (
-//   SELECT e.expense_id,
-//          e.expense_date,
-//          ec.category_name,
+      const count = await conn.query(`
+        SELECT COUNT(DISTINCT EXTRACT(MONTH FROM purchase_date)) AS total
+        FROM tbl_purchase
+        WHERE zodu_id=$1 AND branch_id=$2
+          AND EXTRACT(YEAR FROM purchase_date)=$3`,
+        [zodu_id, branch_id, selectedYear]
+      );
 
-//          COALESCE(pay.total_amount,0) AS total_amount,
-//          COALESCE(pay.paid_amount,0) AS paid_amount,
-//          (COALESCE(pay.total_amount,0)-COALESCE(pay.paid_amount,0)) AS balance_amount
+      const total = Number(count.rows[0].total);
+      const totalPages = Math.ceil(total / limit);
 
-//   FROM tbl_expense e
-//   LEFT JOIN tbl_expense_category ec ON ec.id=e.category_id
+      return { success:true, data:{ summary:summary.rows[0], chart:chart.rows },
+        pagination:{ page, limit, total, totalPages } };
+    }
 
-//   LEFT JOIN tbl_payment pay
-//      ON pay.source_type='expense'
-//     AND pay.source_id=e.expense_id
-//     AND pay.branch_id=e.branch_id
-//     AND pay.zodu_id=e.zodu_id
+    if (reportView === "yearwise") {
+      const chart = await conn.query(`
+        SELECT EXTRACT(YEAR FROM p.purchase_date) AS year,
+               COUNT(*) AS total_items,
+               COALESCE(SUM(pay.total_amount),0) AS total_amount
+        FROM tbl_purchase p
+        LEFT JOIN tbl_payment pay
+          ON pay.source_type='purchase'
+         AND pay.source_id=p.purchase_id
+         AND pay.branch_id=p.branch_id
+         AND pay.zodu_id=p.zodu_id
+        WHERE p.zodu_id=$1 AND p.branch_id=$2
+        GROUP BY year
+        ORDER BY year DESC
+        LIMIT $3 OFFSET $4
+      `,[zodu_id, branch_id, limit, offset]);
 
-//   WHERE e.zodu_id=$1 AND e.branch_id=$2
-//     AND e.expense_date BETWEEN $3 AND $4
-// ),
+      const summary = await conn.query(`
+        SELECT COUNT(*) AS total_items,
+               COALESCE(SUM(pay.total_amount),0) AS total_amount
+        FROM tbl_purchase p
+        LEFT JOIN tbl_payment pay
+          ON pay.source_type='purchase'
+         AND pay.source_id=p.purchase_id
+         AND pay.branch_id=p.branch_id
+         AND pay.zodu_id=p.zodu_id
+        WHERE p.zodu_id=$1 AND p.branch_id=$2
+      `,[zodu_id, branch_id]);
 
-// summary AS (
-//   SELECT COUNT(*) AS total_expense_count,
-//          COALESCE(SUM(total_amount),0) AS total_amount,
-//          COALESCE(SUM(paid_amount),0) AS total_paid,
-//          COALESCE(SUM(balance_amount),0) AS total_balance
-//   FROM expense_base
-// ),
+      const count = await conn.query(`
+        SELECT COUNT(DISTINCT EXTRACT(YEAR FROM purchase_date)) AS total
+        FROM tbl_purchase
+        WHERE zodu_id=$1 AND branch_id=$2
+      `,[zodu_id, branch_id]);
 
-// expense_list AS (
-//   SELECT
-//      eb.expense_id,
-//      eb.expense_date,
-//      eb.total_amount,
-//      eb.paid_amount,
-//      eb.balance_amount,
-//      eb.category_name,
-//      (
-//        SELECT JSON_AGG(
-//          json_build_object(
-//            'item_name',i.item_name,
-//            'qty',i.qty,
-//            'amount',i.total
-//          )
-//        )
-//        FROM tbl_expense_items i WHERE i.expense_id=eb.expense_id
-//      ) AS items
-//   FROM expense_base eb
-//   WHERE
-//      $7='' OR
-//      eb.expense_id ILIKE '%'||$7||'%' OR
-//      eb.category_name ILIKE '%'||$7||'%'
-//   ORDER BY ${sortBy} ${sortOrder}
-//   LIMIT $5 OFFSET $6
-// ),
+      const total = Number(count.rows[0].total);
+      const totalPages = Math.ceil(total / limit);
 
-// category_item_agg AS (
-//   SELECT
-//      COALESCE(ec.category_name,'Others') AS category_name,
-//      ei.item_name,
-//      SUM(ei.qty) AS total_qty,
-//      SUM(ei.total) AS total_amount
-//   FROM tbl_expense_items ei
-//   JOIN tbl_expense e ON e.expense_id=ei.expense_id
-//   LEFT JOIN tbl_expense_category ec ON ec.id=e.category_id
+      return { success:true, data:{ summary:summary.rows[0], chart:chart.rows },
+        pagination:{ page, limit, total, totalPages } };
+    }
 
-//   WHERE e.zodu_id=$1 AND e.branch_id=$2
-//     AND e.expense_date BETWEEN $3 AND $4
-//   GROUP BY category_name, ei.item_name
-// ),
+    const result = await conn.query(`
+      WITH base AS (
+        SELECT p.purchase_id,
+               TO_CHAR(p.updated_at,'DD Mon YYYY, HH12:MI AM (Dy)') AS purchase_date,
+               COALESCE(pay.total_amount,0) AS total_amount,
+               COALESCE(pay.paid_amount,0) AS paid_amount,
+               (COALESCE(pay.total_amount,0)-COALESCE(pay.paid_amount,0)) AS due_amount,
+               p.purchase_date AS sort_date
+        FROM tbl_purchase p
+        LEFT JOIN tbl_payment pay
+          ON pay.source_type='purchase' AND pay.source_id=p.purchase_id
+         AND pay.branch_id=p.branch_id AND pay.zodu_id=p.zodu_id
+        WHERE p.zodu_id=$1 AND p.branch_id=$2
+          AND p.purchase_date BETWEEN $3 AND $4
+          AND ($7='' OR p.purchase_id ILIKE '%'||$7||'%')
+      ),
+      summary AS (
+        SELECT COUNT(*) AS total_records,
+               COALESCE(SUM(total_amount),0) AS total_amount,
+               COALESCE(SUM(paid_amount),0) AS total_paid,
+               COALESCE(SUM(due_amount),0) AS total_due
+        FROM base
+      ),
+      list AS (
+        SELECT * FROM base
+        ORDER BY sort_date ${sortOrder}
+        LIMIT $5 OFFSET $6
+      )
+      SELECT s.*, COALESCE((SELECT json_agg(l) FROM list l),'[]') AS list
+      FROM summary s;
+    `,[zodu_id, branch_id, start_date, end_date, limit, offset, search]);
 
-// category_wise_summary AS (
-//   SELECT category_name,
-//          SUM(total_qty) AS total_qty,
-//          SUM(total_amount) AS total_amount,
-//          JSON_AGG(
-//            json_build_object(
-//              'item_name', item_name,
-//              'qty', total_qty,
-//              'amount', total_amount
-//            ) ORDER BY total_amount DESC
-//          ) AS items
-//   FROM category_item_agg
-//   GROUP BY category_name
-//   ORDER BY total_amount DESC
-// )
+    const total = Number(result.rows[0].total_records);
+    const totalPages = Math.ceil(total / limit);
 
-// SELECT s.*,
-//        COALESCE((SELECT json_agg(el) FROM expense_list el),'[]') AS expenses,
-//        COALESCE((SELECT json_agg(cws) FROM category_wise_summary cws),'[]') AS category_wise_summary
-// FROM summary s;
-// `;
+    return { success:true, data:result.rows[0], pagination:{ page, limit, total, totalPages } };
 
-//     const result = await conn.query(query, [
-//       zodu_id, branch_id, start_date, end_date, limit, offset, search
-//     ]);
-
-//     return { success:true, data:result.rows[0] };
-
-//   } catch (error) {
-//     return { success:false, message: error.message };
-//   }
-// };
+  } catch (err) {
+    console.error("Purchase Repo Error:", err);
+    return { success:false, message:err.message };
+  }
+};
 
 
-// ========================
-// INVENTORY
-// ========================
 
-exports.getExpenseSummary = async (
+/* ============================= EXPENSE ============================= */
+
+exports.getExpenseSummary = async (zodu_id, branch_id, start_date, end_date, options = {}) => {
+  try {
+    let { page=1, limit=10, sortOrder="desc", search="", reportView="normal" } = options;
+    const selectedYear = Number(options.year) || new Date().getFullYear();
+    const offset = (page-1)*limit;
+
+    if (reportView==="monthwise") {
+      const chart = await conn.query(`
+        SELECT TO_CHAR(e.expense_date,'Mon, YYYY') AS month,
+               EXTRACT(MONTH FROM e.expense_date) AS month_no,
+               COUNT(*) AS total_items,
+               COALESCE(SUM(pay.total_amount),0) AS total_amount
+        FROM tbl_expense e
+        LEFT JOIN tbl_payment pay
+          ON pay.source_type='expense' AND pay.source_id=e.expense_id
+         AND pay.branch_id=e.branch_id AND pay.zodu_id=e.zodu_id
+        WHERE e.zodu_id=$1 AND e.branch_id=$2
+          AND EXTRACT(YEAR FROM e.expense_date)=$3
+        GROUP BY month, month_no ORDER BY month_no
+        LIMIT $4 OFFSET $5`,
+        [zodu_id, branch_id, selectedYear, limit, offset]
+      );
+
+      const summary = await conn.query(`
+        SELECT COUNT(*) AS total_items,
+               COALESCE(SUM(pay.total_amount),0) AS total_amount
+        FROM tbl_expense e
+        LEFT JOIN tbl_payment pay
+          ON pay.source_type='expense' AND pay.source_id=e.expense_id
+         AND pay.branch_id=e.branch_id AND pay.zodu_id=e.zodu_id
+        WHERE e.zodu_id=$1 AND e.branch_id=$2
+          AND EXTRACT(YEAR FROM e.expense_date)=$3`,
+        [zodu_id, branch_id, selectedYear]
+      );
+
+      const count = await conn.query(`
+        SELECT COUNT(DISTINCT EXTRACT(MONTH FROM expense_date)) AS total
+        FROM tbl_expense
+        WHERE zodu_id=$1 AND branch_id=$2
+          AND EXTRACT(YEAR FROM expense_date)=$3`,
+        [zodu_id, branch_id, selectedYear]
+      );
+
+      const total = Number(count.rows[0].total);
+      const totalPages = Math.ceil(total / limit);
+
+      return { success:true, data:{ summary:summary.rows[0], chart:chart.rows },
+        pagination:{ page, limit, total, totalPages } };
+    }
+
+    if (reportView === "yearwise") {
+      const chart = await conn.query(`
+        SELECT EXTRACT(YEAR FROM e.expense_date) AS year,
+               COUNT(*) AS total_items,
+               COALESCE(SUM(pay.total_amount),0) AS total_amount
+        FROM tbl_expense e
+        LEFT JOIN tbl_payment pay
+          ON pay.source_type='expense'
+         AND pay.source_id=e.expense_id
+         AND pay.branch_id=e.branch_id
+         AND pay.zodu_id=e.zodu_id
+        WHERE e.zodu_id=$1 AND e.branch_id=$2
+        GROUP BY year
+        ORDER BY year DESC
+        LIMIT $3 OFFSET $4
+      `,[zodu_id, branch_id, limit, offset]);
+
+      const summary = await conn.query(`
+        SELECT COUNT(*) AS total_items,
+               COALESCE(SUM(pay.total_amount),0) AS total_amount
+        FROM tbl_expense e
+        LEFT JOIN tbl_payment pay
+          ON pay.source_type='expense'
+         AND pay.source_id=e.expense_id
+         AND pay.branch_id=e.branch_id
+         AND pay.zodu_id=e.zodu_id
+        WHERE e.zodu_id=$1 AND e.branch_id=$2
+      `,[zodu_id, branch_id]);
+
+      const count = await conn.query(`
+        SELECT COUNT(DISTINCT EXTRACT(YEAR FROM expense_date)) AS total
+        FROM tbl_expense
+        WHERE zodu_id=$1 AND branch_id=$2
+      `,[zodu_id, branch_id]);
+
+      const total = Number(count.rows[0].total);
+      const totalPages = Math.ceil(total / limit);
+
+      return { success:true, data:{ summary:summary.rows[0], chart:chart.rows },
+        pagination:{ page, limit, total, totalPages } };
+    }
+
+
+  const result = await conn.query(`
+  WITH base AS (
+    SELECT 
+      e.expense_id,
+      TO_CHAR(e.updated_at,'DD Mon YYYY, HH12:MI AM (Dy)') AS expense_date,
+
+      COALESCE(ec.category_name, 'Others') AS expense_name,
+
+      COALESCE(pay.total_amount,0) AS total_amount,
+      COALESCE(pay.paid_amount,0) AS paid_amount,
+      (COALESCE(pay.total_amount,0)-COALESCE(pay.paid_amount,0)) AS due_amount,
+
+      e.expense_date AS sort_date
+    FROM tbl_expense e
+    LEFT JOIN tbl_expense_category ec
+      ON ec.id = e.category_id
+    LEFT JOIN tbl_payment pay
+      ON pay.source_type='expense'
+     AND pay.source_id=e.expense_id
+     AND pay.branch_id=e.branch_id
+     AND pay.zodu_id=e.zodu_id
+    WHERE e.zodu_id=$1 
+      AND e.branch_id=$2
+      AND e.expense_date BETWEEN $3 AND $4
+      AND (
+        $7='' 
+        OR e.expense_id ILIKE '%'||$7||'%' 
+        OR ec.category_name ILIKE '%'||$7||'%'
+      )
+  ),
+  summary AS (
+    SELECT 
+      COUNT(*) AS total_records,
+      COALESCE(SUM(total_amount),0) AS total_amount,
+      COALESCE(SUM(paid_amount),0) AS total_paid,
+      COALESCE(SUM(due_amount),0) AS total_due
+    FROM base
+  ),
+  list AS (
+    SELECT * 
+    FROM base
+    ORDER BY sort_date ${sortOrder}
+    LIMIT $5 OFFSET $6
+  )
+  SELECT 
+    s.*, 
+    COALESCE((SELECT json_agg(l) FROM list l),'[]') AS list
+  FROM summary s;
+`, [
   zodu_id,
   branch_id,
   start_date,
   end_date,
-  options = {}
-) => {
-  try {
-    const {
-      page = 1,
-      limit = 10,
-      sortBy = "expense_date",
-      sortOrder = "desc",
-      search = ""
-    } = options;
-
-    const offset = (page - 1) * limit;
-
-    const query = `
-WITH expense_base AS (
-  SELECT e.expense_id,
-         e.expense_date,
-         ec.category_name,
-         pay.payment_id,
-         e.attachment_url,
-         COALESCE(pay.total_amount,0) AS total_amount,
-         COALESCE(pay.paid_amount,0) AS paid_amount,
-         (COALESCE(pay.total_amount,0)-COALESCE(pay.paid_amount,0)) AS balance_amount
-
-  FROM tbl_expense e
-  LEFT JOIN tbl_expense_category ec ON ec.id=e.category_id
-  LEFT JOIN tbl_payment pay
-     ON pay.source_type='expense'
-    AND pay.source_id=e.expense_id
-    AND pay.branch_id=e.branch_id
-    AND pay.zodu_id=e.zodu_id
-
-  WHERE e.zodu_id=$1 AND e.branch_id=$2
-    AND e.expense_date BETWEEN $3 AND $4
-),
-
-summary AS (
-  SELECT COUNT(*) AS total_expense_count,
-         COALESCE(SUM(total_amount),0) AS total_amount,
-         COALESCE(SUM(paid_amount),0) AS total_paid,
-         COALESCE(SUM(balance_amount),0) AS total_balance
-  FROM expense_base
-),
-
-expense_list AS (
-  SELECT
-     eb.expense_id,
-     eb.expense_date,
-     eb.total_amount,
-     eb.paid_amount,
-     eb.balance_amount,
-     eb.category_name,
-              eb.category_name AS expense_name,
-                      eb.attachment_url,
+  limit,
+  offset,
+  search
+]);
 
 
-     (
-       SELECT JSON_AGG(
-         json_build_object(
-           'item_name',i.item_name,
-           'qty',i.qty,
-           'amount',i.total
-         )
-       )
-       FROM tbl_expense_items i WHERE i.expense_id=eb.expense_id
-     ) AS items,
+    const total = Number(result.rows[0].total_records);
+    const totalPages = Math.ceil(total / limit);
 
-     (
-       SELECT json_agg(
-         json_build_object(
-           'payment_id', ph.transaction_id,
-           'paid_amount', ph.paid_amount,
-           'payment_type', ph.payment_mode,
-      
-           'created_at', ph.created_at
-         ) ORDER BY ph.created_at DESC
-       )
-       FROM tbl_payment_history ph
-       WHERE ph.payment_id = eb.payment_id
-     ) AS payment_history
+    return { success:true, data:result.rows[0], pagination:{ page, limit, total, totalPages } };
 
-  FROM expense_base eb
-  WHERE
-     $7='' OR
-     eb.expense_id::text ILIKE '%'||$7||'%' OR
-     eb.category_name ILIKE '%'||$7||'%'
-  ORDER BY ${sortBy} ${sortOrder}
-  LIMIT $5 OFFSET $6
-),
-
-category_item_agg AS (
-  SELECT
-     COALESCE(ec.category_name,'Others') AS category_name,
-     ei.item_name,
-     SUM(ei.qty) AS total_qty,
-     SUM(ei.total) AS total_amount
-  FROM tbl_expense_items ei
-  JOIN tbl_expense e ON e.expense_id=ei.expense_id
-  LEFT JOIN tbl_expense_category ec ON ec.id=e.category_id
-
-  WHERE e.zodu_id=$1 AND e.branch_id=$2
-    AND e.expense_date BETWEEN $3 AND $4
-  GROUP BY category_name, ei.item_name
-),
-
-category_wise_summary AS (
-  SELECT category_name,
-         SUM(total_qty) AS total_qty,
-         SUM(total_amount) AS total_amount,
-         JSON_AGG(
-           json_build_object(
-             'item_name', item_name,
-             'qty', total_qty,
-             'amount', total_amount
-           ) ORDER BY total_amount DESC
-         ) AS items
-  FROM category_item_agg
-  GROUP BY category_name
-  ORDER BY total_amount DESC
-)
-
-SELECT s.*,
-       COALESCE((SELECT json_agg(el) FROM expense_list el),'[]') AS expenses,
-       COALESCE((SELECT json_agg(cws) FROM category_wise_summary cws),'[]') AS category_wise_summary
-FROM summary s;
-`;
-
-    const result = await conn.query(query, [
-      zodu_id, branch_id, start_date, end_date, limit, offset, search
-    ]);
-
-    return { success:true, data:result.rows[0] };
-
-  } catch (error) {
-    return { success:false, message: error.message };
+  } catch (err) {
+    console.error("Expense Repo Error:", err);
+    return { success:false, message:err.message };
   }
 };
-
 
 exports.getInventorySummary = async (
   zodu_id,
@@ -4560,7 +5373,8 @@ exports.getInventorySummary = async (
       limit = 10,
       sortBy = "updated_at",
       sortOrder = "desc",
-      search=""
+      search = "",
+      stockFilter = "all" // all | available | low
     } = options;
 
     const offset = (page - 1) * limit;
@@ -4571,19 +5385,31 @@ exports.getInventorySummary = async (
       : "updated_at";
     const order = sortOrder.toLowerCase() === "asc" ? "ASC" : "DESC";
 
+    /* ======================
+       STOCK FILTER CONDITION
+       (ONLY FOR LIST)
+    ====================== */
+    let stockCondition = "";
+    if (stockFilter === "available") {
+      stockCondition = "AND stock_qty > 0";
+    } else if (stockFilter === "low") {
+      stockCondition = "AND stock_qty > 0 AND stock_qty <= stock_alert";
+    }
+
     const query = `
-      WITH summary AS (
+      WITH used_stock AS (
         SELECT
-          COUNT(*) AS total_items,
-          COALESCE(SUM(stock_qty), 0) AS total_stock_qty,
-          COALESCE(SUM(stock_qty * purchase_price), 0) AS total_stock_value
-        FROM tbl_inventory
-        WHERE zodu_id = $1
-          AND branch_id = $2
-          AND updated_at BETWEEN $3 AND $4
+          oi.item_id,
+          SUM(oi.qty) AS used_qty
+        FROM tbl_ordered_items oi
+        JOIN tbl_orders o ON o.order_id = oi.order_id
+        WHERE o.zodu_id = $1
+          AND o.branch_id = $2
+          AND o.final_payment = TRUE
+        GROUP BY oi.item_id
       ),
 
-      inventory_list AS (
+      inventory_base AS (
         SELECT
           i.inventory_id,
           i.item_id,
@@ -4591,46 +5417,77 @@ exports.getInventorySummary = async (
           i.stock_qty,
           i.stock_alert,
           i.purchase_price,
-          i.updated_at,
+          i.selling_price,
+          TO_CHAR(i.updated_at,'DD-Mon-YYYY HH12:MI AM (Dy)') AS updated_at,
           i.category_id,
           COALESCE(c.name, 'Others') AS category_name,
           COALESCE(u.short_name, '-') AS unit_name,
+          COALESCE(us.used_qty, 0) AS used_qty,
           (i.stock_qty * i.purchase_price) AS total_amount
         FROM tbl_inventory i
         LEFT JOIN tbl_category c ON c.id = i.category_id
         LEFT JOIN tbl_units u ON u.id = i.item_unit
+        LEFT JOIN used_stock us ON us.item_id = i.item_id
         WHERE i.zodu_id = $1
           AND i.branch_id = $2
-          AND i.updated_at BETWEEN $3 AND $4
+          AND (
+            $5 = '' OR
+            i.item_name ILIKE '%'||$5||'%' OR
+            i.item_id ILIKE '%'||$5||'%' OR
+            c.name ILIKE '%'||$5||'%'
+          )
+      ),
+
+     summary AS (
+  SELECT
+    COUNT(*) AS total_items,
+
+    COUNT(*) FILTER (WHERE COALESCE(stock_qty,0) > stock_alert) AS in_stock,
+
+    COUNT(*) FILTER (
+      WHERE COALESCE(stock_qty,0) > 0
+        AND COALESCE(stock_qty,0) <= stock_alert
+    ) AS low_stock,
+
+    COUNT(*) FILTER (WHERE COALESCE(stock_qty,0) = 0) AS out_of_stock,
+
+    COALESCE(SUM(COALESCE(stock_qty,0) * purchase_price), 0) AS total_stock_value
+  FROM inventory_base
+)
+      ,
+
+      inventory_list AS (
+        SELECT *
+        FROM inventory_base
+        WHERE 1=1
+          ${stockCondition}
         ORDER BY ${sortColumn} ${order}
-        LIMIT $5 OFFSET $6
+        LIMIT $3 OFFSET $4
       ),
 
       category_item_agg AS (
         SELECT
-          COALESCE(c.name, 'Others') AS category_name,
-          i.item_name,
-          SUM(i.stock_qty) AS total_qty,
-          SUM(i.stock_qty * i.purchase_price) AS total_amount,
-          COALESCE(u.short_name, '-') AS unit_name
-        FROM tbl_inventory i
-        LEFT JOIN tbl_category c ON c.id = i.category_id
-        LEFT JOIN tbl_units u ON u.id = i.item_unit
-        WHERE i.zodu_id = $1
-          AND i.branch_id = $2
-          AND i.updated_at BETWEEN $3 AND $4
-        GROUP BY COALESCE(c.name, 'Others'), i.item_name, u.short_name
+          category_name,
+          item_name,
+          SUM(stock_qty) AS total_qty,
+          SUM(used_qty) AS used_qty,
+          SUM(stock_qty * purchase_price) AS total_amount,
+          unit_name
+        FROM inventory_base
+        GROUP BY category_name, item_name, unit_name
       ),
 
       category_wise_summary AS (
         SELECT
           category_name,
           SUM(total_qty) AS total_qty,
+          SUM(used_qty) AS used_qty,
           SUM(total_amount) AS total_amount,
           JSON_AGG(
             json_build_object(
               'item_name', item_name,
               'qty', total_qty,
+              'used_qty', used_qty,
               'unit', unit_name,
               'amount', total_amount
             )
@@ -4651,21 +5508,33 @@ exports.getInventorySummary = async (
     const result = await conn.query(query, [
       zodu_id,
       branch_id,
-      start_date,
-      end_date,
       limit,
       offset,
+      search,
     ]);
 
     const countResult = await conn.query(
       `
         SELECT COUNT(*) AS total
-        FROM tbl_inventory
-        WHERE zodu_id = $1
-          AND branch_id = $2
-          AND updated_at BETWEEN $3 AND $4
+        FROM tbl_inventory i
+        LEFT JOIN tbl_category c ON c.id = i.category_id
+        WHERE i.zodu_id = $1
+          AND i.branch_id = $2
+          ${
+            stockFilter === "available"
+              ? "AND i.stock_qty > 0"
+              : stockFilter === "low"
+              ? "AND i.stock_qty > 0 AND i.stock_qty <= i.stock_alert"
+              : ""
+          }
+          AND (
+            $3 = '' OR
+            i.item_name ILIKE '%'||$3||'%' OR
+            i.item_id ILIKE '%'||$3||'%' OR
+            c.name ILIKE '%'||$3||'%'
+          )
       `,
-      [zodu_id, branch_id, start_date, end_date]
+      [zodu_id, branch_id, search]
     );
 
     const total = parseInt(countResult.rows[0]?.total || 0);

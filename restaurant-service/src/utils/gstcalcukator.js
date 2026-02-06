@@ -1,4 +1,4 @@
-export function calculateItemTax(item) {
+export const calculateItemTax = (item) => {
   const qty = Number(item.qty);
   const price = Number(item.price);
   const gst = Number(item.tax || 0); // GST %
@@ -25,7 +25,7 @@ export function calculateItemTax(item) {
 }
 
 
-export function getTaxFromItem(item) {
+export const getTaxFromItem = (item) => {
   const qty = Number(item.qty);
   const price = Number(item.price);
   const gst = Number(item.tax || 0);
