@@ -1507,9 +1507,9 @@ router.get("/api/report/orders", async (req, res) => {
       return res.status(400).json({ success: false, message: "zodu_id and branch_id are required" });
     }
 
-    if (filtered_type === "date_wise" && (!start_date || !end_date)) {
-      return res.status(400).json({ success: false, message: "start_date and end_date are required for date_wise filter" });
-    }
+    // if (filtered_type === "date_wise" && (!start_date || !end_date)) {
+    //   return res.status(400).json({ success: false, message: "start_date and end_date are required for date_wise filter" });
+    // }
 
     const pageNum = Number(page);
     const limitNum = Number(limit);
@@ -1560,9 +1560,9 @@ router.get("/api/report/purchase", async (req, res) => {
     if (!zodu_id || !branch_id) {
       return res.status(400).json({ success: false, message: "zodu_id and branch_id are required" });
     }
-    if (filtered_type === "date_wise" && (!start_date || !end_date)) {
-      return res.status(400).json({ success: false, message: "start_date and end_date are required for date_wise filter" });
-    }
+    // if (filtered_type === "date_wise" && (!start_date || !end_date)) {
+    //   return res.status(400).json({ success: false, message: "start_date and end_date are required for date_wise filter" });
+    // }
     const pageNum = Number(page);
     const limitNum = Number(limit);
     const result = await service.getPurchaseReportServices(zodu_id, branch_id, pageNum, limitNum, filtered_type, start_date, end_date, year);
@@ -1658,12 +1658,12 @@ router.get("/api/report/expense", async (req, res) => {
       });
     }
 
-    if (filtered_type === "date_wise" && (!start_date || !end_date)) {
-      return res.status(400).json({
-        success: false,
-        message: "start_date and end_date are required for date_wise filter"
-      });
-    }
+    // if (filtered_type === "date_wise" && (!start_date || !end_date)) {
+    //   return res.status(400).json({
+    //     success: false,
+    //     message: "start_date and end_date are required for date_wise filter"
+    //   });
+    // }
 
     const pageNum = Number(page);
     const limitNum = Number(limit);
