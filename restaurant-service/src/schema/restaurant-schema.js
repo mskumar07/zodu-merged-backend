@@ -139,7 +139,6 @@ const order_create = Joi.object({
   no_of_items: Joi.number().integer().required(),
   order_type: Joi.string().valid('Dine-In', 'Takeaway', 'Delivery').required(),
   payment_type: Joi.string().allow('', null),
-  order_id: Joi.string().max(50),
   customer_name: Joi.string().max(100).allow('', null),
   customer_phone: Joi.string()
     .pattern(/^[0-9]{7,15}$/)

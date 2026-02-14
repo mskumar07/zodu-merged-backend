@@ -301,40 +301,30 @@ router.put(
 );
 
 
-router.post(
-  "/api/add/orders",
-  async (req, res) => {
-    try {
-      console.log(req.body)
-      const orderData = req.body;
+router.post("/api/add/orders", async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(
+      schema.order_create,
+      req.body
+    );
 
-      await conn.query("BEGIN");
-      const { errors, input } = await RequestValidator(
-        schema.order_create,
-        orderData
-      );
-
-      if (errors) {
-        await conn.query("ROLLBACK");
-        return res.status(400).json({ errors });
-      }
-
-      const data = await service.createOrder(input);
-
-      if (!data.success) {
-        await conn.query("ROLLBACK");
-        return res.status(400).json({ message: data.message });
-      }
-
-      await conn.query("COMMIT");
-      return res.status(201).json({ data });
-    } catch (error) {
-      await conn.query("ROLLBACK");
-      console.error(error);
-      return res.status(500).json({ error: error.message });
+    if (errors) {
+      return res.status(400).json({ errors });
     }
+
+    const data = await service.createOrder(input);
+
+    if (!data.success) {
+      return res.status(400).json({ message: data.message });
+    }
+
+    return res.status(201).json(data);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
   }
-);
+});
+
 
 router.post(
   "/api/add/vendor",
@@ -1829,95 +1819,6 @@ router.post("/api/payment/pay", async (req, res) => {
     return res.status(500).json({ success: false, message: err.message });
   }
 });
-
-
-// router.get("/api/report/expense", async (req, res) => {
-//   try {
-//     const {
-//       filtered_type = "all_expense",
-//       zodu_id,
-//       branch_id,
-//       page = 1,
-//       limit = 10,
-//       start_date,
-//       end_date,
-//       year
-//     } = req.query;
-//     if (!zodu_id || !branch_id) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "zodu_id and branch_id are required"
-//       });
-//     }
-//     if (filtered_type === "date_wise" && (!start_date || !end_date)) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "start_date and end_date are required for date_wise filter"
-//       });
-//     }
-//     const pageNum = Number(page);
-//     const limitNum = Number(limit);
-//     const result = await service.getExpenseReportServices(
-//       zodu_id,
-//       branch_id,
-//       pageNum,
-//       limitNum,
-//       filtered_type,
-//       start_date,
-//       end_date,
-//       year
-//     );
-//     if (!result.success) {
-//       return res.status(400).json({
-//         success: false,
-//         message: result.message
-//       });
-//     }
-//     let response;
-//     if (filtered_type === "date_wise") {
-//       response = {
-//         success: true,
-//         datewise_summary: result.datewise_summary,
-//         totalBills: result.totalBills,
-//         totalAmount: result.totalAmount,
-//         totalPaid: result.totalPaid,
-//         totalUnpaid: result.totalUnpaid,
-//         totalItems: result.totalItems,
-//         pagination: result.pagination
-//       };
-//     }
-//     else if (filtered_type === "month_year_wise") {
-//       response = {
-//         success: true,
-//         monthly_summary: result.allYear,
-//         totalBills: result.totalBills,
-//         totalAmount: result.totalAmount,
-//         totalPaid: result.totalPaid,
-//         totalUnpaid: result.totalUnpaid,
-//         totalItems: result.totalItems
-//       };
-//     }
-//     else {
-//       response = {
-//         success: true,
-//         all_orders: result.data,
-//         totalBills: result.totalBills,
-//         totalAmount: result.totalAmount,
-//         totalPaid: result.totalPaid,
-//         totalUnpaid: result.totalUnpaid,
-//         totalItems: result.totalItems,
-//         pagination: result.pagination
-//       };
-//     }
-//     return res.status(200).json(response);
-//   } catch (err) {
-//     console.error("REPORT ERROR:", err);
-//     return res.status(500).json({
-//       success: false,
-//       message: err.message
-//     });
-//   }
-// });
 
 
 module.exports = router;

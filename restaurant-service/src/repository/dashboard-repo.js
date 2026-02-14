@@ -49,21 +49,30 @@ exports.getDashboardOrders = async (
 
   const dataQuery = `
     SELECT 
-      o.order_id,
+      o.public_order_no,            -- user-visible order number
+      o.api_order_id,               -- internal reference (optional for FE)
       o.total_amt,
       o.no_of_items,
-      COALESCE(SUM(oi.qty),0) AS total_qty,
+      COALESCE(SUM(oi.qty), 0) AS total_qty,
       o.order_type,
       TO_CHAR(
         o.created_at,
         'DD Mon YYYY, HH12:MI AM (Dy)'
       ) AS formatted_date
     FROM tbl_orders o
-    LEFT JOIN tbl_ordered_items oi ON oi.order_id = o.order_id
-    WHERE o.zodu_id=$1 AND o.branch_id=$2 
-      AND o.final_payment=true
+    LEFT JOIN tbl_ordered_items oi
+      ON oi.api_order_id = o.api_order_id
+    WHERE o.zodu_id = $1
+      AND o.branch_id = $2
+      AND o.final_payment = true
       ${orderDateCondition}
-    GROUP BY o.order_id
+    GROUP BY 
+      o.api_order_id,
+      o.public_order_no,
+      o.total_amt,
+      o.no_of_items,
+      o.order_type,
+      o.created_at
     ORDER BY o.created_at ${order}
     LIMIT $3 OFFSET $4
   `;
@@ -71,8 +80,9 @@ exports.getDashboardOrders = async (
   const countQuery = `
     SELECT COUNT(*)
     FROM tbl_orders o
-    WHERE o.zodu_id=$1 AND o.branch_id=$2 
-      AND o.final_payment=true
+    WHERE o.zodu_id = $1
+      AND o.branch_id = $2
+      AND o.final_payment = true
       ${orderDateCondition}
   `;
 
@@ -86,6 +96,7 @@ exports.getDashboardOrders = async (
     count: Number(countRes.rows[0].count)
   };
 };
+
 
 
 exports.getDashboardTopItems = async (

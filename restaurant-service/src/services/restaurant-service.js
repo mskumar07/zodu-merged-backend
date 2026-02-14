@@ -1485,22 +1485,39 @@ async function createOrder(orderData) {
     let items = null;
     let kot = null;
 
-    // 🟢 DINE-IN = RUNNING TABLE (TMP ONLY)
+    // 🟢 DINE-IN FLOW
     if (orderData.order_type === "Dine-In") {
-      order = await repository.createtmpOrder(orderData);
+
+      // 1️⃣ TMP ORDER → BACKEND GENERATES IDS
+      const tmpOrder = await repository.createtmpOrder(orderData);
+
+      // 2️⃣ 🔑 ATTACH GENERATED IDS (CRITICAL)
+      orderData.api_order_id = tmpOrder.api_order_id;
+      orderData.legacy_order_ref = tmpOrder.legacy_order_ref;
+
+      // 3️⃣ TMP ITEMS (USES api_order_id)
       items = await repository.createtmpOrderedItems(orderData);
+
+      // 4️⃣ KOT (USES SAME api_order_id)
       kot = await repository.createKOT(orderData);
+
+      order = tmpOrder;
     }
-    // 🟡 TAKEAWAY / DELIVERY = DIRECT FINAL ORDER
+    // 🟡 TAKEAWAY / DELIVERY
     else {
-      order = await repository.createOrder(orderData);
+      const finalOrder = await repository.createOrder(orderData);
+
+      // 🔑 attach api_order_id for items
+      orderData.api_order_id = finalOrder.api_order_id;
+
       items = await repository.createOrderedItems(orderData);
+      order = finalOrder;
     }
 
     return {
       success: true,
       message: "Order created successfully",
-      data: { order, items, kot },
+      data: { order, items, kot }
     };
 
   } catch (err) {
@@ -1508,6 +1525,8 @@ async function createOrder(orderData) {
     return { success: false, message: err.message };
   }
 }
+
+
 
 
 
