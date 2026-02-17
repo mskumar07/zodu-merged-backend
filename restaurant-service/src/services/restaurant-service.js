@@ -791,55 +791,55 @@ async function get_Report(data) {
 
 }
 
-async function get_dashboard(zodu_id, branch_id, options) {
-  try {
-    const {
-      ordersPage = 1,
-      ordersLimit = 10,
-      expensesPage = 1,
-      expensesLimit = 10,
-      topItemsPage = 1,
-      topItemsLimit = 5,
-      datePage = 1,
-      dateLimit = 7,
-      sortOrder = "desc",
+// async function get_dashboard(zodu_id, branch_id, options) {
+//   try {
+//     const {
+//       ordersPage = 1,
+//       ordersLimit = 10,
+//       expensesPage = 1,
+//       expensesLimit = 10,
+//       topItemsPage = 1,
+//       topItemsLimit = 5,
+//       datePage = 1,
+//       dateLimit = 7,
+//       sortOrder = "desc",
 
-      // 👇 NEW
-      dateType = "today",
-      fromDate,
-      toDate
-    } = options;
+//       // 👇 NEW
+//       dateType = "today",
+//       fromDate,
+//       toDate
+//     } = options;
 
-    const pagination = {
-      orders: getPagination({ page: ordersPage, limit: ordersLimit }),
-      expenses: getPagination({ page: expensesPage, limit: expensesLimit }),
-      topItems: getPagination({ page: topItemsPage, limit: topItemsLimit }),
-      datewise: getPagination({ page: datePage, limit: dateLimit }),
-    };
+//     const pagination = {
+//       orders: getPagination({ page: ordersPage, limit: ordersLimit }),
+//       expenses: getPagination({ page: expensesPage, limit: expensesLimit }),
+//       topItems: getPagination({ page: topItemsPage, limit: topItemsLimit }),
+//       datewise: getPagination({ page: datePage, limit: dateLimit }),
+//     };
 
-    const result = await repository.getDashboard(
-      zodu_id,
-      branch_id,
-      pagination,
-      sortOrder,
-      { dateType, fromDate, toDate } // 👈 pass filter
-    );
+//     const result = await repository.getDashboard(
+//       zodu_id,
+//       branch_id,
+//       pagination,
+//       sortOrder,
+//       { dateType, fromDate, toDate } // 👈 pass filter
+//     );
 
-    return {
-      success: true,
-      data: result.data,
-      pagination: {
-        orders: getMeta({ ...pagination.orders, total: result.counts.orders }),
-        expenses: getMeta({ ...pagination.expenses, total: result.counts.expenses }),
-        topItems: getMeta({ ...pagination.topItems, total: result.counts.topItems }),
-        datewise: getMeta({ ...pagination.datewise, total: result.counts.datewise })
-      }
-    };
-  } catch (err) {
-    console.error("Dashboard Service Error:", err);
-    return { success: false, message: err.message };
-  }
-}
+//     return {
+//       success: true,
+//       data: result.data,
+//       pagination: {
+//         orders: getMeta({ ...pagination.orders, total: result.counts.orders }),
+//         expenses: getMeta({ ...pagination.expenses, total: result.counts.expenses }),
+//         topItems: getMeta({ ...pagination.topItems, total: result.counts.topItems }),
+//         datewise: getMeta({ ...pagination.datewise, total: result.counts.datewise })
+//       }
+//     };
+//   } catch (err) {
+//     console.error("Dashboard Service Error:", err);
+//     return { success: false, message: err.message };
+//   }
+// }
 
 
 // --- Orders Summary ---
@@ -1288,11 +1288,13 @@ async function getSingleOrder (zodu_id, branch_id, order_id) {
 
 async function update_Final_payment(data) {
   try {
-    const orderData = await repository.updateFinalPayment(data);
+    const result = await repository.updateFinalPayment(data);
 
     return {
       success: true,
-      data: orderData,
+    
+        order: result.order,
+        public_order_no: result.public_order_no // ✅ PRINT THIS
     };
   } catch (error) {
     console.error("Menu Item Data getting Error", error);
@@ -1485,39 +1487,36 @@ async function createOrder(orderData) {
     let items = null;
     let kot = null;
 
-    // 🟢 DINE-IN FLOW
+    // 🟢 DINE-IN (TMP FLOW)
     if (orderData.order_type === "Dine-In") {
-
-      // 1️⃣ TMP ORDER → BACKEND GENERATES IDS
       const tmpOrder = await repository.createtmpOrder(orderData);
 
-      // 2️⃣ 🔑 ATTACH GENERATED IDS (CRITICAL)
+      // 🔑 attach backend-generated IDs
       orderData.api_order_id = tmpOrder.api_order_id;
       orderData.legacy_order_ref = tmpOrder.legacy_order_ref;
 
-      // 3️⃣ TMP ITEMS (USES api_order_id)
       items = await repository.createtmpOrderedItems(orderData);
-
-      // 4️⃣ KOT (USES SAME api_order_id)
       kot = await repository.createKOT(orderData);
 
       order = tmpOrder;
-    }
-    // 🟡 TAKEAWAY / DELIVERY
-    else {
-      const finalOrder = await repository.createOrder(orderData);
 
-      // 🔑 attach api_order_id for items
-      orderData.api_order_id = finalOrder.api_order_id;
-
-      items = await repository.createOrderedItems(orderData);
-      order = finalOrder;
+      return {
+        success: true,
+        message: "Running order created",
+        order,
+      };
     }
+
+    // 🟡 TAKEAWAY / DELIVERY (FINAL DIRECT)
+    const finalOrder = await repository.createOrder(orderData);
+
+    orderData.api_order_id = finalOrder.api_order_id;
+    items = await repository.createOrderedItems(orderData);
 
     return {
       success: true,
       message: "Order created successfully",
-      data: { order, items, kot }
+      order: finalOrder,
     };
 
   } catch (err) {
@@ -1525,9 +1524,6 @@ async function createOrder(orderData) {
     return { success: false, message: err.message };
   }
 }
-
-
-
 
 
 async function getPurchaseListData(
@@ -2197,7 +2193,6 @@ module.exports = {
   get_Report,
   addin_Inventory,
   update_Final_payment,
-  get_dashboard,
   getInventorySummary,
   getPurchaseSummary,
   getExpenseCategoryData,

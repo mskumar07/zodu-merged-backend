@@ -109,6 +109,8 @@ router.get("/top-items/:zodu_id/:branch_id", async (req, res) => {
       toDate
     } = req.query;
 
+    console.log("test",req.query)
+
     const result = await service.getDashboardTopItems(
       zodu_id,
       branch_id,

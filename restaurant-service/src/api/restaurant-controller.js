@@ -317,7 +317,7 @@ router.post("/api/add/orders", async (req, res) => {
     if (!data.success) {
       return res.status(400).json({ message: data.message });
     }
-
+console.log(data)
     return res.status(201).json(data);
   } catch (error) {
     console.error(error);
@@ -1336,57 +1336,57 @@ router.post("/api/completeorder", async (req, res) => {
   }
 })
 
-router.get("/api/dashboard/:zodu_id/:branch_id", async (req, res) => {
-  try {
-    const { zodu_id, branch_id } = req.params;
+// router.get("/api/dashboard/:zodu_id/:branch_id", async (req, res) => {
+//   try {
+//     const { zodu_id, branch_id } = req.params;
 
-    const {
-      ordersPage = 1,
-      ordersLimit = 10,
-      expensesPage = 1,
-      expensesLimit = 10,
-      topItemsPage = 1,
-      topItemsLimit = 5,
-      datePage = 1,
-      dateLimit = 7,
-      sortOrder = "desc",
+//     const {
+//       ordersPage = 1,
+//       ordersLimit = 10,
+//       expensesPage = 1,
+//       expensesLimit = 10,
+//       topItemsPage = 1,
+//       topItemsLimit = 5,
+//       datePage = 1,
+//       dateLimit = 7,
+//       sortOrder = "desc",
 
-      // 👇 NEW
-      dateType = "today", // today | yesterday | week | 30days | custom
-      fromDate,
-      toDate
-    } = req.query;
+//       // 👇 NEW
+//       dateType = "today", // today | yesterday | week | 30days | custom
+//       fromDate,
+//       toDate
+//     } = req.query;
 
-    const getData = await service.get_dashboard(
-      zodu_id,
-      branch_id,
-      {
-        ordersPage: +ordersPage,
-        ordersLimit: +ordersLimit,
-        expensesPage: +expensesPage,
-        expensesLimit: +expensesLimit,
-        topItemsPage: +topItemsPage,
-        topItemsLimit: +topItemsLimit,
-        datePage: +datePage,
-        dateLimit: +dateLimit,
-        sortOrder,
-        dateType,
-        fromDate,
-        toDate
-      }
-    );
+//     const getData = await service.get_dashboard(
+//       zodu_id,
+//       branch_id,
+//       {
+//         ordersPage: +ordersPage,
+//         ordersLimit: +ordersLimit,
+//         expensesPage: +expensesPage,
+//         expensesLimit: +expensesLimit,
+//         topItemsPage: +topItemsPage,
+//         topItemsLimit: +topItemsLimit,
+//         datePage: +datePage,
+//         dateLimit: +dateLimit,
+//         sortOrder,
+//         dateType,
+//         fromDate,
+//         toDate
+//       }
+//     );
 
-    return res.status(200).json({
-      message: "Data Get Successfully",
-      data: getData.data,
-      pagination: getData.pagination
-    });
+//     return res.status(200).json({
+//       message: "Data Get Successfully",
+//       data: getData.data,
+//       pagination: getData.pagination
+//     });
 
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-});
+//   } catch (error) {
+//     console.error(error);
+//     return res.status(500).json({ error: error.message });
+//   }
+// });
 
 
 

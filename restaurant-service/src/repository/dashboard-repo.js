@@ -105,7 +105,7 @@ exports.getDashboardTopItems = async (
   { limit, offset },
   dateFilter
 ) => {
-  const { orderDateCondition } = buildDateConditions(dateFilter);
+  const { orderDateCondition } = buildDateConditions(dateFilter, "o.order_date");
 
   const query = `
     SELECT 
@@ -113,15 +113,24 @@ exports.getDashboardTopItems = async (
       c.name AS category_name,
       u.short_name AS unit,
       SUM(i.qty) AS total_qty,
-      SUM(i.qty * i.price) AS total_amount
+      COALESCE(SUM(i.total_amount), 0) AS total_amount
     FROM tbl_ordered_items i
-    JOIN tbl_orders o ON o.order_id = i.order_id
-    JOIN tbl_menu_item m ON m.menu_id = i.item_id
-    LEFT JOIN tbl_category c ON c.id = m.menu_category_id
-    LEFT JOIN tbl_units u ON u.id = m.menu_unit
-    WHERE o.zodu_id=$1 AND o.branch_id=$2
+    JOIN tbl_orders o
+      ON o.api_order_id = i.api_order_id
+    JOIN tbl_menu_item m
+      ON m.menu_id = i.item_id
+    LEFT JOIN tbl_category c
+      ON c.id = m.menu_category_id
+    LEFT JOIN tbl_units u
+      ON u.id = m.menu_unit
+    WHERE o.zodu_id = $1
+      AND o.branch_id = $2
+      AND o.final_payment = true
       ${orderDateCondition}
-    GROUP BY m.menu_name, c.name, u.short_name
+    GROUP BY 
+      m.menu_name,
+      c.name,
+      u.short_name
     ORDER BY total_qty DESC
     LIMIT $3 OFFSET $4
   `;
@@ -129,8 +138,11 @@ exports.getDashboardTopItems = async (
   const countQuery = `
     SELECT COUNT(DISTINCT i.item_id)
     FROM tbl_ordered_items i
-    JOIN tbl_orders o ON o.order_id=i.order_id
-    WHERE o.zodu_id=$1 AND o.branch_id=$2
+    JOIN tbl_orders o
+      ON o.api_order_id = i.api_order_id
+    WHERE o.zodu_id = $1
+      AND o.branch_id = $2
+      AND o.final_payment = true
       ${orderDateCondition}
   `;
 
@@ -151,23 +163,26 @@ exports.getDashboardDatewiseSales = async (
   branch_id,
   { limit, offset }
 ) => {
- const query = `
-  SELECT 
-  TO_CHAR(created_at::date, 'DD Mon YYYY (Dy)') AS formatted_date,
-  COUNT(order_id) AS total_orders,
-  COALESCE(SUM(total_amt), 0) AS total_amount
-FROM tbl_orders
-WHERE zodu_id = $1 AND branch_id = $2
-GROUP BY created_at::date
-ORDER BY created_at::date DESC
-LIMIT $3 OFFSET $4;
-
-`;
+  const query = `
+    SELECT 
+      TO_CHAR(order_date, 'DD Mon YYYY (Dy)') AS formatted_date,
+      COUNT(*) AS total_orders,
+      COALESCE(SUM(total_amt), 0) AS total_amount
+    FROM tbl_orders
+    WHERE zodu_id = $1
+      AND branch_id = $2
+      AND final_payment = true
+    GROUP BY order_date
+    ORDER BY order_date DESC
+    LIMIT $3 OFFSET $4
+  `;
 
   const countQuery = `
-    SELECT COUNT(DISTINCT created_at::date)
+    SELECT COUNT(DISTINCT order_date)
     FROM tbl_orders
-    WHERE zodu_id=$1 AND branch_id=$2
+    WHERE zodu_id = $1
+      AND branch_id = $2
+      AND final_payment = true
   `;
 
   const [dataRes, countRes] = await Promise.all([

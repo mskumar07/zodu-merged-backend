@@ -555,6 +555,7 @@ exports.get_all_report_data = async (
       WITH filtered AS (
         SELECT
           public_order_no,
+          api_order_id,
           created_at,
           order_type,
           no_of_items,
@@ -577,6 +578,7 @@ exports.get_all_report_data = async (
       SELECT
         TO_CHAR(f.created_at,'DD Mon YYYY, HH12:MI AM (Dy)') AS created_at,
         f.public_order_no,
+        f.api_order_id,
         f.order_type,
         f.no_of_items,
         f.total_tax,
@@ -606,7 +608,7 @@ exports.get_all_report_data = async (
             AND final_payment = true
             AND created_at::date BETWEEN $3 AND $4
           GROUP BY created_at::date
-          ORDER BY created_at::date
+          ORDER BY created_at::date DESC
           LIMIT $5 OFFSET $6
         `
         : `
@@ -619,7 +621,7 @@ exports.get_all_report_data = async (
             AND branch_id = $2
             AND final_payment = true
           GROUP BY created_at::date
-          ORDER BY created_at::date
+          ORDER BY created_at::date DESC
           LIMIT $3 OFFSET $4
         `;
 
@@ -899,7 +901,7 @@ exports.get_purchase_report_data = async (zodu_id, branch_id, page = 1, limit = 
           AND p.branch_id = $2
           ${whereSQL}
         GROUP BY p.created_at::date
-        ORDER BY p.created_at::date ASC
+        ORDER BY p.created_at::date DESC
         LIMIT $${baseParams.length + 1} OFFSET $${baseParams.length + 2}`;
 
       queries.push(conn.query(datewiseQuery, [...baseParams, limit, offset]));
@@ -1321,7 +1323,7 @@ exports.get_category_item_wise_report = async (
     `;
     const summaryQuery = `
       SELECT
-        COUNT(DISTINCT oi.order_id)::int AS total_orders,
+        COUNT(DISTINCT oi.api_order_id)::int AS total_orders,
         COALESCE(SUM(oi.qty),0)::numeric AS total_qty,
         COALESCE(SUM(oi.total_amount),0)::numeric AS total_amount
       FROM tbl_ordered_items oi
@@ -3031,15 +3033,23 @@ console.log(stockAlert,stockQty);
 };
 
 
-exports.getSingleOrder = async (zodu_id, branch_id, order_id) => {
+exports.getSingleOrder = async (zodu_id, branch_id, api_order_id) => {
   const query = `
     SELECT 
-      o.order_id,
+      o.api_order_id,
+      o.public_order_no,
+
       o.order_date,
       o.order_time,
+ TO_CHAR(
+        o.created_at,
+        'DD Mon YYYY, HH12:MI AM (Dy)'
+      ) AS formatted_date,
       o.order_type,
       o.payment_type,
       o.customer_name,
+      o.customer_phone,
+      o.table_no,
 
       o.no_of_items,
 
@@ -3052,40 +3062,45 @@ exports.getSingleOrder = async (zodu_id, branch_id, order_id) => {
       o.total_amt,
 
       (
-        SELECT json_agg(
-          json_build_object(
-            'item_name', i.item_name,
-            'qty', i.qty,
-            'price', i.price,
-            'amount', i.qty * i.price,
-            'unit', i.item_unit,
+        SELECT COALESCE(
+          json_agg(
+            json_build_object(
+              'item_name', i.item_name,
+              'qty', i.qty,
+              'price', i.price,
+              'amount', i.total_amount,
+              'unit', i.item_unit,
 
-            -- 🧾 TAX DETAILS PER ITEM
-            'gst_percentage', i.gst_percentage,
-            'tax_amount', i.tax_amount,
-            'cgst', i.cgst,
-            'sgst', i.sgst,
-            'tax_inclusive', i.tax_inclusive
-          )
+              -- 🧾 TAX DETAILS
+              'gst_percentage', i.gst_percentage,
+              'tax_amount', i.tax_amount,
+              'cgst', i.cgst,
+              'sgst', i.sgst,
+              'tax_inclusive', i.tax_inclusive
+            )
+          ),
+          '[]'::json
         )
         FROM tbl_ordered_items i
-        WHERE i.order_id = o.order_id
+        WHERE i.api_order_id = o.api_order_id
       ) AS items
 
     FROM tbl_orders o
-    WHERE o.order_id = $1
+    WHERE o.api_order_id = $1
       AND o.zodu_id = $2
       AND o.branch_id = $3
+      AND o.final_payment = true
   `;
 
   const result = await conn.query(query, [
-    order_id,
+    api_order_id,
     zodu_id,
     branch_id
   ]);
 
   return result.rows[0] || null;
 };
+
 
 
 
@@ -3584,10 +3599,17 @@ exports.updateFinalPayment = async (data) => {
   try {
     await conn.query("BEGIN");
 
+    /* ----------------------------------------------------
+       1️⃣ FETCH TMP ORDER (SOURCE OF TRUTH)
+    ---------------------------------------------------- */
     const tmpRes = await conn.query(
-      `SELECT order_date, order_time, order_type
-       FROM tbl_tmp_orders
-       WHERE api_order_id = $1`,
+      `
+      SELECT
+        created_at,
+        order_type
+      FROM tbl_tmp_orders
+      WHERE api_order_id = $1
+      `,
       [api_order_id]
     );
 
@@ -3595,8 +3617,15 @@ exports.updateFinalPayment = async (data) => {
       throw new Error("Temp order not found");
     }
 
-    const { order_date, order_time, order_type } = tmpRes.rows[0];
+    const { created_at, order_type } = tmpRes.rows[0];
 
+    // 🔒 FORCE DATE & TIME FROM CREATED_AT
+    const order_date = created_at.toISOString().slice(0, 10); // YYYY-MM-DD
+    const order_time = created_at.toTimeString().slice(0, 8); // HH:mm:ss
+
+    /* ----------------------------------------------------
+       2️⃣ CALCULATE TOTALS
+    ---------------------------------------------------- */
     let subtotal = 0;
     let total_tax = 0;
     let no_of_items = 0;
@@ -3605,7 +3634,7 @@ exports.updateFinalPayment = async (data) => {
       const taxData = calculateItemTax(item);
       subtotal += taxData.subtotal;
       total_tax += taxData.tax_amount;
-      no_of_items += 1;
+      no_of_items += 1; // count rows, NOT qty
     }
 
     const discountType = discount_type ? discount_type.toUpperCase() : null;
@@ -3621,30 +3650,56 @@ exports.updateFinalPayment = async (data) => {
 
     const total_amt = subtotal + total_tax - discount_amount;
 
-    const public_order_no =
-      await generatePublicOrderNo(branch_id);
+    /* ----------------------------------------------------
+       3️⃣ GENERATE PUBLIC ORDER NO (DAILY RESET SAFE)
+    ---------------------------------------------------- */
+    const public_order_no = await generatePublicOrderNo(branch_id);
 
+    /* ----------------------------------------------------
+       4️⃣ INSERT FINAL ORDER
+    ---------------------------------------------------- */
     const orderRes = await conn.query(
-      `INSERT INTO tbl_orders (
-        zodu_id, branch_id,
-        api_order_id, public_order_no,
-        table_no, order_type, no_of_items,
-        subtotal, total_tax, total_amt,
-        discount_type, discount_value, discount_amount,
-        final_payment, payment_type,
-        order_date, order_time
+      `
+      INSERT INTO tbl_orders (
+        zodu_id,
+        branch_id,
+
+        api_order_id,
+        public_order_no,
+
+        table_no,
+        order_type,
+        no_of_items,
+
+        subtotal,
+        total_tax,
+        total_amt,
+
+        discount_type,
+        discount_value,
+        discount_amount,
+
+        final_payment,
+        payment_type,
+
+        order_date,
+        order_time
       )
       VALUES (
-        $1,$2,$3,$4,
+        $1,$2,
+        $3,$4,
         $5,$6,$7,
         $8,$9,$10,
         $11,$12,$13,
-        true,$14,$15,$16
+        true,$14,
+        $15,$16
       )
-      RETURNING *`,
+      RETURNING *
+      `,
       [
         zodu_id,
         branch_id,
+
         api_order_id,
         public_order_no,
 
@@ -3666,6 +3721,58 @@ exports.updateFinalPayment = async (data) => {
       ]
     );
 
+    /* ----------------------------------------------------
+       5️⃣ MOVE TMP ITEMS → FINAL ITEMS
+    ---------------------------------------------------- */
+    await conn.query(
+      `
+      INSERT INTO tbl_ordered_items (
+        zodu_id,
+        branch_id,
+        api_order_id,
+        item_id,
+        item_name,
+        qty,
+        price,
+        item_unit,
+        variant_id,
+        variant_name,
+        gst_percentage,
+        tax_amount,
+        cgst,
+        sgst,
+        tax_inclusive
+      )
+      SELECT
+        zodu_id,
+        branch_id,
+        api_order_id,
+        item_id,
+        item_name,
+        qty,
+        price,
+        item_unit,
+        variant_id,
+        variant_name,
+        gst_percentage,
+        tax_amount,
+        cgst,
+        sgst,
+        tax_inclusive
+      FROM tbl_tmp_ordered_items
+      WHERE api_order_id = $1
+      `,
+      [api_order_id]
+    );
+
+    /* ----------------------------------------------------
+       6️⃣ CLEANUP TMP DATA
+    ---------------------------------------------------- */
+    await conn.query(
+      `DELETE FROM tbl_tmp_ordered_items WHERE api_order_id = $1`,
+      [api_order_id]
+    );
+
     await conn.query(
       `DELETE FROM tbl_tmp_orders WHERE api_order_id = $1`,
       [api_order_id]
@@ -3673,9 +3780,13 @@ exports.updateFinalPayment = async (data) => {
 
     await conn.query("COMMIT");
 
+    /* ----------------------------------------------------
+       7️⃣ RETURN FOR PRINTING
+    ---------------------------------------------------- */
     return {
       success: true,
-      order: orderRes.rows[0]
+      order: orderRes.rows[0],
+      public_order_no
     };
 
   } catch (err) {
@@ -3683,6 +3794,8 @@ exports.updateFinalPayment = async (data) => {
     throw err;
   }
 };
+
+
 
 
 
@@ -4788,303 +4901,304 @@ if (Array.isArray(attachmentURL)) {
   } 
 };
 
-exports.getDashboard = async (zodu_id, branch_id, pagination, sortOrder, dateFilter) => {
-  const order = sortOrder === "asc" ? "ASC" : "DESC";
+// exports.getDashboard = async (zodu_id, branch_id, pagination, sortOrder, dateFilter) => {
+//   const order = sortOrder === "asc" ? "ASC" : "DESC";
 
 
-  const { orders, expenses, topItems, datewise } = pagination;
+//   const { orders, expenses, topItems, datewise } = pagination;
 
-  // =========================
-  // DATE FILTER (default = today)
-  // =========================
-  let orderDateCondition = `AND o.order_date = CURRENT_DATE`;
-  let expenseDateCondition = `AND e.updated_at::date = CURRENT_DATE`;
-  let paymentDateCondition = `AND p.updated_at::date = CURRENT_DATE`;
+//   // =========================
+//   // DATE FILTER (default = today)
+//   // =========================
+//   let orderDateCondition = `AND o.order_date = CURRENT_DATE`;
+//   let expenseDateCondition = `AND e.updated_at::date = CURRENT_DATE`;
+//   let paymentDateCondition = `AND p.updated_at::date = CURRENT_DATE`;
 
-  if (dateFilter?.dateType === "today") {
-    orderDateCondition = `AND o.order_date = CURRENT_DATE`;
-    expenseDateCondition = `AND e.updated_at::date = CURRENT_DATE`;
-    paymentDateCondition = `AND p.updated_at::date = CURRENT_DATE`;
-  }
+//   if (dateFilter?.dateType === "today") {
+//     orderDateCondition = `AND o.order_date = CURRENT_DATE`;
+//     expenseDateCondition = `AND e.updated_at::date = CURRENT_DATE`;
+//     paymentDateCondition = `AND p.updated_at::date = CURRENT_DATE`;
+//   }
 
-  else if (dateFilter?.dateType === "yesterday") {
-    orderDateCondition = `AND o.order_date = CURRENT_DATE - INTERVAL '1 day'`;
-    expenseDateCondition = `AND e.updated_at::date = CURRENT_DATE - INTERVAL '1 day'`;
-    paymentDateCondition = `AND p.updated_at::date = CURRENT_DATE - INTERVAL '1 day'`;
-  }
+//   else if (dateFilter?.dateType === "yesterday") {
+//     orderDateCondition = `AND o.order_date = CURRENT_DATE - INTERVAL '1 day'`;
+//     expenseDateCondition = `AND e.updated_at::date = CURRENT_DATE - INTERVAL '1 day'`;
+//     paymentDateCondition = `AND p.updated_at::date = CURRENT_DATE - INTERVAL '1 day'`;
+//   }
 
-  else if (dateFilter?.dateType === "thisWeek") {
-    orderDateCondition = `AND o.order_date >= date_trunc('week', CURRENT_DATE)`;
-    expenseDateCondition = `AND e.updated_at::date >= date_trunc('week', CURRENT_DATE)`;
-    paymentDateCondition = `AND p.updated_at::date >= date_trunc('week', CURRENT_DATE)`;
-  }
+//   else if (dateFilter?.dateType === "thisWeek") {
+//     orderDateCondition = `AND o.order_date >= date_trunc('week', CURRENT_DATE)`;
+//     expenseDateCondition = `AND e.updated_at::date >= date_trunc('week', CURRENT_DATE)`;
+//     paymentDateCondition = `AND p.updated_at::date >= date_trunc('week', CURRENT_DATE)`;
+//   }
 
-  else if (dateFilter?.dateType === "last7Days") {
-    orderDateCondition = `AND o.order_date >= CURRENT_DATE - INTERVAL '7 days'`;
-    expenseDateCondition = `AND e.updated_at::date >= CURRENT_DATE - INTERVAL '7 days'`;
-    paymentDateCondition = `AND p.updated_at::date >= CURRENT_DATE - INTERVAL '7 days'`;
-  }
+//   else if (dateFilter?.dateType === "last7Days") {
+//     orderDateCondition = `AND o.order_date >= CURRENT_DATE - INTERVAL '7 days'`;
+//     expenseDateCondition = `AND e.updated_at::date >= CURRENT_DATE - INTERVAL '7 days'`;
+//     paymentDateCondition = `AND p.updated_at::date >= CURRENT_DATE - INTERVAL '7 days'`;
+//   }
 
-  else if (dateFilter?.dateType === "last14Days") {
-    orderDateCondition = `AND o.order_date >= CURRENT_DATE - INTERVAL '14 days'`;
-    expenseDateCondition = `AND e.updated_at::date >= CURRENT_DATE - INTERVAL '14 days'`;
-    paymentDateCondition = `AND p.updated_at::date >= CURRENT_DATE - INTERVAL '14 days'`;
-  }
+//   else if (dateFilter?.dateType === "last14Days") {
+//     orderDateCondition = `AND o.order_date >= CURRENT_DATE - INTERVAL '14 days'`;
+//     expenseDateCondition = `AND e.updated_at::date >= CURRENT_DATE - INTERVAL '14 days'`;
+//     paymentDateCondition = `AND p.updated_at::date >= CURRENT_DATE - INTERVAL '14 days'`;
+//   }
 
-  else if (dateFilter?.dateType === "last30Days") {
-    orderDateCondition = `AND o.order_date >= CURRENT_DATE - INTERVAL '30 days'`;
-    expenseDateCondition = `AND e.updated_at::date >= CURRENT_DATE - INTERVAL '30 days'`;
-    paymentDateCondition = `AND p.updated_at::date >= CURRENT_DATE - INTERVAL '30 days'`;
-  }
+//   else if (dateFilter?.dateType === "last30Days") {
+//     orderDateCondition = `AND o.order_date >= CURRENT_DATE - INTERVAL '30 days'`;
+//     expenseDateCondition = `AND e.updated_at::date >= CURRENT_DATE - INTERVAL '30 days'`;
+//     paymentDateCondition = `AND p.updated_at::date >= CURRENT_DATE - INTERVAL '30 days'`;
+//   }
 
-  else if (dateFilter?.dateType === "thisMonth") {
-    orderDateCondition = `AND o.order_date >= date_trunc('month', CURRENT_DATE)`;
-    expenseDateCondition = `AND e.updated_at::date >= date_trunc('month', CURRENT_DATE)`;
-    paymentDateCondition = `AND p.updated_at::date >= date_trunc('month', CURRENT_DATE)`;
-  }
+//   else if (dateFilter?.dateType === "thisMonth") {
+//     orderDateCondition = `AND o.order_date >= date_trunc('month', CURRENT_DATE)`;
+//     expenseDateCondition = `AND e.updated_at::date >= date_trunc('month', CURRENT_DATE)`;
+//     paymentDateCondition = `AND p.updated_at::date >= date_trunc('month', CURRENT_DATE)`;
+//   }
 
-  else if (dateFilter?.dateType === "lastMonth") {
-    orderDateCondition = `
-      AND o.order_date >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month')
-      AND o.order_date < date_trunc('month', CURRENT_DATE)
-    `;
-    expenseDateCondition = `
-      AND e.updated_at::date >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month')
-      AND e.updated_at::date < date_trunc('month', CURRENT_DATE)
-    `;
-    paymentDateCondition = `
-      AND p.updated_at::date >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month')
-      AND p.updated_at::date < date_trunc('month', CURRENT_DATE)
-    `;
-  }
+//   else if (dateFilter?.dateType === "lastMonth") {
+//     orderDateCondition = `
+//       AND o.order_date >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month')
+//       AND o.order_date < date_trunc('month', CURRENT_DATE)
+//     `;
+//     expenseDateCondition = `
+//       AND e.updated_at::date >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month')
+//       AND e.updated_at::date < date_trunc('month', CURRENT_DATE)
+//     `;
+//     paymentDateCondition = `
+//       AND p.updated_at::date >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month')
+//       AND p.updated_at::date < date_trunc('month', CURRENT_DATE)
+//     `;
+//   }
 
-  else if (dateFilter?.dateType === "thisQuarter") {
-    orderDateCondition = `AND o.order_date >= date_trunc('quarter', CURRENT_DATE)`;
-    expenseDateCondition = `AND e.updated_at::date >= date_trunc('quarter', CURRENT_DATE)`;
-    paymentDateCondition = `AND p.updated_at::date >= date_trunc('quarter', CURRENT_DATE)`;
-  }
+//   else if (dateFilter?.dateType === "thisQuarter") {
+//     orderDateCondition = `AND o.order_date >= date_trunc('quarter', CURRENT_DATE)`;
+//     expenseDateCondition = `AND e.updated_at::date >= date_trunc('quarter', CURRENT_DATE)`;
+//     paymentDateCondition = `AND p.updated_at::date >= date_trunc('quarter', CURRENT_DATE)`;
+//   }
 
-  else if (dateFilter?.dateType === "lastQuarter") {
-    orderDateCondition = `
-      AND o.order_date >= date_trunc('quarter', CURRENT_DATE - INTERVAL '3 month')
-      AND o.order_date < date_trunc('quarter', CURRENT_DATE)
-    `;
-    expenseDateCondition = `
-      AND e.updated_at::date >= date_trunc('quarter', CURRENT_DATE - INTERVAL '3 month')
-      AND e.updated_at::date < date_trunc('quarter', CURRENT_DATE)
-    `;
-    paymentDateCondition = `
-      AND p.updated_at::date >= date_trunc('quarter', CURRENT_DATE - INTERVAL '3 month')
-      AND p.updated_at::date < date_trunc('quarter', CURRENT_DATE)
-    `;
-  }
+//   else if (dateFilter?.dateType === "lastQuarter") {
+//     orderDateCondition = `
+//       AND o.order_date >= date_trunc('quarter', CURRENT_DATE - INTERVAL '3 month')
+//       AND o.order_date < date_trunc('quarter', CURRENT_DATE)
+//     `;
+//     expenseDateCondition = `
+//       AND e.updated_at::date >= date_trunc('quarter', CURRENT_DATE - INTERVAL '3 month')
+//       AND e.updated_at::date < date_trunc('quarter', CURRENT_DATE)
+//     `;
+//     paymentDateCondition = `
+//       AND p.updated_at::date >= date_trunc('quarter', CURRENT_DATE - INTERVAL '3 month')
+//       AND p.updated_at::date < date_trunc('quarter', CURRENT_DATE)
+//     `;
+//   }
 
-  else if (dateFilter?.dateType === "custom" && dateFilter.fromDate && dateFilter.toDate) {
-    orderDateCondition = `AND o.order_date BETWEEN '${dateFilter.fromDate}' AND '${dateFilter.toDate}'`;
-    expenseDateCondition = `AND e.updated_at::date BETWEEN '${dateFilter.fromDate}' AND '${dateFilter.toDate}'`;
-    paymentDateCondition = `AND p.updated_at::date BETWEEN '${dateFilter.fromDate}' AND '${dateFilter.toDate}'`;
-  }
+//   else if (dateFilter?.dateType === "custom" && dateFilter.fromDate && dateFilter.toDate) {
+//     orderDateCondition = `AND o.order_date BETWEEN '${dateFilter.fromDate}' AND '${dateFilter.toDate}'`;
+//     expenseDateCondition = `AND e.updated_at::date BETWEEN '${dateFilter.fromDate}' AND '${dateFilter.toDate}'`;
+//     paymentDateCondition = `AND p.updated_at::date BETWEEN '${dateFilter.fromDate}' AND '${dateFilter.toDate}'`;
+//   }
 
-  // ======================
-  // SUMMARY
-  // ======================
-  const summaryQuery = `
-    SELECT
-      (SELECT COUNT(*) 
-       FROM tbl_orders o
-       WHERE o.zodu_id=$1 AND o.branch_id=$2 AND o.final_payment=true ${orderDateCondition}
-      ) AS total_orders,
+//   // ======================
+//   // SUMMARY
+//   // ======================
+//   const summaryQuery = `
+//     SELECT
+//       (SELECT COUNT(*) 
+//        FROM tbl_orders o
+//        WHERE o.zodu_id=$1 AND o.branch_id=$2 AND o.final_payment=true ${orderDateCondition}
+//       ) AS total_orders,
 
-      (SELECT COALESCE(SUM(o.total_amt),0) 
-       FROM tbl_orders o
-       WHERE o.zodu_id=$1 AND o.branch_id=$2 AND o.final_payment=true ${orderDateCondition}
-      ) AS total_sales,
+//       (SELECT COALESCE(SUM(o.total_amt),0) 
+//        FROM tbl_orders o
+//        WHERE o.zodu_id=$1 AND o.branch_id=$2 AND o.final_payment=true ${orderDateCondition}
+//       ) AS total_sales,
 
-      (SELECT COALESCE(SUM(p.total_amount),0) 
-       FROM tbl_payment p
-       WHERE p.zodu_id=$1 AND p.branch_id=$2 AND p.source_type='expense' ${paymentDateCondition}
-      ) AS total_expense,
+//       (SELECT COALESCE(SUM(p.total_amount),0) 
+//        FROM tbl_payment p
+//        WHERE p.zodu_id=$1 AND p.branch_id=$2 AND p.source_type='expense' ${paymentDateCondition}
+//       ) AS total_expense,
 
-      (SELECT COUNT(*) 
-       FROM tbl_inventory 
-       WHERE zodu_id=$1 AND branch_id=$2 AND stock_qty <= stock_alert
-      ) AS low_stocks
-  `;
-  const summaryRes = await conn.query(summaryQuery, [zodu_id, branch_id]);
+//       (SELECT COUNT(*) 
+//        FROM tbl_inventory 
+//        WHERE zodu_id=$1 AND branch_id=$2 AND stock_qty <= stock_alert
+//       ) AS low_stocks
+//   `;
+//   const summaryRes = await conn.query(summaryQuery, [zodu_id, branch_id]);
 
-  // ======================
-  // ORDERS
-  // ======================
-  const ordersQuery = `
-    SELECT 
-      o.order_id,
-      o.total_amt,
-      o.no_of_items,
-      COALESCE(SUM(oi.qty),0) AS total_qty,
-      o.order_type,
-      TO_CHAR(
-        o.order_date + o.order_time::interval,
-        'DD Mon YYYY, HH12:MI AM (Dy)'
-      ) AS formatted_date
-    FROM tbl_orders o
-    LEFT JOIN tbl_ordered_items oi ON oi.order_id = o.order_id
-    WHERE o.zodu_id = $1 
-      AND o.branch_id = $2 
-      AND o.final_payment = true
-      ${orderDateCondition}
-    GROUP BY o.order_id
-    ORDER BY o.created_at ${order}
-    LIMIT $3 OFFSET $4;
-  `;
+//   // ======================
+//   // ORDERS
+//   // ======================
+//   const ordersQuery = `
+//     SELECT 
+//       o.api_order_id,
+//       o.public_order_no,
+//       o.total_amt,
+//       o.no_of_items,
+//       COALESCE(SUM(oi.qty),0) AS total_qty,
+//       o.order_type,
+//       TO_CHAR(
+//         o.order_date + o.order_time::interval,
+//         'DD Mon YYYY, HH12:MI AM (Dy)'
+//       ) AS formatted_date
+//     FROM tbl_orders o
+//     LEFT JOIN tbl_ordered_items oi ON oi.api_order_id = o.api_order_id
+//     WHERE o.zodu_id = $1 
+//       AND o.branch_id = $2 
+//       AND o.final_payment = true
+//       ${orderDateCondition}
+//     GROUP BY o.api_order_id, o.public_order_no, o.total_amt, o.no_of_items, o.order_type, o.order_date, o.order_time
+//     ORDER BY o.created_at ${order}
+//     LIMIT $3 OFFSET $4;
+//   `;
 
-  const ordersRes = await conn.query(ordersQuery, [
-    zodu_id,
-    branch_id,
-    orders.limit,
-    orders.offset
-  ]);
+//   const ordersRes = await conn.query(ordersQuery, [
+//     zodu_id,
+//     branch_id,
+//     orders.limit,
+//     orders.offset
+//   ]);
 
-  const ordersCount = await conn.query(
-    `SELECT COUNT(*) 
-     FROM tbl_orders o
-     WHERE o.zodu_id=$1 AND o.branch_id=$2 AND o.final_payment=true ${orderDateCondition}`,
-    [zodu_id, branch_id]
-  );
+//   const ordersCount = await conn.query(
+//     `SELECT COUNT(*) 
+//      FROM tbl_orders o
+//      WHERE o.zodu_id=$1 AND o.branch_id=$2 AND o.final_payment=true ${orderDateCondition}`,
+//     [zodu_id, branch_id]
+//   );
 
-  // ======================
-  // TOP ITEMS
-  // ======================
-  const topItemsQuery = `
-    SELECT 
-      m.menu_name,
-      c.name AS category_name,
-      u.short_name AS unit,
-      SUM(i.qty) AS total_qty,
-      SUM(i.qty * i.price) AS total_amount
-    FROM tbl_ordered_items i
-    JOIN tbl_orders o ON o.order_id = i.order_id
-    JOIN tbl_menu_item m ON m.menu_id = i.item_id
-    LEFT JOIN tbl_category c ON c.id = m.menu_category_id
-    LEFT JOIN tbl_units u ON u.id = m.menu_unit
-    WHERE o.zodu_id = $1 
-      AND o.branch_id = $2
-      ${orderDateCondition}
-    GROUP BY m.menu_name, c.name, u.short_name
-    ORDER BY total_qty DESC
-    LIMIT $3 OFFSET $4;
-  `;
+//   // ======================
+//   // TOP ITEMS
+//   // ======================
+//   const topItemsQuery = `
+//     SELECT 
+//       m.menu_name,
+//       c.name AS category_name,
+//       u.short_name AS unit,
+//       SUM(i.qty) AS total_qty,
+//       SUM(i.qty * i.price) AS total_amount
+//     FROM tbl_ordered_items i
+//     JOIN tbl_orders o ON o.order_id = i.order_id
+//     JOIN tbl_menu_item m ON m.menu_id = i.item_id
+//     LEFT JOIN tbl_category c ON c.id = m.menu_category_id
+//     LEFT JOIN tbl_units u ON u.id = m.menu_unit
+//     WHERE o.zodu_id = $1 
+//       AND o.branch_id = $2
+//       ${orderDateCondition}
+//     GROUP BY m.menu_name, c.name, u.short_name
+//     ORDER BY total_qty DESC
+//     LIMIT $3 OFFSET $4;
+//   `;
 
-  const topItemsRes = await conn.query(topItemsQuery, [
-    zodu_id,
-    branch_id,
-    topItems.limit,
-    topItems.offset
-  ]);
+//   const topItemsRes = await conn.query(topItemsQuery, [
+//     zodu_id,
+//     branch_id,
+//     topItems.limit,
+//     topItems.offset
+//   ]);
 
-  const topItemsCount = await conn.query(
-    `SELECT COUNT(DISTINCT i.item_id)
-     FROM tbl_ordered_items i
-     JOIN tbl_orders o ON o.order_id = i.order_id
-     WHERE o.zodu_id = $1 
-       AND o.branch_id = $2
-       ${orderDateCondition}`,
-    [zodu_id, branch_id]
-  );
+//   const topItemsCount = await conn.query(
+//     `SELECT COUNT(DISTINCT i.item_id)
+//      FROM tbl_ordered_items i
+//      JOIN tbl_orders o ON o.order_id = i.order_id
+//      WHERE o.zodu_id = $1 
+//        AND o.branch_id = $2
+//        ${orderDateCondition}`,
+//     [zodu_id, branch_id]
+//   );
 
-  // ======================
-  // DATEWISE (NO FILTER)
-  // ======================
-  const datewiseQuery = `
-    SELECT 
-      order_date::date AS date,
-      COUNT(order_id) AS total_orders,
-      SUM(total_amt) AS total_amount
-    FROM tbl_orders
-    WHERE zodu_id = $1 AND branch_id = $2
-    GROUP BY order_date::date
-    ORDER BY order_date DESC
-    LIMIT $3 OFFSET $4;
-  `;
+//   // ======================
+//   // DATEWISE (NO FILTER)
+//   // ======================
+//   const datewiseQuery = `
+//     SELECT 
+//       order_date::date AS date,
+//       COUNT(order_id) AS total_orders,
+//       SUM(total_amt) AS total_amount
+//     FROM tbl_orders
+//     WHERE zodu_id = $1 AND branch_id = $2
+//     GROUP BY order_date::date
+//     ORDER BY order_date DESC
+//     LIMIT $3 OFFSET $4;
+//   `;
 
-  const datewiseRes = await conn.query(datewiseQuery, [
-    zodu_id,
-    branch_id,
-    datewise.limit,
-    datewise.offset
-  ]);
+//   const datewiseRes = await conn.query(datewiseQuery, [
+//     zodu_id,
+//     branch_id,
+//     datewise.limit,
+//     datewise.offset
+//   ]);
 
-  const datewiseCount = await conn.query(
-    `SELECT COUNT(DISTINCT order_date)
-     FROM tbl_orders
-     WHERE zodu_id = $1 AND branch_id = $2`,
-    [zodu_id, branch_id]
-  );
+//   const datewiseCount = await conn.query(
+//     `SELECT COUNT(DISTINCT order_date)
+//      FROM tbl_orders
+//      WHERE zodu_id = $1 AND branch_id = $2`,
+//     [zodu_id, branch_id]
+//   );
 
-  // ======================
-  // EXPENSES
-  // ======================
-  const expenseQuery = `
-    SELECT 
-      e.expense_id,
-      c.category_name,
+//   // ======================
+//   // EXPENSES
+//   // ======================
+//   const expenseQuery = `
+//     SELECT 
+//       e.expense_id,
+//       c.category_name,
 
-      COALESCE(p.total_amount, 0) AS total_amount,
-      COALESCE(p.paid_amount, 0) AS paid_amount,
-      (COALESCE(p.total_amount, 0) - COALESCE(p.paid_amount, 0)) AS due_amount,
+//       COALESCE(p.total_amount, 0) AS total_amount,
+//       COALESCE(p.paid_amount, 0) AS paid_amount,
+//       (COALESCE(p.total_amount, 0) - COALESCE(p.paid_amount, 0)) AS due_amount,
 
-      COUNT(i.id) AS item_count,
-      e.updated_at
-    FROM tbl_expense e
-    LEFT JOIN tbl_expense_category c 
-      ON c.id = e.category_id
-    LEFT JOIN tbl_payment p 
-      ON p.source_id = e.expense_id
-      AND p.source_type = 'expense'
-    LEFT JOIN tbl_expense_items i 
-      ON i.expense_id = e.expense_id
-    WHERE e.zodu_id = $1 
-      AND e.branch_id = $2
-      ${expenseDateCondition}
-    GROUP BY 
-      e.expense_id,
-      c.category_name,
-      p.total_amount,
-      p.paid_amount,
-      e.updated_at
-    ORDER BY e.updated_at ${order}
-    LIMIT $3 OFFSET $4;
-  `;
+//       COUNT(i.id) AS item_count,
+//       e.updated_at
+//     FROM tbl_expense e
+//     LEFT JOIN tbl_expense_category c 
+//       ON c.id = e.category_id
+//     LEFT JOIN tbl_payment p 
+//       ON p.source_id = e.expense_id
+//       AND p.source_type = 'expense'
+//     LEFT JOIN tbl_expense_items i 
+//       ON i.expense_id = e.expense_id
+//     WHERE e.zodu_id = $1 
+//       AND e.branch_id = $2
+//       ${expenseDateCondition}
+//     GROUP BY 
+//       e.expense_id,
+//       c.category_name,
+//       p.total_amount,
+//       p.paid_amount,
+//       e.updated_at
+//     ORDER BY e.updated_at ${order}
+//     LIMIT $3 OFFSET $4;
+//   `;
 
-  const expensesRes = await conn.query(expenseQuery, [
-    zodu_id,
-    branch_id,
-    expenses.limit,
-    expenses.offset
-  ]);
+//   const expensesRes = await conn.query(expenseQuery, [
+//     zodu_id,
+//     branch_id,
+//     expenses.limit,
+//     expenses.offset
+//   ]);
 
-  const expensesCount = await conn.query(
-    `SELECT COUNT(*) 
-     FROM tbl_expense e
-     WHERE e.zodu_id = $1 AND e.branch_id = $2 ${expenseDateCondition}`,
-    [zodu_id, branch_id]
-  );
+//   const expensesCount = await conn.query(
+//     `SELECT COUNT(*) 
+//      FROM tbl_expense e
+//      WHERE e.zodu_id = $1 AND e.branch_id = $2 ${expenseDateCondition}`,
+//     [zodu_id, branch_id]
+//   );
 
-  return {
-    data: {
-      summary: summaryRes.rows[0],
-      orders: ordersRes.rows,
-      top_items: topItemsRes.rows,
-      datewise_sales: datewiseRes.rows,
-      expenses: expensesRes.rows
-    },
-    counts: {
-      orders: Number(ordersCount.rows[0].count),
-      topItems: Number(topItemsCount.rows[0].count),
-      datewise: Number(datewiseCount.rows[0].count),
-      expenses: Number(expensesCount.rows[0].count)
-    }
-  };
-};
+//   return {
+//     data: {
+//       summary: summaryRes.rows[0],
+//       orders: ordersRes.rows,
+//       top_items: topItemsRes.rows,
+//       datewise_sales: datewiseRes.rows,
+//       expenses: expensesRes.rows
+//     },
+//     counts: {
+//       orders: Number(ordersCount.rows[0].count),
+//       topItems: Number(topItemsCount.rows[0].count),
+//       datewise: Number(datewiseCount.rows[0].count),
+//       expenses: Number(expensesCount.rows[0].count)
+//     }
+//   };
+// };
 
 
 
