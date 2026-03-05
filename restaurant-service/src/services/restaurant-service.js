@@ -23,6 +23,24 @@ const minioClient = new Minio.Client({
 
 const bucketName = BUCKET_NAME;
 
+const normalizeBranchIds = (branchIds) => {
+  const normalized = Array.isArray(branchIds)
+    ? branchIds
+        .flatMap((value) => String(value).split(","))
+        .map((value) => value.trim())
+        .filter(Boolean)
+    : String(branchIds ?? "")
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+
+  if (normalized.some((value) => value.toLowerCase() === "all")) {
+    return [];
+  }
+
+  return normalized;
+};
+
 async function createCompanyService(companyData) {
   // 1. Validate data using Joi schema
   try {
@@ -287,7 +305,6 @@ async function getExpenseReportServices(
     };
   }
 }
-
 
 
 
@@ -1270,12 +1287,12 @@ async function get_ordered_data(data) {
   }
 }
 
-async function getSingleOrder (zodu_id, branch_id, order_id) {
+async function getSingleOrder (zodu_id, branch_id, api_order_id) {
   try {
     const order = await repository.getSingleOrder(
       zodu_id,
       branch_id,
-      order_id
+      api_order_id
     );
 
     return order;
@@ -1347,6 +1364,10 @@ async function createBranch(branchData) {
       branchData.branch_id = maxBranchId.replace(/B\d+$/, "B" + nextNum);
       console.log("New Branch ID:", branchData.branch_id);
     }
+
+    const createQr = await repository.createQRCode(branchData.branch_id);
+    branchData.qr_code_id = createQr.id;
+
     const branch = await repository.createBranch(branchData);
 
     return {
@@ -1869,7 +1890,6 @@ async function getPurchaseSummary(
   options = {}
 ) {
   try {
-
     console.log(start_date,end_date,filterType);
     const { startDate, endDate } = await getDateRange(
       filterType,

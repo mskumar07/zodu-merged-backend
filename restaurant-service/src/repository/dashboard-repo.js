@@ -1,58 +1,101 @@
-const conn = require('../database/connection');
+const conn = require("../database/connection");
 
+const buildBranchCondition = (branchIds, columnName, startIndex = 2) => {
+  if (!Array.isArray(branchIds) || branchIds.length === 0) {
+    return { clause: "", params: [], nextIndex: startIndex };
+  }
 
-exports.getDashboardSummary = async (zodu_id, branch_id, dateFilter) => {
+  const placeholders = branchIds
+    .map((_, index) => `$${startIndex + index}`)
+    .join(", ");
+
+  return {
+    clause: `AND ${columnName} IN (${placeholders})`,
+    params: branchIds,
+    nextIndex: startIndex + branchIds.length
+  };
+};
+
+exports.getDashboardSummary = async (zodu_id, branchIds, dateFilter) => {
   const {
     orderDateCondition,
     expenseDateCondition,
     paymentDateCondition
   } = buildDateConditions(dateFilter);
 
+  const { clause: orderBranchCondition, params: branchParams } = buildBranchCondition(
+    branchIds,
+    "o.branch_id",
+    2
+  );
+  const { clause: expenseBranchCondition } = buildBranchCondition(
+    branchIds,
+    "e.branch_id",
+    2
+  );
+  const { clause: paymentBranchCondition } = buildBranchCondition(
+    branchIds,
+    "p.branch_id",
+    2
+  );
+  const { clause: stockBranchCondition } = buildBranchCondition(
+    branchIds,
+    "branch_id",
+    2
+  );
+
   const query = `
     SELECT
-      (SELECT COUNT(*) 
+      (SELECT COUNT(*)
        FROM tbl_orders o
-       WHERE o.zodu_id=$1 AND o.branch_id=$2 AND o.final_payment=true ${orderDateCondition}
+       WHERE o.zodu_id=$1 AND o.final_payment=true ${orderBranchCondition} ${orderDateCondition}
       ) AS total_orders,
 
-      (SELECT COALESCE(SUM(o.total_amt),0) 
+      (SELECT COALESCE(SUM(o.total_amt),0)
        FROM tbl_orders o
-       WHERE o.zodu_id=$1 AND o.branch_id=$2 AND o.final_payment=true ${orderDateCondition}
+       WHERE o.zodu_id=$1 AND o.final_payment=true ${orderBranchCondition} ${orderDateCondition}
       ) AS total_sales,
 
-      (SELECT COALESCE(SUM(p.total_amount),0) 
+      (SELECT COALESCE(SUM(p.total_amount),0)
        FROM tbl_payment p
-       WHERE p.zodu_id=$1 AND p.branch_id=$2 
-       AND p.source_type='expense' ${paymentDateCondition}
+       LEFT JOIN tbl_expense e ON e.expense_id = p.source_id
+       WHERE p.zodu_id=$1
+       AND p.source_type='expense' ${paymentBranchCondition} ${expenseBranchCondition} ${paymentDateCondition}
       ) AS total_expense,
 
-      (SELECT COUNT(*) 
-       FROM tbl_inventory 
-       WHERE zodu_id=$1 AND branch_id=$2 
-       AND stock_qty <= stock_alert
+      (SELECT COUNT(*)
+       FROM tbl_inventory
+       WHERE zodu_id=$1
+       AND stock_qty <= stock_alert ${stockBranchCondition}
       ) AS low_stocks
   `;
 
-  const res = await conn.query(query, [zodu_id, branch_id]);
+  const res = await conn.query(query, [zodu_id, ...branchParams]);
   return res.rows[0];
 };
 
 exports.getDashboardOrders = async (
   zodu_id,
-  branch_id,
+  branchIds,
   { limit, offset },
   sortOrder,
   dateFilter
 ) => {
   const order = sortOrder === "asc" ? "ASC" : "DESC";
   const { orderDateCondition } = buildDateConditions(dateFilter);
+  const {
+    clause: branchCondition,
+    params: branchParams,
+    nextIndex
+  } = buildBranchCondition(branchIds, "o.branch_id", 2);
 
   const dataQuery = `
-    SELECT 
-      o.public_order_no,            -- user-visible order number
-      o.api_order_id,               -- internal reference (optional for FE)
+    SELECT
+      o.public_order_no,
+      o.api_order_id,
       o.total_amt,
       o.no_of_items,
+      o.branch_id,
       COALESCE(SUM(oi.qty), 0) AS total_qty,
       o.order_type,
       TO_CHAR(
@@ -63,32 +106,33 @@ exports.getDashboardOrders = async (
     LEFT JOIN tbl_ordered_items oi
       ON oi.api_order_id = o.api_order_id
     WHERE o.zodu_id = $1
-      AND o.branch_id = $2
       AND o.final_payment = true
+      ${branchCondition}
       ${orderDateCondition}
-    GROUP BY 
+    GROUP BY
       o.api_order_id,
       o.public_order_no,
       o.total_amt,
       o.no_of_items,
+      o.branch_id,
       o.order_type,
       o.created_at
     ORDER BY o.created_at ${order}
-    LIMIT $3 OFFSET $4
+    LIMIT $${nextIndex} OFFSET $${nextIndex + 1}
   `;
 
   const countQuery = `
     SELECT COUNT(*)
     FROM tbl_orders o
     WHERE o.zodu_id = $1
-      AND o.branch_id = $2
       AND o.final_payment = true
+      ${branchCondition}
       ${orderDateCondition}
   `;
 
   const [dataRes, countRes] = await Promise.all([
-    conn.query(dataQuery, [zodu_id, branch_id, limit, offset]),
-    conn.query(countQuery, [zodu_id, branch_id])
+    conn.query(dataQuery, [zodu_id, ...branchParams, limit, offset]),
+    conn.query(countQuery, [zodu_id, ...branchParams])
   ]);
 
   return {
@@ -97,18 +141,21 @@ exports.getDashboardOrders = async (
   };
 };
 
-
-
 exports.getDashboardTopItems = async (
   zodu_id,
-  branch_id,
+  branchIds,
   { limit, offset },
   dateFilter
 ) => {
-  const { orderDateCondition } = buildDateConditions(dateFilter, "o.order_date");
+  const { orderDateCondition } = buildDateConditions(dateFilter);
+  const {
+    clause: branchCondition,
+    params: branchParams,
+    nextIndex
+  } = buildBranchCondition(branchIds, "o.branch_id", 2);
 
   const query = `
-    SELECT 
+    SELECT
       m.menu_name,
       c.name AS category_name,
       u.short_name AS unit,
@@ -124,15 +171,15 @@ exports.getDashboardTopItems = async (
     LEFT JOIN tbl_units u
       ON u.id = m.menu_unit
     WHERE o.zodu_id = $1
-      AND o.branch_id = $2
       AND o.final_payment = true
+      ${branchCondition}
       ${orderDateCondition}
-    GROUP BY 
+    GROUP BY
       m.menu_name,
       c.name,
       u.short_name
     ORDER BY total_qty DESC
-    LIMIT $3 OFFSET $4
+    LIMIT $${nextIndex} OFFSET $${nextIndex + 1}
   `;
 
   const countQuery = `
@@ -141,14 +188,14 @@ exports.getDashboardTopItems = async (
     JOIN tbl_orders o
       ON o.api_order_id = i.api_order_id
     WHERE o.zodu_id = $1
-      AND o.branch_id = $2
       AND o.final_payment = true
+      ${branchCondition}
       ${orderDateCondition}
   `;
 
   const [dataRes, countRes] = await Promise.all([
-    conn.query(query, [zodu_id, branch_id, limit, offset]),
-    conn.query(countQuery, [zodu_id, branch_id])
+    conn.query(query, [zodu_id, ...branchParams, limit, offset]),
+    conn.query(countQuery, [zodu_id, ...branchParams])
   ]);
 
   return {
@@ -157,37 +204,42 @@ exports.getDashboardTopItems = async (
   };
 };
 
-
 exports.getDashboardDatewiseSales = async (
   zodu_id,
-  branch_id,
+  branchIds,
   { limit, offset }
 ) => {
+  const {
+    clause: branchCondition,
+    params: branchParams,
+    nextIndex
+  } = buildBranchCondition(branchIds, "branch_id", 2);
+
   const query = `
-    SELECT 
+    SELECT
       TO_CHAR(order_date, 'DD Mon YYYY (Dy)') AS formatted_date,
       COUNT(*) AS total_orders,
       COALESCE(SUM(total_amt), 0) AS total_amount
     FROM tbl_orders
     WHERE zodu_id = $1
-      AND branch_id = $2
       AND final_payment = true
+      ${branchCondition}
     GROUP BY order_date
     ORDER BY order_date DESC
-    LIMIT $3 OFFSET $4
+    LIMIT $${nextIndex} OFFSET $${nextIndex + 1}
   `;
 
   const countQuery = `
     SELECT COUNT(DISTINCT order_date)
     FROM tbl_orders
     WHERE zodu_id = $1
-      AND branch_id = $2
       AND final_payment = true
+      ${branchCondition}
   `;
 
   const [dataRes, countRes] = await Promise.all([
-    conn.query(query, [zodu_id, branch_id, limit, offset]),
-    conn.query(countQuery, [zodu_id, branch_id])
+    conn.query(query, [zodu_id, ...branchParams, limit, offset]),
+    conn.query(countQuery, [zodu_id, ...branchParams])
   ]);
 
   return {
@@ -196,21 +248,26 @@ exports.getDashboardDatewiseSales = async (
   };
 };
 
-
 exports.getDashboardExpenses = async (
   zodu_id,
-  branch_id,
+  branchIds,
   { limit, offset },
   sortOrder,
   dateFilter
 ) => {
   const order = sortOrder === "asc" ? "ASC" : "DESC";
   const { expenseDateCondition } = buildDateConditions(dateFilter);
+  const {
+    clause: branchCondition,
+    params: branchParams,
+    nextIndex
+  } = buildBranchCondition(branchIds, "e.branch_id", 2);
 
   const query = `
-    SELECT 
+    SELECT
       e.expense_id,
       c.category_name,
+      e.branch_id,
       COALESCE(p.total_amount,0) AS total_amount,
       COALESCE(p.paid_amount,0) AS paid_amount,
       (COALESCE(p.total_amount,0)-COALESCE(p.paid_amount,0)) AS due_amount,
@@ -218,26 +275,28 @@ exports.getDashboardExpenses = async (
       e.updated_at
     FROM tbl_expense e
     LEFT JOIN tbl_expense_category c ON c.id=e.category_id
-    LEFT JOIN tbl_payment p 
+    LEFT JOIN tbl_payment p
       ON p.source_id=e.expense_id AND p.source_type='expense'
     LEFT JOIN tbl_expense_items i ON i.expense_id=e.expense_id
-    WHERE e.zodu_id=$1 AND e.branch_id=$2
+    WHERE e.zodu_id=$1
+      ${branchCondition}
       ${expenseDateCondition}
     GROUP BY e.expense_id, c.category_name, p.total_amount, p.paid_amount, e.updated_at
     ORDER BY e.updated_at ${order}
-    LIMIT $3 OFFSET $4
+    LIMIT $${nextIndex} OFFSET $${nextIndex + 1}
   `;
 
   const countQuery = `
     SELECT COUNT(*)
     FROM tbl_expense e
-    WHERE e.zodu_id=$1 AND e.branch_id=$2
+    WHERE e.zodu_id=$1
+      ${branchCondition}
       ${expenseDateCondition}
   `;
 
   const [dataRes, countRes] = await Promise.all([
-    conn.query(query, [zodu_id, branch_id, limit, offset]),
-    conn.query(countQuery, [zodu_id, branch_id])
+    conn.query(query, [zodu_id, ...branchParams, limit, offset]),
+    conn.query(countQuery, [zodu_id, ...branchParams])
   ]);
 
   return {
@@ -245,7 +304,6 @@ exports.getDashboardExpenses = async (
     count: Number(countRes.rows[0].count)
   };
 };
-
 
 const buildDateConditions = (dateFilter) => {
   let orderDateCondition = "";
@@ -335,7 +393,6 @@ const buildDateConditions = (dateFilter) => {
     expenseDateCondition = `AND e.updated_at::date BETWEEN '${dateFilter.fromDate}' AND '${dateFilter.toDate}'`;
     paymentDateCondition = `AND p.updated_at::date BETWEEN '${dateFilter.fromDate}' AND '${dateFilter.toDate}'`;
   }
-  // reuse your existing else-if blocks here exactly
 
   return {
     orderDateCondition,

@@ -126,6 +126,7 @@ const itemSchema = Joi.object({
   price: Joi.number().precision(2).min(0).required(),
   image: Joi.string().allow(null, ''),
   tax: Joi.number().precision(2).min(0).required(),
+  tax_inclusive: Joi.boolean().required(),
   menu_unit: Joi.string().max(50).optional(),
   variant_name: Joi.string().max(100).optional().allow(null, ''),
   variant_id: Joi.string().max(100).optional().allow(null, ''),

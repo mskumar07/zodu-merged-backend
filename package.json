@@ -9,7 +9,8 @@
     "start:gateway": "npm start --prefix api-gateway",
     "start:checklist": "npm start --prefix checklist-service",
     "start:employee": "npm start --prefix employee-service",
-    "start": "concurrently \"npm run start:auth\" \"npm run start:restaurant\" \"npm run start:checklist\" \"npm run start:gateway\" \"npm run start:employee\""
+    "start:face": "cd face-service && python -m uvicorn main:app --host 0.0.0.0 --port 8000",
+    "start": "concurrently \"npm run start:auth\" \"npm run start:restaurant\" \"npm run start:checklist\" \"npm run start:gateway\" \"npm run start:employee\" \"npm run start:face\""
   },
   "keywords": [],
   "author": "",

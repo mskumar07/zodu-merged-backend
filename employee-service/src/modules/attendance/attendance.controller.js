@@ -75,7 +75,6 @@ async getLeaveRequests(req, res, next) {
 // In your controller file
 async checkTodayStatus(req, res) {
   try {
-    // 1. Get the ID from params (matches :id in the route)
     const employeeId = req.params.id;
 
     if (!employeeId) {
@@ -91,6 +90,25 @@ async checkTodayStatus(req, res) {
   } catch (error) {
     console.error("Controller Error:", error);
     res.status(500).json({ success: false, message: error.message });
+  }
+}
+
+async faceMark(req, res) {
+  try {
+    const result = await service.markByFace({
+      zodu_id: req.body.zodu_id,
+      branch_id: req.body.branch_id,
+      image: req.file.buffer,
+      employee_id: req.body.employee_id,
+      
+      // Optional, can be used for logging or fallback
+    });
+console.log(result)
+    res.json(result);
+
+  } catch (err) {
+    console.log(err)
+    res.status(400).json({ error: err.message });
   }
 }
 

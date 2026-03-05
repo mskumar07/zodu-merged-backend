@@ -3,6 +3,7 @@ const taskInstanceService = require('../services/taskInstanceService');
 
 const complete = async (req, res, next) => {
   try {
+    console.log("complete",req.body)
     const updated = await taskInstanceService.completeTask(req.params.id, { completed_by: req.body.completed_by,status: req.body.status || null });
     res.json(updated);
   } catch (err) {

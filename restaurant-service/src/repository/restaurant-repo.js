@@ -12,6 +12,82 @@ const purchaseSortFields = ["purchase_date", "purchase_id"];
 const expenseSortFields = ["expense_date", "expense_id"];
 const orderSortFields = ["order_date", "order_id", "total_amt", "no_of_items"];
 
+const normalizeBranchIds = (branchIds) => {
+  const normalized = Array.isArray(branchIds)
+    ? branchIds
+        .flatMap((value) => String(value).split(","))
+        .map((value) => value.trim())
+        .filter(Boolean)
+    : String(branchIds ?? "")
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+
+  if (normalized.some((value) => value.toLowerCase() === "all")) {
+    return [];
+  }
+
+  return normalized;
+};
+
+const getBranchFilterCondition = (columnName) =>
+  `(COALESCE(array_length($2::text[], 1), 0) = 0 OR ${columnName}::text = ANY($2::text[]))`;
+
+const round2 = (value) =>
+  Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+
+const calculateOrderTotalsWithDiscount = (items, discount_type, discount_value) => {
+  let subtotalBeforeDiscount = 0;
+  let no_of_items = 0;
+  const itemBases = [];
+
+  for (const item of items) {
+    const taxData = calculateItemTax(item);
+    const itemBase = Number(taxData.subtotal || 0);
+
+    subtotalBeforeDiscount += itemBase;
+    no_of_items += 1;
+    itemBases.push({
+      base: itemBase,
+      gst: Number(item.tax || 0)
+    });
+  }
+
+  const discountType = discount_type ? String(discount_type).toUpperCase() : null;
+  let discount_amount = 0;
+
+  if (discountType === "PERCENT") {
+    discount_amount = (subtotalBeforeDiscount * Number(discount_value || 0)) / 100;
+  } else if (discountType === "FLAT") {
+    discount_amount = Number(discount_value || 0);
+  }
+
+  if (discount_amount > subtotalBeforeDiscount) {
+    discount_amount = subtotalBeforeDiscount;
+  }
+
+  // Indian GST: apply discount on taxable value first, then compute GST.
+  const discountedSubtotal = subtotalBeforeDiscount - discount_amount;
+
+  let total_tax = 0;
+  for (const item of itemBases) {
+    const share = subtotalBeforeDiscount > 0 ? item.base / subtotalBeforeDiscount : 0;
+    const discountedBase = item.base - (discount_amount * share);
+    total_tax += (discountedBase * item.gst) / 100;
+  }
+
+  const total_amt = discountedSubtotal + total_tax;
+
+  return {
+    no_of_items,
+    subtotal: round2(discountedSubtotal),
+    total_tax: round2(total_tax),
+    discountType,
+    discount_amount: round2(discount_amount),
+    total_amt: round2(total_amt)
+  };
+};
+
 
 
 exports.createCompany = async (companyData) => {
@@ -841,40 +917,50 @@ exports.get_purchase_report_data = async (zodu_id, branch_id, page = 1, limit = 
           AND p.branch_id = $2
           ${whereSQL}
       ),
+      -- aggregate payments per purchase to avoid multiplicative joins when multiple payments exist
+      payment_agg AS (
+        SELECT source_id,
+               COALESCE(SUM(total_amount),0) AS total_amount,
+               COALESCE(SUM(paid_amount),0) AS paid_amount,
+               COALESCE(SUM(balance_amount),0) AS balance_amount
+        FROM tbl_payment
+        WHERE source_type = 'purchase'
+        GROUP BY source_id
+      ),
       totals AS (
         SELECT
           COUNT(*)                            AS total_count,
-          COALESCE(SUM(pay.total_amount), 0)  AS all_total_amount,
-          COALESCE(SUM(pay.paid_amount), 0)   AS all_total_paid,
-          COALESCE(SUM(pay.balance_amount), 0) AS all_total_due
+          COALESCE(SUM(pagg.total_amount), 0)  AS all_total_amount,
+          COALESCE(SUM(pagg.paid_amount), 0)   AS all_total_paid,
+          COALESCE(SUM(pagg.balance_amount), 0) AS all_total_due
         FROM purchase_base pb
-        LEFT JOIN tbl_payment pay
-          ON pay.source_id   = pb.purchase_id
-         AND pay.source_type = 'purchase'
-         AND pay.branch_id   = pb.branch_id
-         AND pay.zodu_id     = pb.zodu_id
+        LEFT JOIN payment_agg pagg
+          ON pagg.source_id = pb.purchase_id
       )
       SELECT
         pb.purchase_id,
         to_char(pb.created_at, 'DD-Mon-YYYY HH12:MI AM (Dy)') AS created_at,
         pb.vendor_name AS vendor_name,
-        COALESCE(pay.total_amount, 0)  AS total_amount,
-        COALESCE(pay.paid_amount, 0)   AS paid_amount,
-        COALESCE(pay.balance_amount, 0) AS balance_amount,
-        c.name,
-        c.id AS category_id,
+        COALESCE(pagg.total_amount, 0)  AS total_amount,
+        COALESCE(pagg.paid_amount, 0)   AS paid_amount,
+        COALESCE(pagg.balance_amount, 0) AS balance_amount,
+        cat.name,
+        cat.category_id AS category_id,
         t.total_count,
         t.all_total_amount,
         t.all_total_paid,
         t.all_total_due
       FROM purchase_base pb
-      LEFT JOIN tbl_purchase_items pi ON pi.purchase_id = pb.purchase_id
-      LEFT JOIN tbl_category c ON c.id = pi.category_id
-      LEFT JOIN tbl_payment pay
-        ON pay.source_id   = pb.purchase_id
-       AND pay.source_type = 'purchase'
-       AND pay.branch_id   = pb.branch_id
-       AND pay.zodu_id     = pb.zodu_id
+      -- pick a single category (first) using LATERAL to avoid multiple rows per purchase
+      LEFT JOIN LATERAL (
+        SELECT c.name, c.id AS category_id
+        FROM tbl_purchase_items pi
+        JOIN tbl_category c ON c.id = pi.category_id
+        WHERE pi.purchase_id = pb.purchase_id
+        LIMIT 1
+      ) cat ON true
+      LEFT JOIN payment_agg pagg
+        ON pagg.source_id = pb.purchase_id
       CROSS JOIN totals t
       ORDER BY pb.created_at DESC
       LIMIT ${limitIdx} OFFSET ${offsetIdx}`;
@@ -1395,6 +1481,7 @@ exports.get_category_item_wise_report = async (
     );
   }
 };
+
 
 
 
@@ -2391,7 +2478,7 @@ exports.get_ordered_data = async (branch_id) => {
 
 exports.findMaxBranchID = async (zodu_id) => {
   return await conn.query(
-    'SELECT max(branch_id) FROM tbl_resturant_branch where zodu_id = $1', ['ZODU001']);
+    'SELECT max(branch_id) FROM tbl_resturant_branch where zodu_id = $1', [zodu_id]);
 }
 
 exports.FindExistingData = async (tbl_name, column_name, value) => {
@@ -2421,8 +2508,7 @@ exports.createBranch = async (branchData) => {
     const values = [
       branchData.branch_id,
       branchData.zodu_id,
-      // branchData.qr_code_id,
-      '3',
+      branchData.qr_code_id,
       branchData.branch_name,
       branchData.branch_manager_or_admin,
       branchData.branch_mobile_no,
@@ -3052,6 +3138,11 @@ exports.getSingleOrder = async (zodu_id, branch_id, api_order_id) => {
       o.table_no,
 
       o.no_of_items,
+      (
+        SELECT COALESCE(SUM(i.qty), 0)
+        FROM tbl_ordered_items i
+        WHERE i.api_order_id = o.api_order_id
+      ) AS total_qty,
 
       -- 💰 BILL SUMMARY
       o.subtotal,
@@ -3065,7 +3156,12 @@ exports.getSingleOrder = async (zodu_id, branch_id, api_order_id) => {
         SELECT COALESCE(
           json_agg(
             json_build_object(
-              'item_name', i.item_name,
+              'item_name',
+                CASE
+                  WHEN i.variant_name IS NOT NULL AND BTRIM(i.variant_name) <> ''
+                    THEN i.item_name || ' - ' || i.variant_name
+                  ELSE i.item_name
+                END,
               'qty', i.qty,
               'price', i.price,
               'amount', i.total_amount,
@@ -3113,31 +3209,13 @@ exports.createOrder = async (orderData) => {
     const public_order_no =
       await generatePublicOrderNo(orderData.branch_id);
 
-    let subtotal = 0;
-    let total_tax = 0;
-    let no_of_items = 0;
+    console.log(public_order_no);
 
-    for (const item of orderData.items) {
-      const taxData = calculateItemTax(item);
-      subtotal += taxData.subtotal;
-      total_tax += taxData.tax_amount;
-      no_of_items += 1;
-    }
-
-    const discountType = orderData.discount_type
-      ? orderData.discount_type.toUpperCase()
-      : null;
-
-    let discount_amount = 0;
-    if (discountType === "PERCENT") {
-      discount_amount = (subtotal * Number(orderData.discount_value || 0)) / 100;
-    } else if (discountType === "FLAT") {
-      discount_amount = Number(orderData.discount_value || 0);
-    }
-
-    if (discount_amount > subtotal) discount_amount = subtotal;
-
-    const total_amt = subtotal + total_tax - discount_amount;
+    const totals = calculateOrderTotalsWithDiscount(
+      orderData.items || [],
+      orderData.discount_type,
+      orderData.discount_value
+    );
 
     const result = await conn.query(
       `INSERT INTO tbl_orders (
@@ -3167,18 +3245,18 @@ exports.createOrder = async (orderData) => {
 
         orderData.table_no,
         orderData.order_type,
-        no_of_items,
+        totals.no_of_items,
 
         orderData.customer_name,
         orderData.customer_phone,
 
-        subtotal,
-        total_tax,
-        total_amt,
+        totals.subtotal,
+        totals.total_tax,
+        totals.total_amt,
 
-        discountType,
+        totals.discountType,
         orderData.discount_value,
-        discount_amount,
+        totals.discount_amount,
 
         orderData.payment_type,
         orderData.order_date,
@@ -3198,6 +3276,8 @@ exports.createOrder = async (orderData) => {
 
 exports.createOrderedItems = async (orderData) => {
   try {
+
+    console.log("test",orderData)
     await conn.query("BEGIN");
 
     const items = orderData.items;
@@ -3209,6 +3289,8 @@ exports.createOrderedItems = async (orderData) => {
 
     for (const item of items) {
       const hasVariant = !!item.variant_id;
+
+      console.log("checkquery",hasVariant)
 
       // 🔍 Check existing item (API ORDER ID BASED)
       const checkQuery = hasVariant
@@ -3322,7 +3404,22 @@ exports.createtmpOrder = async (orderData) => {
     await conn.query("BEGIN");
 
     /**
-     * 1️⃣ CHECK FOR EXISTING RUNNING ORDER (DINE-IN SAFETY)
+     * 1️⃣ CHECK FOR EXISTING api_order_id (IDEMPOTENCY)
+     * If a client sends the same api_order_id twice, return the existing one
+     */
+    if (orderData.api_order_id) {
+      const existingById = await conn.query(
+        `SELECT * FROM tbl_tmp_orders WHERE api_order_id = $1 LIMIT 1`,
+        [orderData.api_order_id]
+      );
+      if (existingById.rowCount > 0) {
+        await conn.query("COMMIT");
+        return existingById.rows[0]; // return existing order
+      }
+    }
+
+    /**
+     * 2️⃣ CHECK FOR EXISTING RUNNING ORDER (DINE-IN SAFETY)
      * One table = one running order
      */
     if (orderData.order_type === "Dine-In" && orderData.table_no) {
@@ -3343,9 +3440,10 @@ exports.createtmpOrder = async (orderData) => {
     }
 
     /**
-     * 2️⃣ GENERATE BACKEND IDS
+     * 3️⃣ GENERATE BACKEND IDS
+     * Use provided api_order_id if available, otherwise generate new UUID
      */
-    const api_order_id = randomUUID();
+    const api_order_id = orderData.api_order_id || randomUUID();
     const legacy_order_ref =
       `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
@@ -3368,6 +3466,7 @@ exports.createtmpOrder = async (orderData) => {
     /**
      * 4️⃣ INSERT TMP ORDER
      * Use DB time for consistency
+     * ON CONFLICT protects against race conditions (concurrent duplicate inserts)
      */
     const result = await conn.query(
       `INSERT INTO tbl_tmp_orders (
@@ -3404,6 +3503,11 @@ exports.createtmpOrder = async (orderData) => {
         CURRENT_DATE,
         CURRENT_TIME
       )
+      ON CONFLICT (api_order_id) DO UPDATE SET
+        subtotal = EXCLUDED.subtotal,
+        total_tax = EXCLUDED.total_tax,
+        total_amt = EXCLUDED.total_amt,
+        no_of_items = EXCLUDED.no_of_items
       RETURNING *`,
       [
         orderData.zodu_id,
@@ -3599,6 +3703,23 @@ exports.updateFinalPayment = async (data) => {
   try {
     await conn.query("BEGIN");
 
+    /* ✅ CHECK IF ORDER ALREADY FINALIZED (IDEMPOTENCY) */
+    const existingOrderRes = await conn.query(
+      `SELECT * FROM tbl_orders WHERE api_order_id = $1`,
+      [api_order_id]
+    );
+
+    if (existingOrderRes.rowCount) {
+      // Already finalized, return existing order
+      await conn.query("COMMIT");
+      return {
+        success: true,
+        order: existingOrderRes.rows[0],
+        public_order_no: existingOrderRes.rows[0].public_order_no,
+        message: "Order was already finalized"
+      };
+    }
+
     /* ----------------------------------------------------
        1️⃣ FETCH TMP ORDER (SOURCE OF TRUTH)
     ---------------------------------------------------- */
@@ -3617,47 +3738,27 @@ exports.updateFinalPayment = async (data) => {
       throw new Error("Temp order not found");
     }
 
-    const { created_at, order_type } = tmpRes.rows[0];
+    const { order_type } = tmpRes.rows[0];
 
-    // 🔒 FORCE DATE & TIME FROM CREATED_AT
-    const order_date = created_at.toISOString().slice(0, 10); // YYYY-MM-DD
-    const order_time = created_at.toTimeString().slice(0, 8); // HH:mm:ss
+    // Always use current date/time when finalizing the order
+    const now = new Date();
+    const order_date = now.toISOString().slice(0, 10); // YYYY-MM-DD (finalization date)
+    const order_time = now.toTimeString().slice(0, 8); // HH:mm:ss (finalization time)
+
+    console.log("lol",order_time);
 
     /* ----------------------------------------------------
        2️⃣ CALCULATE TOTALS
     ---------------------------------------------------- */
-    let subtotal = 0;
-    let total_tax = 0;
-    let no_of_items = 0;
+    const totals = calculateOrderTotalsWithDiscount(
+      items || [],
+      discount_type,
+      discount_value
+    );
 
-    for (const item of items) {
-      const taxData = calculateItemTax(item);
-      subtotal += taxData.subtotal;
-      total_tax += taxData.tax_amount;
-      no_of_items += 1; // count rows, NOT qty
-    }
 
-    const discountType = discount_type ? discount_type.toUpperCase() : null;
-
-    let discount_amount = 0;
-    if (discountType === "PERCENT") {
-      discount_amount = (subtotal * Number(discount_value || 0)) / 100;
-    } else if (discountType === "FLAT") {
-      discount_amount = Number(discount_value || 0);
-    }
-
-    if (discount_amount > subtotal) discount_amount = subtotal;
-
-    const total_amt = subtotal + total_tax - discount_amount;
-
-    /* ----------------------------------------------------
-       3️⃣ GENERATE PUBLIC ORDER NO (DAILY RESET SAFE)
-    ---------------------------------------------------- */
     const public_order_no = await generatePublicOrderNo(branch_id);
 
-    /* ----------------------------------------------------
-       4️⃣ INSERT FINAL ORDER
-    ---------------------------------------------------- */
     const orderRes = await conn.query(
       `
       INSERT INTO tbl_orders (
@@ -3705,15 +3806,15 @@ exports.updateFinalPayment = async (data) => {
 
         table_no,
         order_type,
-        no_of_items,
+        totals.no_of_items,
 
-        subtotal,
-        total_tax,
-        total_amt,
+        totals.subtotal,
+        totals.total_tax,
+        totals.total_amt,
 
-        discountType,
+        totals.discountType,
         discount_value,
-        discount_amount,
+        totals.discount_amount,
 
         payment_type,
         order_date,
@@ -4450,7 +4551,7 @@ exports.getExpenseById = async (expense_id) => {
         e.expense_date,
         e.payment_type,
         e.created_at,
-        e.updated_at,
+       TO_CHAR(e.updated_at,'DD Mon YYYY, HH12:MI AM (Dy)') AS updated_at,
 
         COALESCE(pay.total_amount,0) AS total_amount,
         COALESCE(pay.paid_amount,0)  AS paid_amount,
@@ -4630,7 +4731,8 @@ exports.getPurchaseById = async (purchase_id) => {
               'item_id', pi.item_id,
               'item_name', pi.item_name,
               'quantity', pi.qty,
-              'unit', pi.unit,
+              'unit_id', pi.unit,
+              'unit', u.short_name,
               'price', pi.purchase_price,
               'total', pi.total_price,
               'category', c.name,
@@ -4643,6 +4745,7 @@ exports.getPurchaseById = async (purchase_id) => {
       FROM purchase_base pb
       LEFT JOIN tbl_purchase_items pi ON pb.purchase_id = pi.purchase_id
       LEFT JOIN tbl_category c       ON pi.category_id = c.id
+      LEFT JOIN tbl_units u          ON pi.unit        = u.id
       LEFT JOIN tbl_vendor v         ON pb.vendor_id   = v.vendor_id
       GROUP BY
         pb.purchase_id, pb.zodu_id, pb.branch_id,
@@ -5707,7 +5810,7 @@ exports.getInventorySummary = async (
           oi.item_id,
           SUM(oi.qty) AS used_qty
         FROM tbl_ordered_items oi
-        JOIN tbl_orders o ON o.order_id = oi.order_id
+        JOIN tbl_orders o ON o.api_order_id = oi.api_order_id
         WHERE o.zodu_id = $1
           AND o.branch_id = $2
           AND o.final_payment = TRUE

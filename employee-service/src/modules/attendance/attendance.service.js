@@ -1,18 +1,81 @@
 const { v4: uuidv4 } = require('uuid');
 const moment = require('moment');
 const repo = require('./attendance.repository');
+const faceService = require('../face/face.service');
 
 class AttendanceService {
-    async markAttendance({ employee_id, department_id, branch_id, type }) {
+    async markAttendance({ employee_id, branch_id, type }) {
         const today = moment().format('YYYY-MM-DD');
         if (type === 'in') {
-            await repo.checkIn({ id: uuidv4(), employee_id, department_id, branch_id, date: today });
+            await repo.checkIn({ id: uuidv4(), employee_id, branch_id, date: today });
             return { message: "Checked In" };
         } else {
             const res = await repo.checkOut(employee_id, today);
             return { message: "Checked Out", data: res.rows[0] };
         }
     }
+
+    async markByFace({ zodu_id, branch_id, image, employee_id }) {
+
+  if (!employee_id) {
+    throw new Error("Employee ID is required");
+  }
+
+  // 1️⃣ Generate embedding
+  const embedding = await faceService.generateEmbedding(image);
+
+  let embParam = embedding;
+  if (Array.isArray(embedding)) {
+    embParam = `[${embedding.map(v => Number(v)).join(',')}]`;
+  }
+
+  // 2️⃣ Match ONLY this employee
+  const match = await repo.matchFaceForEmployee(
+    embParam,
+    employee_id
+  );
+
+
+  if (!match || !match.rows.length) {
+    throw new Error("Face not registered for this employee");
+  }
+
+  const distance = match.rows[0].distance;
+
+  if (distance > 0.6) {
+    console.log("Face does not match this employee")
+    throw new Error("Face does not match this employee");
+  }
+  // 3️⃣ Attendance logic
+  const todayStatus = await repo.getTodayAttendance(employee_id);
+  const today = moment().format("YYYY-MM-DD");
+
+
+  if (!todayStatus.has_checked_in) {
+
+    await repo.checkIn({
+      id: uuidv4(),
+      employee_id,
+      branch_id,
+      date: today
+    });
+
+    return { message: "Checked In Successfully", type: "in" };
+
+  } else if (!todayStatus.has_checked_out) {
+
+    const result = await repo.checkOut(employee_id, today);
+
+    return {
+      message: "Checked Out Successfully",
+      type: "out",
+      data: result.rows[0]
+    };
+
+  } else {
+    throw new Error("Attendance already completed for today");
+  }
+}
 
     async requestLeave(data) {
         await repo.requestLeave({ leave_id: uuidv4(), ...data });

@@ -1,14 +1,32 @@
 const repository = require("../repository/dashboard-repo");
 const { getPagination, getMeta } = require("../utils/pagination");
 
+const normalizeBranchIds = (branchIds) => {
+  const normalized = Array.isArray(branchIds)
+    ? branchIds
+      .flatMap((value) => String(value).split(","))
+      .map((value) => value.trim())
+      .filter(Boolean)
+    : String(branchIds ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
 
-async function getDashboardSummary(zodu_id, branch_id, options) {
+  if (normalized.some((value) => value.toLowerCase() === "all")) {
+    return [];
+  }
+
+  return normalized;
+};
+
+async function getDashboardSummary(zodu_id, branchIds, options) {
   try {
     const { dateType = "today", fromDate, toDate } = options;
+    const normalizedBranchIds = normalizeBranchIds(branchIds);
 
     const result = await repository.getDashboardSummary(
       zodu_id,
-      branch_id,
+      normalizedBranchIds,
       { dateType, fromDate, toDate }
     );
 
@@ -22,7 +40,7 @@ async function getDashboardSummary(zodu_id, branch_id, options) {
   }
 }
 
-async function getDashboardOrders(zodu_id, branch_id, options) {
+async function getDashboardOrders(zodu_id, branchIds, options) {
   try {
     const {
       page = 1,
@@ -33,11 +51,12 @@ async function getDashboardOrders(zodu_id, branch_id, options) {
       toDate
     } = options;
 
+    const normalizedBranchIds = normalizeBranchIds(branchIds);
     const pagination = getPagination({ page, limit });
 
     const result = await repository.getDashboardOrders(
       zodu_id,
-      branch_id,
+      normalizedBranchIds,
       pagination,
       sortOrder,
       { dateType, fromDate, toDate }
@@ -54,7 +73,7 @@ async function getDashboardOrders(zodu_id, branch_id, options) {
   }
 }
 
-async function getDashboardExpenses(zodu_id, branch_id, options) {
+async function getDashboardExpenses(zodu_id, branchIds, options) {
   try {
     const {
       page = 1,
@@ -65,11 +84,12 @@ async function getDashboardExpenses(zodu_id, branch_id, options) {
       toDate
     } = options;
 
+    const normalizedBranchIds = normalizeBranchIds(branchIds);
     const pagination = getPagination({ page, limit });
 
     const result = await repository.getDashboardExpenses(
       zodu_id,
-      branch_id,
+      normalizedBranchIds,
       pagination,
       sortOrder,
       { dateType, fromDate, toDate }
@@ -86,7 +106,7 @@ async function getDashboardExpenses(zodu_id, branch_id, options) {
   }
 }
 
-async function getDashboardTopItems(zodu_id, branch_id, options) {
+async function getDashboardTopItems(zodu_id, branchIds, options) {
   try {
     const {
       page = 1,
@@ -96,11 +116,12 @@ async function getDashboardTopItems(zodu_id, branch_id, options) {
       toDate
     } = options;
 
+    const normalizedBranchIds = normalizeBranchIds(branchIds);
     const pagination = getPagination({ page, limit });
 
     const result = await repository.getDashboardTopItems(
       zodu_id,
-      branch_id,
+      normalizedBranchIds,
       pagination,
       { dateType, fromDate, toDate }
     );
@@ -116,18 +137,19 @@ async function getDashboardTopItems(zodu_id, branch_id, options) {
   }
 }
 
-async function getDashboardDatewise(zodu_id, branch_id, options) {
+async function getDashboardDatewise(zodu_id, branchIds, options) {
   try {
     const {
       page = 1,
       limit = 7
     } = options;
 
+    const normalizedBranchIds = normalizeBranchIds(branchIds);
     const pagination = getPagination({ page, limit });
 
     const result = await repository.getDashboardDatewiseSales(
       zodu_id,
-      branch_id,
+      normalizedBranchIds,
       pagination
     );
 
@@ -142,11 +164,10 @@ async function getDashboardDatewise(zodu_id, branch_id, options) {
   }
 }
 
-
 module.exports = {
   getDashboardSummary,
   getDashboardOrders,
-    getDashboardExpenses,
-    getDashboardTopItems,
-    getDashboardDatewise
+  getDashboardExpenses,
+  getDashboardTopItems,
+  getDashboardDatewise
 };

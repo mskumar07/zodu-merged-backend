@@ -5,8 +5,8 @@ const createEmployee = Joi.object({
     branch_id: Joi.string().required(),
     name: Joi.string().min(3).required(),
     phone: Joi.string().pattern(/^[0-9]{10}$/).required(),
-    role: Joi.string().required(),
-    department_ids: Joi.array().items(Joi.string().uuid()).optional()
+    email: Joi.string().email().required(),   // 🔥 add this
+    role_id: Joi.string().required()          // 🔥 role belongs to auth
 });
 
 const updateEmployee = Joi.object({

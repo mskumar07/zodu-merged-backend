@@ -1,13 +1,13 @@
 const db = require('../../database/connection');
 
    class AttendanceRepository {
-  async checkIn({ id, employee_id, department_id, branch_id, date }) {
+  async checkIn({ id, employee_id, branch_id, date }) {
     return db.query(
       `INSERT INTO tbl_attendance (
-        attendance_id, employee_id, department_id, branch_id, 
+        attendance_id, employee_id, branch_id, 
         attendance_date, check_in, status
-      ) VALUES ($1,$2,$3,$4,$5,NOW(),'Present')`,
-      [id, employee_id, department_id, branch_id, date]
+      ) VALUES ($1,$2,$3,$4,NOW(),'Present')`,
+      [id, employee_id, branch_id, date]
     );
   }
 
@@ -163,14 +163,10 @@ async getTeamEmployeeList(branch, date = 'CURRENT_DATE') {
           e.employee_id,
           e.name,
           e.role,
-          edm.department_id, -- Added from the mapping table
           COALESCE(a.status, 'Absent') AS status,
           TO_CHAR(a.check_in, 'HH:MI AM') AS check_in,
           TO_CHAR(a.check_out, 'HH:MI AM') AS check_out
         FROM tbl_employees e
-        -- Join the mapping table
-        LEFT JOIN tbl_employee_department_map edm 
-          ON e.employee_id = edm.employee_id
         -- Existing attendance join
         LEFT JOIN tbl_attendance a 
           ON a.employee_id = e.employee_id 
@@ -329,6 +325,39 @@ async getTodayAttendance(employeeId) {
     throw err; // Pass error up to controller
   }
 }
+
+async matchFace(embedding, zodu_id, branch_id) {
+
+  const sql = `
+        SELECT employee_id,
+          face_embedding <=> $1::vector AS distance
+    FROM tbl_employee_faces
+    WHERE zodu_id = $2
+    AND branch_id = $3
+        ORDER BY face_embedding <=> $1::vector
+    LIMIT 1
+  `;
+
+  const result = await db.query(sql, [
+    embedding,
+    zodu_id,
+    branch_id
+  ]);
+
+  return result.rows[0];
+}
+
+async matchFaceForEmployee(embedding, employee_id) {
+  return db.query(`
+    SELECT employee_id,
+           face_embedding <=> $1 AS distance
+    FROM tbl_employee_faces
+    WHERE employee_id = $2
+    ORDER BY face_embedding <=> $1
+    LIMIT 1
+  `, [embedding, employee_id]);
+}
+
 
 }
 module.exports = new AttendanceRepository();

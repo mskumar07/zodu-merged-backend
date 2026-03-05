@@ -2,7 +2,6 @@ const Joi = require('joi');
 
 const markAttendance = Joi.object({
     employee_id: Joi.string().uuid().required(),
-    department_id: Joi.string().uuid().required(),
     branch_id: Joi.string().required(),
     type: Joi.string().valid('in', 'out').required()
 });

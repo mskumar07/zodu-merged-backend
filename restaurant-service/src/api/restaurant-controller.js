@@ -1134,15 +1134,16 @@ router.get("/get/orders/:branch_id", async (req, res) => {
 });
 
 router.get(
-  "/api/order/:zodu_id/:branch_id/:order_id",
+  "/api/order/:zodu_id/:branch_id/:api_order_id",
   async (req, res) => {
     try {
-      const { zodu_id, branch_id, order_id } = req.params;
+      const { zodu_id, branch_id, api_order_id } = req.params;
+      console.log("test",req.params)
 
       const result = await service.getSingleOrder(
         zodu_id,
         branch_id,
-        order_id
+        api_order_id
       );
 
       return res.status(200).json({
@@ -1336,57 +1337,6 @@ router.post("/api/completeorder", async (req, res) => {
   }
 })
 
-// router.get("/api/dashboard/:zodu_id/:branch_id", async (req, res) => {
-//   try {
-//     const { zodu_id, branch_id } = req.params;
-
-//     const {
-//       ordersPage = 1,
-//       ordersLimit = 10,
-//       expensesPage = 1,
-//       expensesLimit = 10,
-//       topItemsPage = 1,
-//       topItemsLimit = 5,
-//       datePage = 1,
-//       dateLimit = 7,
-//       sortOrder = "desc",
-
-//       // 👇 NEW
-//       dateType = "today", // today | yesterday | week | 30days | custom
-//       fromDate,
-//       toDate
-//     } = req.query;
-
-//     const getData = await service.get_dashboard(
-//       zodu_id,
-//       branch_id,
-//       {
-//         ordersPage: +ordersPage,
-//         ordersLimit: +ordersLimit,
-//         expensesPage: +expensesPage,
-//         expensesLimit: +expensesLimit,
-//         topItemsPage: +topItemsPage,
-//         topItemsLimit: +topItemsLimit,
-//         datePage: +datePage,
-//         dateLimit: +dateLimit,
-//         sortOrder,
-//         dateType,
-//         fromDate,
-//         toDate
-//       }
-//     );
-
-//     return res.status(200).json({
-//       message: "Data Get Successfully",
-//       data: getData.data,
-//       pagination: getData.pagination
-//     });
-
-//   } catch (error) {
-//     console.error(error);
-//     return res.status(500).json({ error: error.message });
-//   }
-// });
 
 
 
@@ -1729,6 +1679,7 @@ router.get("/api/report/expense", async (req, res) => {
     });
   }
 });
+
 
 
 router.get("/get/purchase/:purchase_id", async (req, res) => {

@@ -2,6 +2,8 @@ const service = require('./employee.service');
 
 // Joi Wrapper Middleware for cleaner controllers
 const validate = (schema) => (req, res, next) => {
+            console.log("valida",req.body,req.file)
+
     const { error } = schema.validate(req.body, { abortEarly: false });
     if (error) return res.status(400).json({ error: error.details.map(d => d.message) });
     next();
@@ -9,8 +11,12 @@ const validate = (schema) => (req, res, next) => {
 
 class EmployeeController {
     async create(req, res, next) {
+        console.log("data",req.body,req.file)
         try {
-            const result = await service.createEmployee(req.body);
+            const result = await service.createEmployeeWithRetry({
+        ...req.body,
+        faceImage: req.file?.buffer
+      });
             res.status(201).json(result);
         } catch (err) { next(err); }
     }
@@ -34,7 +40,10 @@ class EmployeeController {
 
     async update(req, res, next) {
         try {
-            const data = await service.updateEmployee(req.params.id, req.body);
+            const data = await service.updateEmployee(req.params.id, {
+        ...req.body,
+        faceImage: req.file?.buffer
+      });
             res.json({ message: "Updated", data });
         } catch (err) { next(err); }
     }
