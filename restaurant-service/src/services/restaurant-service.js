@@ -1384,79 +1384,55 @@ async function createBranch(branchData) {
   }
 }
 
+async function createProduct(productData) {
+  try {
+
+    const product = await repository.createProduct(productData);
+
+    return {
+      success: true,
+      message: "Product created successfully",
+      data: product
+    };
+
+  } catch (err) {
+    return {
+      success: false,
+      message: err.message
+    };
+  }
+}
 
 // async function createMenuItem(menuData) {
 //   try {
+
 //     const CreateQr = await repository.createQRCode(menuData.item_code);
 //     menuData.qr_code_id = CreateQr.id;
 
-//     const CategoryCreate = await repository.createCategory(menuData.zodu_id, menuData.branch_id, menuData.menu_category);
-//     console.log("CategoryCreate:", CategoryCreate);
+  
+//     const nextNumber = await repository.getNextMenuId(
+//       menuData.zodu_id,
+//       menuData.branch_id
+//     );
+//     menuData.menu_id = `${menuData.zodu_id}-${menuData.branch_id}-${nextNumber}`;
+//     menuData.menu_code = menuData.item_code
+//     menuData.favorites = false
 
-//     menuData.menu_category_id = CategoryCreate.id;
-
-//     console.log("MenuData in Service:", menuData);
 //     const newMenu = await repository.createMenuItem(menuData);
+
 //     return {
 //       success: true,
-//       message: 'Menu item created successfully',
-//       data: newMenu
+//       message: "Menu item created successfully",
+//       data: newMenu,
 //     };
 //   } catch (err) {
 //     console.error("Error inserting menu item:", err);
 //     return {
 //       success: false,
-//       message: err.message
+//       message: err.message,
 //     };
 //   }
 // }
-
-async function createMenuItem(menuData) {
-  try {
-
-    const CreateQr = await repository.createQRCode(menuData.item_code);
-    menuData.qr_code_id = CreateQr.id;
-
-    // if (menuData.menu_image) {
-    //   const imgResult = await uploadImg(menuData.menu_image);
-    //   if (!imgResult.success) {
-    //     throw new Error(imgResult.message || "Image upload failed");
-    //   }
-    //   menuData.menu_image = imgResult.fileUrl;
-    // }
-
-    // const CategoryCreate = await repository.createCategory(
-    //   menuData.zodu_id,
-    //   menuData.branch_id,
-    //   menuData.menu_category,
-    //   menuData.menu_type
-    // );
-    // menuData.menu_category_id = CategoryCreate.id;
-
-    // Generate safe sequential menu_id (no extra table needed)
-    const nextNumber = await repository.getNextMenuId(
-      menuData.zodu_id,
-      menuData.branch_id
-    );
-    menuData.menu_id = `${menuData.zodu_id}-${menuData.branch_id}-${nextNumber}`;
-    menuData.menu_code = menuData.item_code
-    menuData.favorites = false
-
-    const newMenu = await repository.createMenuItem(menuData);
-
-    return {
-      success: true,
-      message: "Menu item created successfully",
-      data: newMenu,
-    };
-  } catch (err) {
-    console.error("Error inserting menu item:", err);
-    return {
-      success: false,
-      message: err.message,
-    };
-  }
-}
 
 async function editMenuItem(menuId, menuData) {
   try {
@@ -1504,48 +1480,108 @@ async function editMenuItem(menuId, menuData) {
 
 async function createOrder(orderData) {
   try {
-    let order = null;
-    let items = null;
-    let kot = null;
-
-    // 🟢 DINE-IN (TMP FLOW)
-    if (orderData.order_type === "Dine-In") {
-      const tmpOrder = await repository.createtmpOrder(orderData);
-
-      // 🔑 attach backend-generated IDs
-      orderData.api_order_id = tmpOrder.api_order_id;
-      orderData.legacy_order_ref = tmpOrder.legacy_order_ref;
-
-      items = await repository.createtmpOrderedItems(orderData);
-      kot = await repository.createKOT(orderData);
-
-      order = tmpOrder;
-
-      return {
-        success: true,
-        message: "Running order created",
-        order,
-      };
+    // 1️⃣  Insert into tbl_sales → returns { sale_uuid, sale_id, … }
+    const sale = await repository.createOrder(orderData);
+ 
+    // 2️⃣  Insert items – pass `sale` so the repo has sale_uuid + sale_id
+    const items = await repository.createSaleItems(orderData, sale);
+ 
+    // 3️⃣  Insert payment only when money was actually collected
+    const paidAmount = round(Number(orderData.paid_amount ?? 0));
+    let payment = null;
+ 
+    if (paidAmount > 0) {
+      payment = await repository.createSalesPayment(orderData, sale);
     }
-
-    // 🟡 TAKEAWAY / DELIVERY (FINAL DIRECT)
-    const finalOrder = await repository.createOrder(orderData);
-
-    orderData.api_order_id = finalOrder.api_order_id;
-    items = await repository.createOrderedItems(orderData);
-
+ 
     return {
       success: true,
       message: "Order created successfully",
-      order: finalOrder,
+      order: sale,
+      items,
+      payment,
     };
-
   } catch (err) {
     console.error("Order Error:", err);
     return { success: false, message: err.message };
   }
 }
+ 
+const round = (n) => Math.round(n * 100) / 100;
 
+async function getSalesHistory(filters) {
+  try {
+    const data = await repository.getSalesHistory(filters);
+    return { success: true, ...data };
+  } catch (err) {
+    console.error("getSalesHistory Error:", err);
+    return { success: false, message: err.message };
+  }
+}
+ 
+async function getSaleById(sale_id, zodu_id, branch_id) {
+  try {
+    const data = await repository.getSaleById(sale_id, zodu_id, branch_id);
+    if (!data) return { success: false, message: "Sale not found" };
+    return { success: true, data };
+  } catch (err) {
+    console.error("getSaleById Error:", err);
+    return { success: false, message: err.message };
+  }
+}
+
+
+async function getCustomers(filters) {
+  try {
+    const data = await repository.getCustomers(filters);
+    return { success: true, ...data };
+  } catch (err) {
+    console.error("getCustomers Error:", err);
+    return { success: false, message: err.message };
+  }
+}
+ 
+async function getCustomerById(cust_uuid) {
+  try {
+    const customer = await repository.getCustomerById(cust_uuid);
+ 
+    if (!customer) {
+      return { success: false, message: "Customer not found" };
+    }
+ 
+    return { success: true, customer };
+  } catch (err) {
+    console.error("getCustomerById Error:", err);
+    return { success: false, message: err.message };
+  }
+}
+
+
+async function createCustomer(data) {
+  try {
+    const customer = await repository.createCustomer(data);
+    return { success: true, message: "Customer created successfully", customer };
+  } catch (err) {
+    console.error("createCustomer error:", err);
+    return { success: false, message: err.message };
+  }
+}
+ 
+ 
+// ============================================================
+//  payment.service.js
+// ============================================================
+ 
+async function markPayment(data) {
+  try {
+    const result = await repository.markPayment(data);
+    return { success: true, message: "Payment recorded successfully", ...result };
+  } catch (err) {
+    console.error("markPayment error:", err);
+    return { success: false, message: err.message };
+  }
+}
+ 
 
 async function getPurchaseListData(
   branch_id,
@@ -1922,6 +1958,8 @@ async function getPurchaseSummary(
   }
 }
 
+
+
 /* ================= EXPENSE SUMMARY ================= */
 
 async function getExpenseSummary(
@@ -2177,7 +2215,59 @@ async function getOrdersSummary(
 
 
 
+async function markSalePayment (payload) {
 
+  const {
+    zodu_id,
+    branch_id,
+    sale_id,
+    total_amount,
+    paid_amount,
+    payment_mode,
+    paid_date,
+    transaction_id,
+  } = payload;
+
+  // 1️⃣ check payment record
+  let payment = await repository.getPaymentBySource(
+    zodu_id,
+    branch_id,
+    sale_id
+  );
+
+  // 2️⃣ create payment summary if not exists
+  if (!payment) {
+    payment = await repository.createPayment({
+      zodu_id,
+      branch_id,
+      source_id: sale_id,
+      total_amount,
+    });
+  }
+
+  if (!transaction_id || transaction_id.trim() === "") {
+  transaction_id = null;
+}
+  // 3️⃣ insert payment history
+  await repository.insertPaymentHistory({
+    payment_id: payment.payment_id,
+    paid_amount,
+    paid_date,
+    payment_mode,
+    transaction_id ,
+  });
+
+  // 4️⃣ update payment summary
+  await repository.updatePaymentAmount(payment.payment_id, paid_amount);
+
+  // 5️⃣ update sales table
+  await repository.updateSalePayment(sale_id, paid_amount);
+
+  return {
+    success: true,
+    message: "Payment recorded successfully",
+  };
+};
 
 
 
@@ -2190,7 +2280,7 @@ module.exports = {
   createCompanyService,
   getData,
   createBranch,
-  createMenuItem,
+  createProduct,
   editMenuItem,
   getCategoryData,
   get_menuItem_data,
@@ -2255,5 +2345,12 @@ module.exports = {
   getPurchaseById,
   getSingleOrder,
   getReportCategory,
-  getExpenseReportServices
+  getExpenseReportServices,
+  getSalesHistory,
+  getSaleById,
+  markSalePayment,
+  getCustomers,
+  getCustomerById,
+  createCustomer,
+  markPayment,
 };

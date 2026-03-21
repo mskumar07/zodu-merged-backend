@@ -7,7 +7,8 @@ const service = require("../services/restaurant-service");
 const conn = require("../database/connection");
 const Minio = require("minio");
 const multer = require("multer")
-const sharp = require("sharp")
+const repository = require('../repository/restaurant-repo.js');
+const XLSX = require("xlsx");
 const upload = multer({
   limits: { fileSize: 500 * 1024 * 1024 }, // 500MB
 });
@@ -216,21 +217,18 @@ router.get("/file/:name", async (req, res) => {
 //     return res.status(500).json({ error: error.message });
 //   }
 // });
-
 router.post(
-  "/api/add/menu_item",
-  upload.single("menu_image"), // key must match Postman
+  "/api/add/product",
+  upload.single("product_image"),
   async (req, res) => {
     try {
-      const menuData = req.body;
-      // Add file buffer to menuData for upload
-      // if (req.file) {
-      //   menuData.menu_image = req.file; // multer stores file in req.file
-      // }
+      const productData = req.body;
+
       await conn.query("BEGIN");
+
       const { errors, input } = await RequestValidator(
-        schema.menu_item_create,
-        menuData
+        schema.product_create,
+        productData
       );
 
       if (errors) {
@@ -238,7 +236,7 @@ router.post(
         return res.status(400).json({ errors });
       }
 
-      const data = await service.createMenuItem(input);
+      const data = await service.createProduct(input);
 
       if (!data.success) {
         await conn.query("ROLLBACK");
@@ -246,11 +244,234 @@ router.post(
       }
 
       await conn.query("COMMIT");
-      return res.status(201).json({ data });
+
+      return res.status(201).json(data);
     } catch (error) {
       await conn.query("ROLLBACK");
       console.error(error);
       return res.status(500).json({ error: error.message });
+    }
+  }
+);
+const BATCH_SIZE = 1000;
+
+router.post(
+  "/api/products/upload-excel",
+  upload.single("file"),
+  async (req, res) => {
+    const client = await conn.connect();
+
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No file uploaded" });
+      }
+
+      const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const data = XLSX.utils.sheet_to_json(sheet);
+
+      if (!data.length) {
+        return res.status(400).json({ error: "Excel is empty" });
+      }
+
+      await client.query("BEGIN");
+
+      let totalInserted = 0;
+
+      for (let i = 0; i < data.length; i += BATCH_SIZE) {
+        const batch = data.slice(i, i + BATCH_SIZE);
+
+        const values = [];
+        const placeholders = [];
+        let index = 1;
+
+        for (const item of batch) {
+          if (!item.item_name || !item.zodu_id) continue;
+
+          values.push(
+            item.item_id || null,         // ✅ USER PROVIDED
+            item.zodu_id || null,
+            item.branch_id || null,
+            item.item_type || "S",
+            item.item_name || null,
+            item.category_id || null,
+            item.sku || null,
+            item.barcode || null,
+            item.hsn_code || null,
+            item.unit || null,
+            item.mrp || 0,
+            item.sell_price || 0,
+            item.purchase_price || 0,
+            item.gst_type || 0,
+            item.tax_incl_type ?? false,
+            item.item_img || null
+          );
+
+          placeholders.push(
+            `(
+              gen_random_uuid(),  -- item_uuid
+              $${index++}, $${index++}, $${index++}, $${index++},
+              $${index++}, $${index++}, $${index++}, $${index++},
+              $${index++}, $${index++}, $${index++}, $${index++},
+              $${index++}, $${index++}, $${index++}, $${index++}
+            )`
+          );
+        }
+
+        if (!values.length) continue;
+
+        const query = `
+          INSERT INTO tbl_menu_items (
+            item_uuid,
+            item_id,
+            zodu_id,
+            branch_id,
+            item_type,
+            item_name,
+            category_id,
+            sku,
+            barcode,
+            hsn_code,
+            unit,
+            mrp,
+            sell_price,
+            purchase_price,
+            gst_type,
+            tax_incl_type,
+            item_img
+          )
+          VALUES ${placeholders.join(",")}
+          ON CONFLICT (barcode) DO NOTHING
+        `;
+
+        await client.query(query, values);
+        totalInserted += placeholders.length;
+      }
+
+      await client.query("COMMIT");
+
+      res.json({
+        success: true,
+        message: "Products uploaded successfully",
+        inserted: totalInserted
+      });
+
+    } catch (error) {
+      await client.query("ROLLBACK");
+
+      res.status(500).json({
+        error: error.message
+      });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+router.post(
+  "/api/inventory/upload-excel",
+  upload.single("file"),
+  async (req, res) => {
+    const client = await conn.connect();
+
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No file uploaded" });
+      }
+
+      const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const data = XLSX.utils.sheet_to_json(sheet);
+
+      if (!data.length) {
+        return res.status(400).json({ error: "Excel is empty" });
+      }
+
+      await client.query("BEGIN");
+
+      let totalProcessed = 0;
+
+      for (let i = 0; i < data.length; i += BATCH_SIZE) {
+        const batch = data.slice(i, i + BATCH_SIZE);
+
+        const values = [];
+        const placeholders = [];
+        let index = 1;
+
+        for (const item of batch) {
+          if (
+            !item.item_uuid ||
+            !item.item_id ||
+            !item.zodu_id ||
+            !item.branch_id ||
+            !item.item_name
+          )
+            continue;
+
+          values.push(
+            item.item_uuid,
+            item.item_id,
+            item.zodu_id,
+            item.branch_id,
+            item.item_name,
+            item.available_qty || 0,
+            item.reorder_level || 0
+          );
+
+          placeholders.push(
+            `(
+              gen_random_uuid(),
+              $${index++}, $${index++}, $${index++}, $${index++},
+              $${index++}, $${index++}, $${index++},
+              CURRENT_TIMESTAMP
+            )`
+          );
+        }
+
+        if (!values.length) continue;
+
+        const query = `
+          INSERT INTO tbl_inventory (
+            inventory_uuid,
+            item_uuid,
+            item_id,
+            zodu_id,
+            branch_id,
+            item_name,
+            available_qty,
+            reorder_level,
+            created_at
+          )
+          VALUES ${placeholders.join(",")}
+          ON CONFLICT (item_uuid, branch_id)
+          DO UPDATE SET
+            item_id = EXCLUDED.item_id,
+            item_name = EXCLUDED.item_name,
+            available_qty = EXCLUDED.available_qty,
+            reorder_level = EXCLUDED.reorder_level,
+            last_stock_update = CURRENT_TIMESTAMP
+        `;
+
+        await client.query(query, values);
+        totalProcessed += placeholders.length;
+      }
+
+      await client.query("COMMIT");
+
+      res.json({
+        success: true,
+        message: "Inventory uploaded successfully",
+        processed: totalProcessed,
+      });
+
+    } catch (error) {
+      await client.query("ROLLBACK");
+
+      res.status(500).json({
+        error: error.message,
+      });
+    } finally {
+      client.release();
     }
   }
 );
@@ -303,21 +524,19 @@ router.put(
 
 router.post("/api/add/orders", async (req, res) => {
   try {
-    const { errors, input } = await RequestValidator(
-      schema.order_create,
-      req.body
-    );
-
+    const { errors, input } = await RequestValidator(schema.order_create, req.body);
+    console.log(req.body)
     if (errors) {
+      console.log(errors)
       return res.status(400).json({ errors });
     }
-
+ 
     const data = await service.createOrder(input);
-
+ 
     if (!data.success) {
       return res.status(400).json({ message: data.message });
     }
-console.log(data)
+ 
     return res.status(201).json(data);
   } catch (error) {
     console.error(error);
@@ -325,6 +544,133 @@ console.log(data)
   }
 });
 
+
+router.get("/api/sales/history", async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(schema.sales_history_query, req.query);
+    if (errors) return res.status(400).json({ errors });
+ 
+    const data = await service.getSalesHistory(input);
+    if (!data.success) return res.status(400).json({ message: data.message });
+ 
+    return res.status(200).json(data);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+ 
+// GET /api/sales/:sale_id?zodu_id=&branch_id=
+router.get("/api/sales/:sale_id", async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(schema.sale_by_id_params, {
+      sale_id:   req.params.sale_id,
+      zodu_id:   req.query.zodu_id,
+      branch_id: req.query.branch_id,
+    });
+    
+    if (errors) return res.status(400).json({ errors });
+ 
+    const data = await service.getSaleById(input.sale_id, input.zodu_id, input.branch_id);
+    if (!data.success) return res.status(404).json({ message: data.message });
+ 
+    return res.status(200).json(data);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+
+router.post("/api/sales/:sale_id/payment", async (req, res) => {
+  try {
+    const { error, value } = schema.mark_payment.validate(
+      { ...req.body, sale_id: req.params.sale_id },
+      { abortEarly: false }
+    );
+    if (error) {
+      return res.status(400).json({ errors: error.details.map(d => d.message) });
+    }
+ 
+    const data = await service.markPayment(value);
+    if (!data.success) return res.status(400).json({ message: data.message });
+    return res.status(201).json(data);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/api/customers", async (req, res) => {
+  try {
+    const { error, value } = schema.add_customer.validate(req.body, { abortEarly: false });
+    if (error) {
+      return res.status(400).json({ errors: error.details.map(d => d.message) });
+    }
+ 
+    // Normalise: single string mobile/email → array
+    if (typeof value.mobile_no === "string") value.mobile_no = [value.mobile_no];
+    if (typeof value.email_id  === "string") value.email_id  = [value.email_id];
+ 
+    const data = await service.createCustomer(value);
+    if (!data.success) return res.status(400).json({ message: data.message });
+    return res.status(201).json(data);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/api/customers", async (req, res) => {
+  try {
+    const { error, value } = schema.get_customers.validate(req.query, {
+      abortEarly: false,
+    });
+ 
+    if (error) {
+      return res.status(400).json({
+        errors: error.details.map((d) => d.message),
+      });
+    }
+ 
+    const data = await service.getCustomers(value);
+ 
+    if (!data.success) {
+      return res.status(400).json({ message: data.message });
+    }
+ 
+    return res.status(200).json(data);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+ 
+// ── GET /api/customers/:cust_uuid
+router.get("/api/customers/:cust_uuid", async (req, res) => {
+  try {
+    const { error, value } = schema.get_customer_by_id.validate(req.params, {
+      abortEarly: false,
+    });
+ 
+    if (error) {
+      return res.status(400).json({
+        errors: error.details.map((d) => d.message),
+      });
+    }
+ 
+    const data = await service.getCustomerById(value.cust_uuid);
+ 
+    if (!data.success) {
+      return res.status(404).json({ message: data.message });
+    }
+ 
+    return res.status(200).json(data);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: err.message });
+  }
+});
 
 router.post(
   "/api/add/vendor",
@@ -1771,5 +2117,22 @@ router.post("/api/payment/pay", async (req, res) => {
   }
 });
 
+router.post("/api/payments/add", async (req, res) => {
+  try {
+
+    const result = await service.markSalePayment(req.body);
+
+    return res.status(200).json(result);
+
+  } catch (error) {
+
+    console.error("Payment Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to add payment",
+    });
+  }
+});
 
 module.exports = router;

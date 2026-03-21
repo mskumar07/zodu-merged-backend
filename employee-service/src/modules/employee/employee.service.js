@@ -1,7 +1,7 @@
 const { v4: uuidv4 } = require('uuid');
 const db = require('../../database/connection');
 const employeeRepo = require('./employee.repository');
-const faceService = require('../face/face.service');
+// const faceService = require('../face/face.service');
 
 class EmployeeService {
     async createEmployee(data) {
@@ -22,16 +22,16 @@ class EmployeeService {
             //     }
             // }
 
-                  if (data.faceImage) {
-        const embedding = await faceService.generateEmbedding(data.faceImage);
+      //             if (data.faceImage) {
+      //   const embedding = await faceService.generateEmbedding(data.faceImage);
 
-        await employeeRepo.saveFace(db, {
-          employee_id: empId,
-          zodu_id: data.zodu_id,
-          branch_id: data.branch_id,
-          embedding
-        });
-      }
+      //   await employeeRepo.saveFace(db, {
+      //     employee_id: empId,
+      //     zodu_id: data.zodu_id,
+      //     branch_id: data.branch_id,
+      //     embedding
+      //   });
+      // }
             await db.query('COMMIT');
             return { employee_id: empId, message: "Employee Created Successfully" };
         } catch (error) {
@@ -86,18 +86,18 @@ class EmployeeService {
       const updated = await employeeRepo.update(id, data);
 
       // 🔥 If new face provided → replace old embeddings
-      if (data.faceImage) {
-        const embedding = await faceService.generateEmbedding(data.faceImage);
+      // if (data.faceImage) {
+      //   const embedding = await faceService.generateEmbedding(data.faceImage);
 
-        await employeeRepo.deleteFaces(id);
+      //   await employeeRepo.deleteFaces(id);
 
-        await employeeRepo.saveFace(db, {
-          employee_id: id,
-          zodu_id: updated.zodu_id,
-          branch_id: updated.branch_id,
-          embedding
-        });
-      }
+      //   await employeeRepo.saveFace(db, {
+      //     employee_id: id,
+      //     zodu_id: updated.zodu_id,
+      //     branch_id: updated.branch_id,
+      //     embedding
+      //   });
+      // }
 
       await db.query("COMMIT");
 

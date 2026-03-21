@@ -1,9 +1,0 @@
-node_modules
-
-docker-compose.yml
-
-.node_modules
-
-.env
-
-.env.local

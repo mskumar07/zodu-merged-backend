@@ -61,27 +61,28 @@ const branch_create = Joi.object({
   branch_account_type: Joi.string().max(20).required()
 });
 
-const menu_item_create = Joi.object({
-  zodu_id: Joi.string().max(50).required(),
-  branch_id: Joi.string().max(50).required(),
-  menu_type: Joi.string().max(100).required(),
-  menu_name: Joi.string().max(100).required(),
-  food_type: Joi.string().max(25).allow(null),
-  variants: Joi.alternatives().try(
-    Joi.array().items(Joi.object()),
-    Joi.string()
-  ).allow(null),
-  item_code: Joi.string().required(), 
-  menu_category_id: Joi.number().required(),
-  opening_stock: Joi.number().min(0).optional(),
-  alert_stock: Joi.number().min(0).optional(),
-  sell_price: Joi.string().max(100).required(),
-  purchase_price: Joi.string().max(100).allow(null),
-  hsn_code: Joi.string().max(50).allow(null).optional(),
-  gst_tax: Joi.number().required(),
-  tax_include_or_exclude: Joi.boolean().required(),
-  menu_image: Joi.string().allow(null).optional(),
-  menu_unit: Joi.number().required(),
+const product_create = Joi.object({
+  zodu_id: Joi.string().required(),
+  branch_id: Joi.string().required(),
+
+  item_type: Joi.string().required(),
+  item_name: Joi.string().required(),
+
+  category_id: Joi.string().allow(null),
+
+  sku: Joi.string().allow(null),
+  barcode: Joi.string().allow(null),
+
+  hsn_code: Joi.string().allow(null),
+  unit: Joi.string().allow(null),
+
+  mrp: Joi.number().allow(null),
+  sell_price: Joi.number().allow(null),
+  cost_price: Joi.number().allow(null),
+
+  gst_percentage: Joi.number().allow(null),
+
+  status: Joi.string().default("active")
 });
 
 const menu_item_update = Joi.object({
@@ -133,35 +134,128 @@ const itemSchema = Joi.object({
 });
 // order schema
 const order_create = Joi.object({
-  zodu_id: Joi.string().max(50).required(),
-  branch_id: Joi.string().max(50).required(),
-  table_no: Joi.number().integer().allow('', null),
-  kot_no: Joi.string(),
-  no_of_items: Joi.number().integer().required(),
-  order_type: Joi.string().valid('Dine-In', 'Takeaway', 'Delivery').required(),
-  payment_type: Joi.string().allow('', null),
-  customer_name: Joi.string().max(100).allow('', null),
+  zodu_id: Joi.string().required(),
+
+  branch_id: Joi.string().required(),
+
+  sale_type: Joi.string().optional().allow(null, ""),
+
+  customer_id: Joi.string().uuid().optional().allow(null, ""),
+
+  customer_name: Joi.string().optional().allow(null, ""),
+
   customer_phone: Joi.string()
-    .pattern(/^[0-9]{7,15}$/)
-    .allow('', null),
-  total_amt: Joi.number().precision(2).min(0).required(),
-   discount_type: Joi.string()
-    .valid('PERCENT', 'FLAT', 'Percent', 'Amount')
-    .allow(null, ''),
+    .pattern(/^[0-9]{10}$/)
+    .optional()
+    .allow(null, ""),
 
-  discount_value: Joi.number().precision(2).min(0).allow(null),
-  items: Joi.array().items(itemSchema).min(1).required(),
-  final_payment: Joi.boolean().required(),
-  order_date: Joi.alternatives().try(
-    Joi.date().iso(), // '2025-10-09'
-    Joi.string().pattern(/^\d{2}-\d{2}-\d{4}$/) // '09-10-2025'
-  ).required(),
+  sale_date: Joi.date().iso().optional(),
 
-  order_time: Joi.alternatives().try(
-    Joi.string().pattern(/^([01]\d|2[0-3]):([0-5]\d)(:([0-5]\d))?$/), // 15:30 or 15:30:00
-    Joi.string().pattern(/^(0?[1-9]|1[0-2]):[0-5][0-9]\s?(AM|PM|am|pm)$/) // 03:30 PM
-  ).required()
-}).options({ abortEarly: false });
+sale_time: Joi.string()
+  .pattern(/^([01]\d|2[0-3]):([0-5]\d):([0-5]\d)$/) // HH:mm:ss
+  .optional()
+  .allow(null, ""),
+
+  discount_type: Joi.string()
+    .valid("percentage", "flat")
+    .optional()
+    .allow(null, ""),
+
+  discount_value: Joi.number().min(0).default(0),
+
+  paid_amount: Joi.number().min(0).optional().allow(null),
+
+  payment_mode: Joi.string().optional().allow(null, ""),
+
+  transaction_id: Joi.string().optional().allow(null, ""),
+
+  notes: Joi.string().optional().allow(null, ""),
+
+  items: Joi.array()
+    .items(
+      Joi.object({
+        // 🔥 FIXED NAME
+        item_id: Joi.string().required(),
+
+        item_name: Joi.string().optional().allow(null, ""),
+
+        variant_id: Joi.string().optional().allow(null, ""),
+
+        variant_name: Joi.string().optional().allow(null, ""),
+
+        unit: Joi.string().optional().allow(null, ""),
+
+        quantity: Joi.number().positive().required(),
+
+        price: Joi.number().min(0).required(),
+
+        discount: Joi.number().min(0).default(0),
+
+        gst_percentage: Joi.number().min(0).max(100).default(0),
+        hsn_code: Joi.string().optional().allow(null, ""),
+        mrp: Joi.number().optional().allow(null, ""),
+
+        tax_inclusive: Joi.boolean().default(false),
+      })
+    )
+    .min(1)
+    .required(),
+})
+  // 🔥 CONDITIONAL VALIDATION
+  .custom((value, helpers) => {
+    if (value.discount_type === "percentage" && value.discount_value > 100) {
+      return helpers.error("any.invalid");
+    }
+    return value;
+  }, "Discount validation");
+
+
+const add_customer = Joi.object({
+  zodu_id:   Joi.string().required(),
+  branch_id: Joi.string().required(),
+ 
+  // at least one of cust_name or cpy_name is required
+  cust_name: Joi.string().optional().allow(null, ""),
+  cpy_name:  Joi.string().optional().allow(null, ""),
+ 
+  // jsonb arrays — accept array of strings or single string
+  mobile_no: Joi.alternatives()
+    .try(
+      Joi.array().items(Joi.string().pattern(/^[0-9]{10}$/)).min(1),
+      Joi.string().pattern(/^[0-9]{10}$/)
+    )
+    .optional(),
+ 
+  email_id: Joi.alternatives()
+    .try(
+      Joi.array().items(Joi.string().email({ tlds: false })),
+      Joi.string().email({ tlds: false })
+    )
+    .optional(),
+ 
+  gst:          Joi.string().optional().allow(null, ""),
+  address_line1: Joi.string().optional().allow(null, ""),
+  address_line2: Joi.string().optional().allow(null, ""),
+  city:         Joi.string().optional().allow(null, ""),
+  state:        Joi.string().optional().allow(null, ""),
+  pincode:      Joi.string().pattern(/^[0-9]{6}$/).optional().allow(null, ""),
+})
+.custom((value, helpers) => {
+  if (!value.cust_name && !value.cpy_name) {
+    return helpers.error("any.invalid", { message: "Either cust_name or cpy_name is required" });
+  }
+  return value;
+}, "Name validation");
+ 
+// ── Mark Payment ─────────────────────────────────────────────
+const mark_payment = Joi.object({
+  zodu_id:          Joi.string().required(),
+  branch_id:        Joi.string().required(),
+  sale_id:          Joi.string().required(),
+  paid_amount:      Joi.number().positive().required(),
+  transaction_type: Joi.string().valid("Cash", "Card", "UPI", "Credit").required(),
+  transaction_id:   Joi.string().optional().allow(null, ""),
+});
 
 const purchase_order_create = Joi.object({
   zodu_id: Joi.string().max(50).required(),
@@ -363,10 +457,41 @@ const holdSchema = Joi.object({
 });
 
 
+const sales_history_query = Joi.object({
+  zodu_id:         Joi.string().required(),
+  branch_id:       Joi.string().required(),
+  from_date:       Joi.string().isoDate().optional(),
+  to_date:         Joi.string().isoDate().optional(),
+  payment_status:  Joi.string().valid("fully_paid", "partially_paid", "unpaid").optional(),
+  sale_type:       Joi.string().optional(),
+  customer_phone:  Joi.string().optional(),
+  invoice_no:      Joi.string().optional(),
+  page:            Joi.number().integer().min(1).optional().default(1),
+  limit:           Joi.number().integer().min(1).max(100).optional().default(20),
+});
+ 
+const sale_by_id_params = Joi.object({
+  sale_id:   Joi.string().required(),
+  zodu_id:   Joi.string().required(),
+  branch_id: Joi.string().required(),
+});
+
+const get_customers = Joi.object({
+  zodu_id:   Joi.string().required(),
+  branch_id: Joi.string().required(),
+  search:    Joi.string().optional().allow("", null),
+  page:      Joi.number().integer().min(1).default(1),
+  limit:     Joi.number().integer().min(1).max(100).default(20),
+});
+ 
+const get_customer_by_id = Joi.object({
+  cust_uuid: Joi.string().uuid().required(),
+});
+
 module.exports = {
   company_create,
   branch_create,
-  menu_item_create,
+  product_create,
   menu_item_update,
   update_company,
   order_create,
@@ -380,5 +505,11 @@ module.exports = {
   Inventory,
   holdSchema,
   expense_item,
-  edit_vendor_create
+  edit_vendor_create,
+  sales_history_query,
+  sale_by_id_params,
+  get_customers,
+  get_customer_by_id,
+  add_customer,
+  mark_payment,
 };

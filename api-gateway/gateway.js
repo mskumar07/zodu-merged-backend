@@ -11,28 +11,29 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// Route /auth → auth-service:3000
+
+
+// Route /auth → localhost:3000
 app.use('/auth', createProxyMiddleware({
-  target: 'http://localhost:3000',
+  target: 'http://localhost:4000',
   changeOrigin: true
 }));
 
-// Route /restaurant → restaurant-service:3001
+// Route /restaurant → localhost:3001
 app.use('/restaurant', createProxyMiddleware({
-  target: 'http://localhost:3001',
-  changeOrigin: true
-}));
-
-
-app.use('/checklist', createProxyMiddleware({
-  target: 'http://localhost:3002',
+  target: 'http://localhost:4001',
   changeOrigin: true
 }));
 
 app.use('/employee', createProxyMiddleware({
-  target: 'http://localhost:3003',
+  target: 'http://localhost:4002',
   changeOrigin: true
 }));
 
+app.use("/", (req, res) => {
+  res.send("Welcome to the API Gateway!");
+  
+});
+
 // Start the server
-app.listen(5000, () => console.log('API Gateway running on http://localhost:5000'));
+app.listen(5001, () => console.log('API Gateway running on http://localhost:5001'));
