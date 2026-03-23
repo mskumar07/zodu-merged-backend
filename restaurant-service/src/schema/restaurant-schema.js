@@ -85,27 +85,6 @@ const product_create = Joi.object({
   status: Joi.string().default("active")
 });
 
-const menu_item_update = Joi.object({
-  zodu_id: Joi.string().max(50).optional(),
-  branch_id: Joi.string().max(50).optional(),
-  menu_type: Joi.string().max(100).optional(),
-  menu_name: Joi.string().max(100).optional(),
-  food_type: Joi.string().max(25).allow(null).optional(),
-  variants: Joi.alternatives().try(
-    Joi.array().items(Joi.object()),
-    Joi.string()
-  ).allow(null).optional(),
-  item_code: Joi.string().optional(),
-  menu_category_id: Joi.string().max(100).optional(),
-  sell_price: Joi.string().max(100).optional(),
-  purchase_price: Joi.string().max(100).allow(null).optional(),
-  hsn_code: Joi.string().max(50).allow(null).optional(),
-  gst_tax: Joi.string().max(50).optional(),
-  tax_include_or_exclude: Joi.boolean().optional(),
-  menu_image: Joi.object().allow(null).optional(),
-  menu_unit: Joi.string().optional()
-});
-
 
 // item schema for each order item
 const inventorySchema =
@@ -488,11 +467,49 @@ const get_customer_by_id = Joi.object({
   cust_uuid: Joi.string().uuid().required(),
 });
 
+const createSchema = Joi.object({
+  zodu_id:        Joi.string().required(),
+  branch_id:      Joi.string().required(),
+  item_type:      Joi.string().valid("product", "service", "S", "P").required(),
+  item_name:      Joi.string().trim().max(255).required(),
+  category_id:    Joi.number().integer().allow(null).default(null),
+  unit:           Joi.number().integer().allow(null).default(null),
+  mrp:            Joi.number().min(0).allow(null).default(null),
+  sell_price:     Joi.number().min(0).allow(null).default(null),
+  purchase_price: Joi.number().min(0).allow(null).default(null),
+  gst_type:       Joi.number().integer().allow(null).default(null),
+  tax_incl_type:  Joi.boolean().default(false),
+  sku:            Joi.string().max(100).allow(null, "").default(null),
+  barcode:        Joi.string().max(100).allow(null, "").default(null),
+  hsn_code:       Joi.string().max(20).allow(null, "").default(null),
+  item_img:       Joi.string().allow(null, "").default(null),
+  status:         Joi.string().valid("active", "inactive").default("active"),
+    opening_stock:  Joi.number().min(0).allow(null).default(0),
+  reorder_level:  Joi.number().min(0).allow(null).default(0),
+});
+ 
+const editSchema = Joi.object({
+  item_name:      Joi.string().trim().max(255),
+  item_type:      Joi.string().valid("product", "service", "S", "P"),
+  category_id:    Joi.number().integer().allow(null),
+  unit:           Joi.number().integer().allow(null),
+  mrp:            Joi.number().min(0).allow(null),
+  sell_price:     Joi.number().min(0).allow(null),
+  purchase_price: Joi.number().min(0).allow(null),
+  gst_type:       Joi.number().integer().allow(null),
+  tax_incl_type:  Joi.boolean(),
+  sku:            Joi.string().max(100).allow(null, ""),
+  barcode:        Joi.string().max(100).allow(null, ""),
+  hsn_code:       Joi.string().max(20).allow(null, ""),
+  item_img:       Joi.string().allow(null, ""),
+  status:         Joi.string().valid("active", "inactive"),
+}).min(1); // at least one field required for edit
+ 
+
 module.exports = {
   company_create,
   branch_create,
   product_create,
-  menu_item_update,
   update_company,
   order_create,
   purchase_order_create,
@@ -512,4 +529,6 @@ module.exports = {
   get_customer_by_id,
   add_customer,
   mark_payment,
+  createSchema,
+  editSchema,
 };

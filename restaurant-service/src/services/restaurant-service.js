@@ -1403,80 +1403,6 @@ async function createProduct(productData) {
   }
 }
 
-// async function createMenuItem(menuData) {
-//   try {
-
-//     const CreateQr = await repository.createQRCode(menuData.item_code);
-//     menuData.qr_code_id = CreateQr.id;
-
-  
-//     const nextNumber = await repository.getNextMenuId(
-//       menuData.zodu_id,
-//       menuData.branch_id
-//     );
-//     menuData.menu_id = `${menuData.zodu_id}-${menuData.branch_id}-${nextNumber}`;
-//     menuData.menu_code = menuData.item_code
-//     menuData.favorites = false
-
-//     const newMenu = await repository.createMenuItem(menuData);
-
-//     return {
-//       success: true,
-//       message: "Menu item created successfully",
-//       data: newMenu,
-//     };
-//   } catch (err) {
-//     console.error("Error inserting menu item:", err);
-//     return {
-//       success: false,
-//       message: err.message,
-//     };
-//   }
-// }
-
-async function editMenuItem(menuId, menuData) {
-  try {
-    // 1. Fetch existing menu item
-    const existingMenu = await repository.getMenuById(menuId);
-    if (!existingMenu) {
-      return { success: false, message: "Menu item not found" };
-    }
-
-    // 2. Handle QR code: only if item_code changed
-    if (menuData.item_code && menuData.item_code !== existingMenu.menu_code) {
-      const qrResult = await repository.createQRCode(menuData.item_code);
-      menuData.qr_code_id = qrResult.id;
-    } else {
-      menuData.qr_code_id = existingMenu.qr_code_id;
-    }
-
-    
-    // 5. Prepare updated fields: keep old values if not provided
-    const updatedMenu = {
-      ...existingMenu,
-      ...menuData, // overwrite only fields provided
-      menu_id: existingMenu.menu_id, // menu_id never changes
-      menu_code: menuData.item_code || existingMenu.menu_code
-    };
-
-    // 6. Update menu in DB
-    const result = await repository.updateMenuItem(menuId, updatedMenu);
-
-    return {
-      success: true,
-      message: "Menu item updated successfully",
-      data: result
-    };
-
-  } catch (err) {
-    console.error("Error updating menu item:", err);
-    return {
-      success: false,
-      message: err.message
-    };
-  }
-}
-
 
 async function createOrder(orderData) {
   try {
@@ -2281,7 +2207,6 @@ module.exports = {
   getData,
   createBranch,
   createProduct,
-  editMenuItem,
   getCategoryData,
   get_menuItem_data,
   updateCompanyService,

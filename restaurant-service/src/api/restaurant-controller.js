@@ -195,28 +195,7 @@ router.get("/file/:name", async (req, res) => {
 });
 
 
-// router.post("/api/add/menu_item", async (req, res) => {
-//   try {
-//     console.log(req.body)
-//     await conn.query('BEGIN');
-//     const { errors, input } = await RequestValidator(schema.menu_item_create, req.body);
-//     if (errors) {
-//       await conn.query('ROLLBACK');
-//       return res.status(400).json({ errors });
-//     }
-//     const data = await service.createMenuItem(input);
-//     if (!data.success) {
-//       await conn.query('ROLLBACK');
-//       return res.status(400).json({ message: data.message });
-//     }
-//     await conn.query('COMMIT');
-//     return res.status(201).json({ data });
-//   } catch (error) {
-//     await conn.query('ROLLBACK');
-//     console.error(error);
-//     return res.status(500).json({ error: error.message });
-//   }
-// });
+
 router.post(
   "/api/add/product",
   upload.single("product_image"),

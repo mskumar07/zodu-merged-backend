@@ -2591,78 +2591,6 @@ exports.getVendorId = async (zoduId, branchId, vendor) => {
   }
 }
 
-exports.getNextMenuId = async (zoduId, branchId) => {
-  try {
-    await conn.query("BEGIN");
-
-    // Select the last numeric part of menu_id, sorted numerically
-    const result = await conn.query(
-      `
-      SELECT menu_id
-      FROM tbl_menu_item
-      WHERE zodu_id = $1 AND branch_id = $2
-      ORDER BY (regexp_replace(menu_id, '[^0-9]', '', 'g'))::int DESC
-      LIMIT 1
-      FOR UPDATE;
-      `,
-      [zoduId, branchId]
-    );
-
-    let nextNumber = 1;
-
-    if (result.rows.length > 0) {
-      const lastId = result.rows[0].menu_id;
-
-      // Extract numeric part from something like "zodu-branch-320"
-      const match = lastId.match(/(\d+)$/);
-      const lastNum = match ? parseInt(match[1], 10) : 0;
-      console.log(lastNum);
-
-      nextNumber = lastNum + 1;
-    }
-
-    await conn.query("COMMIT");
-
-    // Return zero-padded ID part (e.g., "001", "320")
-    return String(nextNumber).padStart(3, "0");
-  } catch (err) {
-    await conn.query("ROLLBACK");
-    throw new Error("Error generating next menu ID: " + err.message);
-  }
-};
-
-
-exports.getNextOrderId = async (branchId) => {
-  try {
-    await conn.query("BEGIN");
-
-    // Lock all rows for this branch to prevent race condition
-    const result = await conn.query(
-      `SELECT order_id 
-       FROM tbl_orders
-       WHERE branch_id = $1
-       ORDER BY order_id DESC
-       LIMIT 1
-       FOR UPDATE`,
-      [branchId]
-    );
-
-    let nextNumber = 1;
-    if (result.rows.length > 0) {
-      const lastId = result.rows[0].order_id; // e.g. Z001-O012
-      console.log(lastId)
-      const lastNum = parseInt(lastId.split("-O")[1]);
-      nextNumber = lastNum + 1;
-    }
-
-    await conn.query("COMMIT");
-
-    return String(nextNumber).padStart(3, "0"); // 001, 002...
-  } catch (err) {
-    await conn.query("ROLLBACK");
-    throw err;
-  }
-}
 
 exports.getNextPurchaseId = async (branchId) => {
   try {
@@ -2740,7 +2668,126 @@ exports.updateActive = async (menuId, active) => {
   }
 }
 
+exports.getNextItemId = async(zoduId, branchId) => {
+  const result = await conn.query(
+    `SELECT item_id
+     FROM tbl_menu_items
+     WHERE zodu_id = $1 AND branch_id = $2
+     ORDER BY (regexp_replace(item_id, '[^0-9]', '', 'g'))::bigint DESC
+     LIMIT 1
+     FOR UPDATE`,
+    [zoduId, branchId]
+  );
+ 
+  let nextNumber = 1;
+  if (result.rows.length > 0) {
+    const lastId = result.rows[0].item_id;
+    const match  = lastId.match(/(\d+)$/);
+    nextNumber   = match ? parseInt(match[1], 10) + 1 : 1;
+  }
+ 
+  return String(nextNumber).padStart(3, "0");
+}
 
+exports.createMenuItem = async (data) => {
+  const seq     = await getNextItemId(data.zodu_id, data.branch_id);
+  const item_id = `${seq}`;
+ 
+  const { rows } = await conn.query(
+    `INSERT INTO tbl_menu_items (
+        item_id, zodu_id, branch_id,
+        item_type, item_name,
+        category_id, unit,
+        mrp, sell_price, purchase_price,
+        gst_type, tax_incl_type,
+        sku, barcode, hsn_code,
+        item_img, status
+     ) VALUES (
+        $1,$2,$3,
+        $4,$5,
+        $6,$7,
+        $8,$9,$10,
+        $11,$12,
+        $13,$14,$15,
+        $16,$17
+     )
+     RETURNING *`,
+    [
+      item_id,
+      data.zodu_id,
+      data.branch_id,
+      data.item_type,
+      data.item_name,
+      data.category_id    ?? null,
+      data.unit           ?? null,
+      data.mrp            != null ? round(data.mrp)            : null,
+      data.sell_price     != null ? round(data.sell_price)     : null,
+      data.purchase_price != null ? round(data.purchase_price) : null,
+      data.gst_type       ?? null,
+      data.tax_incl_type  ?? false,
+      data.sku            || null,
+      data.barcode        || null,
+      data.hsn_code       || null,
+      data.item_img       || null,
+      data.status         ?? "active",
+    ]
+  );
+ 
+  return rows[0];
+}
+
+exports.updateMenuItem= async (item_uuid, data) => {
+  // Build SET clause dynamically from provided fields only
+  const fields = [
+    "item_name", "item_type", "category_id", "unit",
+    "mrp", "sell_price", "purchase_price",
+    "gst_type", "tax_incl_type",
+    "sku", "barcode", "hsn_code", "item_img", "status",
+  ];
+ 
+  const setClauses = [];
+  const values     = [];
+  let   paramIdx   = 1;
+ 
+  for (const field of fields) {
+    if (data[field] === undefined) continue;
+ 
+    let val = data[field];
+ 
+    // Normalise numeric prices
+    if (["mrp", "sell_price", "purchase_price"].includes(field) && val != null) {
+      val = round(val);
+    }
+    // Normalise empty strings → null for nullable fields
+    if (["sku", "barcode", "hsn_code", "item_img"].includes(field) && val === "") {
+      val = null;
+    }
+ 
+    setClauses.push(`${field} = $${paramIdx}`);
+    values.push(val);
+    paramIdx++;
+  }
+ 
+  if (setClauses.length === 0) {
+    throw new Error("No valid fields to update");
+  }
+ 
+  values.push(item_uuid); // last param = WHERE clause
+ 
+  const { rows } = await client.query(
+    `UPDATE tbl_menu_items
+     SET ${setClauses.join(", ")}
+     WHERE item_uuid = $${paramIdx}
+     RETURNING *`,
+    values
+  );
+ 
+  if (rows.length === 0) {
+    throw new Error("Menu item not found");
+  }
+ 
+  return rows[0];
+}
 
 exports.createProduct = async (data) => {
   try {
@@ -2792,84 +2839,6 @@ exports.createProduct = async (data) => {
   }
 };
 
-
-exports.getSingleOrder = async (zodu_id, branch_id, api_order_id) => {
-  const query = `
-    SELECT 
-      o.api_order_id,
-      o.public_order_no,
-
-      o.order_date,
-      o.order_time,
- TO_CHAR(
-        o.created_at,
-        'DD Mon YYYY, HH12:MI AM (Dy)'
-      ) AS formatted_date,
-      o.order_type,
-      o.payment_type,
-      o.customer_name,
-      o.customer_phone,
-      o.table_no,
-
-      o.no_of_items,
-      (
-        SELECT COALESCE(SUM(i.qty), 0)
-        FROM tbl_ordered_items i
-        WHERE i.api_order_id = o.api_order_id
-      ) AS total_qty,
-
-      -- 💰 BILL SUMMARY
-      o.subtotal,
-      o.total_tax,
-      o.discount_type,
-      o.discount_value,
-      o.discount_amount,
-      o.total_amt,
-
-      (
-        SELECT COALESCE(
-          json_agg(
-            json_build_object(
-              'item_name',
-                CASE
-                  WHEN i.variant_name IS NOT NULL AND BTRIM(i.variant_name) <> ''
-                    THEN i.item_name || ' - ' || i.variant_name
-                  ELSE i.item_name
-                END,
-              'qty', i.qty,
-              'price', i.price,
-              'amount', i.total_amount,
-              'unit', i.item_unit,
-
-              -- 🧾 TAX DETAILS
-              'gst_percentage', i.gst_percentage,
-              'tax_amount', i.tax_amount,
-              'cgst', i.cgst,
-              'sgst', i.sgst,
-              'tax_inclusive', i.tax_inclusive
-            )
-          ),
-          '[]'::json
-        )
-        FROM tbl_ordered_items i
-        WHERE i.api_order_id = o.api_order_id
-      ) AS items
-
-    FROM tbl_orders o
-    WHERE o.api_order_id = $1
-      AND o.zodu_id = $2
-      AND o.branch_id = $3
-      AND o.final_payment = true
-  `;
-
-  const result = await conn.query(query, [
-    api_order_id,
-    zodu_id,
-    branch_id
-  ]);
-
-  return result.rows[0] || null;
-}
  
 function calculateItemTax(item) {
   const gst_percentage = Number(item.gst_percentage ?? 0);
@@ -3961,21 +3930,7 @@ exports.addInventory = async (items, branch_id, zodu_id, purchase_date, category
   }
 };
 
-// CREATE ITEM
-// CREATE ITEM
-exports.createItem = async (input) => {
-  const { name, branch_id, zodu_id } = input;
 
-
-  const query = `
-    INSERT INTO tbl_expitem (name, branch_id, zodu_id)
-    VALUES ($1, $2, $3)
-    RETURNING *;
-  `;
-
-  const result = await conn.query(query, [name, branch_id, zodu_id]);
-  return result.rows;
-};
 
 
 // GET ITEMS BY BRANCH + ZODU
@@ -3990,28 +3945,6 @@ exports.getItems = async (branch_id) => {
   return result.rows;
 };
 
-// UPDATE ITEM (SECURED BY BRANCH & ZODU)
-exports.updateItem = async (id, branch_id,name) => {
-  const query = `
-    UPDATE tbl_expitem
-    SET name = $3, updated_at = CURRENT_TIMESTAMP
-    WHERE id = $1 AND branch_id = $2
-    RETURNING *;
-  `;
-  const result = await conn.query(query, [id, branch_id,name]);
-  return result.rows;
-};
-
-// DELETE ITEM (SECURED BY BRANCH & ZODU)
-exports.deleteItem = async (id) => {
-  const query = `
-    DELETE FROM tbl_expitem
-    WHERE id = $1
-    RETURNING *;
-  `;
-  const result = await conn.query(query, [id]);
-  return result.rows;
-};
 
 exports.getPurchaseById = async (purchase_id) => {
   try {
