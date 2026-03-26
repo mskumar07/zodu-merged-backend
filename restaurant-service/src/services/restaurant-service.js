@@ -2,7 +2,7 @@ const multer = require('multer');
 const { consumeEvents } = require('../consumer/consumer');
 const Minio = require("minio");
 const sharp = require("sharp");
-
+const conn = require('../database/connection.js');
 const repository = require('../repository/restaurant-repo.js');
 const { PDFDocument } = require('pdf-lib');
 const moment = require('moment/moment');
@@ -10,6 +10,8 @@ const { DB_HOSTNAME, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY, BUCKET_NAME }
 const { getDateRange } = require("../utils/Date_Folder/getDate.js");
 const { get } = require('../api/restaurant-controller.js');
 const { getPagination, getMeta } = require('../utils/pagination.js');
+const stockRepository = require('../repository/menu-repo');
+
 
 
 
@@ -1405,21 +1407,104 @@ async function createProduct(productData) {
 
 
 async function createOrder(orderData) {
+  const client = await conn.connect();
+
   try {
-    // 1️⃣  Insert into tbl_sales → returns { sale_uuid, sale_id, … }
-    const sale = await repository.createOrder(orderData);
- 
-    // 2️⃣  Insert items – pass `sale` so the repo has sale_uuid + sale_id
-    const items = await repository.createSaleItems(orderData, sale);
- 
-    // 3️⃣  Insert payment only when money was actually collected
-    const paidAmount = round(Number(orderData.paid_amount ?? 0));
-    let payment = null;
- 
-    if (paidAmount > 0) {
-      payment = await repository.createSalesPayment(orderData, sale);
+    await client.query("BEGIN");
+
+    // ✅ 1. CREATE SALE
+    const sale = await repository.createOrder(orderData, client);
+
+    // ✅ 2. CREATE ITEMS
+    const items = await repository.createSaleItems(orderData, sale, client);
+
+    // ✅ 3. STOCK DEDUCTION + LEDGER
+    for (const item of orderData.items) {
+      const qty = Number(item.quantity || 0);
+
+      if (!qty || qty <= 0) {
+        throw new Error(`Invalid quantity for item ${item.item_id}`);
+      }
+
+
+      
+
+      // ✅ FIX: use correct repo method
+      const inventory = await stockRepository.getInventoryByItemUuid(
+        client,
+        item.item_uuid
+      );
+
+      if (!inventory) {
+        throw new Error(`Inventory not found for item ${item.item_id}`);
+      }
+
+      // 🔒 LOCK ROW (IMPORTANT)
+      const locked = await client.query(
+        `SELECT available_qty
+         FROM tbl_inventory
+         WHERE item_uuid = $1
+         FOR UPDATE`,
+        [item.item_uuid]
+      );
+
+      const stock_before = Number(locked.rows[0].available_qty);
+
+      if (qty > stock_before) {
+        throw new Error(`Insufficient stock for ${inventory.item_name}`);
+      }
+
+      const stock_after = stock_before - qty;
+
+      // ✅ UPDATE INVENTORY
+      await client.query(
+        `UPDATE tbl_inventory
+         SET available_qty = $1,
+             last_stock_update = NOW()
+         WHERE item_uuid = $2`,
+        [stock_after, item.item_uuid]
+      );
+
+      // ✅ STOCK LEDGER
+      await stockRepository.createStockLedger(client, {
+        item_uuid: inventory.item_uuid,
+        item_id: inventory.item_id,
+        zodu_id: inventory.zodu_id,
+        branch_id: inventory.branch_id,
+        item_name: inventory.item_name,
+        transaction_type: "sale",
+        reference_id: sale.sale_uuid,
+        qty_change: -qty,
+        stock_before,
+        stock_after,
+        notes: "Sale Order",
+      });
     }
- 
+
+    // ✅ 4. PAYMENT HANDLING
+    let payment = null;
+    const paidAmount = Number(orderData.paid_amount || 0);
+
+    if (paidAmount > 0) {
+      payment = await repository.createSalesPayment(orderData, sale, client);
+
+      // ✅ UPDATE SALE PAYMENT STATUS
+      await client.query(
+        `UPDATE tbl_sales
+         SET paid_amount = COALESCE(paid_amount, 0) + $1,
+             payment_status =
+               CASE
+                 WHEN (COALESCE(paid_amount,0) + $1) >= total_amount THEN 'paid'
+                 WHEN (COALESCE(paid_amount,0) + $1) = 0 THEN 'pending'
+                 ELSE 'partial'
+               END
+         WHERE sale_uuid = $2`,
+        [paidAmount, sale.sale_uuid]
+      );
+    }
+
+    await client.query("COMMIT");
+
     return {
       success: true,
       message: "Order created successfully",
@@ -1427,9 +1512,167 @@ async function createOrder(orderData) {
       items,
       payment,
     };
+
   } catch (err) {
+    await client.query("ROLLBACK");
+
     console.error("Order Error:", err);
+
+    return {
+      success: false,
+      message: err.message,
+    };
+  } finally {
+    client.release();
+  }
+}
+
+
+async function updateOrder(orderData) {
+  const client = await conn.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const saleId = orderData.sale_uuid;
+
+    // 1️⃣ GET OLD ITEMS
+  const oldItemsRes = await client.query(
+  `SELECT 
+      si.*,
+      m.item_uuid   -- ✅ GET UUID FROM MENU
+
+   FROM tbl_sale_items si
+
+   LEFT JOIN tbl_menu_items m
+     ON m.item_id::text = si.item_id   -- ✅ SAFE CAST
+
+   WHERE si.sale_uuid = $1`,
+  [saleId]
+);
+
+    const oldItems = oldItemsRes.rows;
+
+    console.log(oldItems)
+
+    // 2️⃣ RESTORE STOCK
+    for (const item of oldItems) {
+      const qty = Number(item.quantity);
+
+      const inv = await client.query(
+        `SELECT available_qty 
+         FROM tbl_inventory 
+         WHERE item_uuid = $1 
+         FOR UPDATE`,
+        [item.item_uuid]
+      );
+
+      const stock = Number(inv.rows[0].available_qty);
+
+      await client.query(
+        `UPDATE tbl_inventory 
+         SET available_qty = $1 
+         WHERE item_uuid = $2`,
+        [stock + qty, item.item_uuid]
+      );
+    }
+
+    // 3️⃣ DELETE OLD ITEMS
+    await client.query(
+      `DELETE FROM tbl_sale_items WHERE sale_uuid = $1`,
+      [saleId]
+    );
+
+    // 4️⃣ UPDATE SALE HEADER
+    await client.query(
+      `UPDATE tbl_sales
+       SET total_amount = $1,
+           paid_amount = $2,
+           discount_amount = $3,
+           updated_at = NOW()
+       WHERE sale_uuid = $4`,
+      [
+        orderData.total_amount,
+        orderData.paid_amount,
+        orderData.discount || 0,
+        saleId,
+      ]
+    );
+
+    // 5️⃣ INSERT NEW ITEMS + STOCK DEDUCT
+    for (const item of orderData.items) {
+
+      await client.query(
+        `INSERT INTO tbl_sale_items (
+          sale_uuid,
+          item_id,
+          item_name,
+          unit,
+          quantity,
+          price,
+          gst_percentage,
+          discount,
+          hsn_code,
+          mrp,
+          tax_inclusive
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [
+          saleId,
+          item.item_id,
+          item.item_name,
+          item.unit,
+          item.quantity,
+          item.price,
+          item.gst_percentage,
+          item.discount || 0,
+          item.hsn_code || null,
+          item.mrp || 0,
+          item.tax_inclusive || false,
+        ]
+      );
+
+      // STOCK DEDUCT
+    const inv = await client.query(
+  `SELECT available_qty 
+   FROM tbl_inventory 
+   WHERE item_uuid = $1 
+   FOR UPDATE`,
+  [item.item_uuid]
+);
+
+if (!inv.rows.length) {
+  throw new Error(`Inventory not found for item ${item.item_name}`);
+}
+
+const stock = Number(inv.rows[0].available_qty);
+
+      if (item.quantity > stock) {
+        throw new Error(`Insufficient stock for ${item.item_name}`);
+      }
+
+      await client.query(
+        `UPDATE tbl_inventory 
+         SET available_qty = $1 
+         WHERE item_uuid = $2`,
+        [stock - item.quantity, item.item_uuid]
+      );
+    }
+
+    await client.query("COMMIT");
+
+    return {
+      success: true,
+      message: "Order updated successfully",
+    };
+
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.log(err);
+
     return { success: false, message: err.message };
+  } finally {
+    client.release();
   }
 }
  
@@ -2278,4 +2521,5 @@ module.exports = {
   getCustomerById,
   createCustomer,
   markPayment,
+  updateOrder
 };

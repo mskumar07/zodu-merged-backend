@@ -143,12 +143,38 @@ exports.updateMenuItem = async (client, item_uuid, data) => {
  */
 exports.getMenuItemByUuid = async (client, item_uuid) => {
   const { rows } = await client.query(
-    `SELECT * FROM tbl_menu_items WHERE item_uuid = $1`,
+    `SELECT 
+        m.*,
+
+        -- ✅ Category
+        c.id   AS category_id,
+        c.name AS category_name,
+
+        -- ✅ Unit
+        u.id   AS unit,
+        u.short_name AS unit_name,
+
+        g.gst_rate AS gst_rate
+
+
+     FROM tbl_menu_items m
+
+     LEFT JOIN tbl_category c 
+       ON m.category_id = c.id
+
+     LEFT JOIN tbl_units u 
+       ON m.unit = u.id
+
+      LEFT JOIN tbl_gst g 
+       ON m.gst_type = g.id
+
+
+     WHERE m.item_uuid = $1`,
     [item_uuid]
   );
+
   return rows[0] ?? null;
 };
-
 /**
  * Paginated list with optional search + filters.
  * Returns { rows, total } — router builds the pagination envelope.
@@ -454,4 +480,31 @@ exports.createInventoryRecord = async (client, data) => {
     ]
   );
   return rows[0] ?? null;
+};
+
+exports.createStockLedger = async (client, data) => {
+  const { rows } = await client.query(
+    `INSERT INTO tbl_stock_ledger (
+      item_uuid, item_id, zodu_id, branch_id,
+      item_name, transaction_type,
+      reference_id, qty_change,
+      stock_before, stock_after, notes
+    )
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    RETURNING *`,
+    [
+      data.item_uuid,
+      data.item_id,
+      data.zodu_id,
+      data.branch_id,
+      data.item_name,
+      data.transaction_type,
+      data.reference_id,
+      data.qty_change,
+      data.stock_before,
+      data.stock_after,
+      data.notes,
+    ]
+  );
+  return rows[0];
 };

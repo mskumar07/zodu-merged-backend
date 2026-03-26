@@ -15,7 +15,8 @@ app.use('/', resRouter);
 app.use('/api/dashboard', require('./api/dashboard-controller'));
 app.use('/api/branch', require('./api/branch-controller'));
 app.use('/api/menu', require('./api/menu-controller'));
-
+app.use('/api/purchase', require('./api/purchase-controller'));
+app.use('/api/vendor', require('./api/vendor-controller'));
 app.use(HandleErrorWithLogger);
 
 

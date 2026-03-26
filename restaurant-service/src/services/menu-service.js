@@ -21,36 +21,60 @@ async function createMenuItem(input) {
   const client = await conn.connect();
   try {
     await client.query("BEGIN");
- 
-    const nextNum = await repository.getNextItemNumber(client, input.zodu_id, input.branch_id);
+
+    const nextNum = await repository.getNextItemNumber(
+      client,
+      input.zodu_id,
+      input.branch_id
+    );
+
     const item_id = String(nextNum);
- 
+
     const newItem = await repository.createMenuItem(client, {
       ...input,
       item_id,
     });
- 
-    // Create the matching inventory record in the same transaction
+
+    const openingStock = Number(input.opening_stock ?? 0);
+
+    // Inventory
     await repository.createInventoryRecord(client, {
-      item_uuid:     newItem.item_uuid,
-      item_id:       newItem.item_id,
-      zodu_id:       newItem.zodu_id,
-      branch_id:     newItem.branch_id,
-      item_name:     newItem.item_name,
-      available_qty: input.opening_stock  ?? 0,   // from AddItemModal optional field
-      reorder_level: input.reorder_level  ?? 0,   // low stock alert threshold
+      item_uuid: newItem.item_uuid,
+      item_id: newItem.item_id,
+      zodu_id: newItem.zodu_id,
+      branch_id: newItem.branch_id,
+      item_name: newItem.item_name,
+      available_qty: openingStock,
+      reorder_level: input.reorder_level ?? 0,
     });
- 
+
+    // 🔥 Ledger
+    if (openingStock > 0) {
+      await repository.createStockLedger(client, {
+        item_uuid: newItem.item_uuid,
+        item_id: newItem.item_id,
+        zodu_id: newItem.zodu_id,
+        branch_id: newItem.branch_id,
+        item_name: newItem.item_name,
+        transaction_type: "opening_stock",
+        reference_id: null,
+        qty_change: openingStock,
+        stock_before: 0,
+        stock_after: openingStock,
+        notes: "Opening stock",
+      });
+    }
+
     await client.query("COMMIT");
- 
+
     return {
       success: true,
       message: "Menu item created successfully",
-      data:    newItem,
+      data: newItem,
     };
+
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
-    console.error("[menu service] createMenuItem:", err.message);
     return { success: false, message: err.message };
   } finally {
     client.release();
@@ -244,63 +268,90 @@ async function adjustStock({
   reason,
   notes,
 }) {
-  if (!['add', 'subtract'].includes(adjustment_type)) {
+  if (!["add", "subtract"].includes(adjustment_type)) {
     return { success: false, message: 'adjustment_type must be "add" or "subtract"' };
   }
- 
+
   if (isNaN(adjustment_qty) || Number(adjustment_qty) <= 0) {
-    return { success: false, message: 'adjustment_qty must be a positive number' };
+    return { success: false, message: "adjustment_qty must be a positive number" };
   }
- 
+
   const client = await conn.connect();
+
   try {
-    await client.query('BEGIN');
- 
-    // Get current record first (for subtract validation)
+    await client.query("BEGIN");
+
+    // 🔹 Lock row (important)
     const current = await repository.getInventoryByUuid(client, inventory_uuid);
+
     if (!current) {
-      await client.query('ROLLBACK');
-      return { success: false, message: 'Inventory record not found' };
+      await client.query("ROLLBACK");
+      return { success: false, message: "Inventory record not found" };
     }
- 
+
     const qty = Number(adjustment_qty);
- 
-    // Prevent stock going negative
-    if (adjustment_type === 'subtract' && qty > Number(current.available_qty)) {
-      await client.query('ROLLBACK');
+
+    // ❌ Prevent negative stock
+    if (adjustment_type === "subtract" && qty > Number(current.available_qty)) {
+      await client.query("ROLLBACK");
       return {
         success: false,
         message: `Cannot subtract ${qty} — only ${current.available_qty} available`,
       };
     }
- 
+
+    const stock_before = Number(current.available_qty);
+
+    // 🔹 Update inventory
     const updated = await repository.adjustStock(client, {
       inventory_uuid,
       adjustment_type,
       adjustment_qty: qty,
     });
- 
-    await client.query('COMMIT');
- 
+
+    const stock_after = Number(updated.available_qty);
+
+    // 🔥 CALCULATE LEDGER QTY
+    const qty_change = adjustment_type === "add" ? qty : -qty;
+
+    // 🔥 STOCK LEDGER ENTRY
+    await repository.createStockLedger(client, {
+      item_uuid: current.item_uuid,
+      item_id: current.item_id,
+      zodu_id: current.zodu_id,
+      branch_id: current.branch_id,
+      item_name: current.item_name,
+      transaction_type: "adjustment",
+      reference_id: null,
+      qty_change,
+      stock_before,
+      stock_after,
+      notes: reason || notes || "Manual stock adjustment",
+    });
+
+    await client.query("COMMIT");
+
     return {
       success: true,
-      message: 'Stock adjusted successfully',
+      message: "Stock adjusted successfully",
       data: {
-        inventory_uuid:    updated.inventory_uuid,
-        item_id:           updated.item_id,
-        item_name:         updated.item_name,
-        previous_qty:      Number(current.available_qty),
+        inventory_uuid: updated.inventory_uuid,
+        item_id: updated.item_id,
+        item_name: updated.item_name,
+        previous_qty: stock_before,
         adjustment_type,
-        adjustment_qty:    qty,
-        new_qty:           Number(updated.available_qty),
-        reason:            reason   || null,
-        notes:             notes    || null,
+        adjustment_qty: qty,
+        new_qty: stock_after,
+        reason: reason || null,
+        notes: notes || null,
         last_stock_update: updated.last_stock_update,
       },
     };
+
   } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    console.error('[inventory service] adjustStock:', err.message);
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("[inventory service] adjustStock:", err.message);
+
     return { success: false, message: err.message };
   } finally {
     client.release();

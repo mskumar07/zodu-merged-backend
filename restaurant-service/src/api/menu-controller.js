@@ -32,6 +32,7 @@ router.post("/add/menu_item", async (req, res) => {
       data:    result.data,
     });
   } catch (error) {
+    console.log(err)
     console.error("[menu] create error:", error);
     return res.status(500).json({ success: false, error: error.message });
   }
@@ -44,6 +45,8 @@ router.post("/add/menu_item", async (req, res) => {
 router.put("/edit/menu_item/:item_uuid", async (req, res) => {
   try {
     const { item_uuid } = req.params;
+
+
  
     if (!UUID_REGEX.test(item_uuid)) {
       return res.status(400).json({ success: false, error: "Invalid item_uuid format" });
@@ -53,6 +56,7 @@ router.put("/edit/menu_item/:item_uuid", async (req, res) => {
  
     const { errors, input } = await RequestValidator(schema.editSchema, req.body);
     if (errors) {
+      console.log(errors)
       return res.status(400).json({ success: false, errors });
     }
  
@@ -70,6 +74,7 @@ router.put("/edit/menu_item/:item_uuid", async (req, res) => {
       data:    result.data,
     });
   } catch (error) {
+    console.log(error)
     console.error("[menu] edit error:", error);
     return res.status(500).json({ success: false, error: error.message });
   }

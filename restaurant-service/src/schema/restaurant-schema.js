@@ -153,7 +153,8 @@ sale_time: Joi.string()
   items: Joi.array()
     .items(
       Joi.object({
-        // 🔥 FIXED NAME
+        // 🔥 FIXED 
+        item_uuid: Joi.string().required(),
         item_id: Joi.string().required(),
 
         item_name: Joi.string().optional().allow(null, ""),
@@ -188,6 +189,95 @@ sale_time: Joi.string()
     return value;
   }, "Discount validation");
 
+  const order_update = Joi.object({
+
+  // ✅ REQUIRED (for update)
+  sale_uuid: Joi.string()
+    .required(),
+
+  zodu_id: Joi.string().max(50).required(),
+  branch_id: Joi.string().max(50).required(),
+
+  sale_type: Joi.string()
+    .valid("retail", "credit")
+    .required(),
+
+  sale_date: Joi.date().required(),
+
+  sale_time: Joi.string()
+    .pattern(/^([01]\d|2[0-3]):([0-5]\d):([0-5]\d)$/) // HH:mm:ss
+    .optional()
+    .allow(null, ""),
+
+  customer_id: Joi.string()
+    .guid({ version: ["uuidv4", "uuidv5"] })
+    .allow(null),
+
+  discount_type: Joi.string()
+    .valid("percentage", "flat", null)
+    .allow(null),
+
+  discount_value: Joi.number()
+    .min(0)
+    .default(0),
+
+  paid_amount: Joi.number()
+    .min(0)
+    .default(0),
+
+  payment_mode: Joi.string()
+    .valid("Cash", "Card", "UPI", "Credit")
+    .required(),
+
+  transaction_id: Joi.string()
+    .allow(null, ""),
+
+  notes: Joi.string()
+    .allow(null, ""),
+
+  // ✅ ITEMS (VERY IMPORTANT)
+  items: Joi.array()
+    .items(
+      Joi.object({
+        item_uuid: Joi.string()
+          .required(),
+
+        item_id: Joi.string().required(),
+        item_name: Joi.string().required(),
+
+        unit: Joi.string().default("NOS"),
+
+        quantity: Joi.number()
+          .integer()
+          .min(1)
+          .required(),
+
+        price: Joi.number()
+          .min(0)
+          .required(),
+
+        discount: Joi.number()
+          .min(0)
+          .default(0),
+
+        gst_percentage: Joi.number()
+          .min(0)
+          .required(),
+
+        hsn_code: Joi.string()
+          .allow(null, ""),
+
+        mrp: Joi.number()
+          .min(0)
+          .default(0),
+
+        tax_inclusive: Joi.boolean()
+          .default(false),
+      })
+    )
+    .min(1)
+    .required(),
+});
 
 const add_customer = Joi.object({
   zodu_id:   Joi.string().required(),
@@ -503,6 +593,7 @@ const editSchema = Joi.object({
   hsn_code:       Joi.string().max(20).allow(null, ""),
   item_img:       Joi.string().allow(null, ""),
   status:         Joi.string().valid("active", "inactive"),
+    opening_stock:  Joi.number().min(0).allow(null),reorder_level:  Joi.number().min(0).allow(null),
 }).min(1); // at least one field required for edit
  
 
@@ -531,4 +622,5 @@ module.exports = {
   mark_payment,
   createSchema,
   editSchema,
+  order_update
 };

@@ -1978,6 +1978,7 @@ exports.get_pos_data = async (branch_id) => {
       p.branch_id,
 
       p.item_id,
+      p.item_uuid,
       p.item_name,
 
       p.category_id,
@@ -3349,34 +3350,44 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
     : null;
  
   // ── 2. Line items (FK → sale_uuid) ───────────────────────────
-  const itemsResult = await conn.query(
-    `SELECT
-        si.id,
-        si.sale_uuid,
-        si.sale_id,
-        si.item_id,
-        si.item_name,
-        si.variant_id,
-        si.variant_name,
-        si.unit,
-        si.quantity,
-        si.price,
-        si.mrp,
-        si.discount,
-        si.hsn_code,
-        si.gst_percentage,
-        si.tax_amount,
-        si.cgst,
-        si.sgst,
-        si.tax_inclusive,
-        si.total_amount,
-        TO_CHAR(si.created_at, 'DD Mon YYYY') AS created_at_fmt
- 
-     FROM tbl_sale_items si
-     WHERE si.sale_uuid = $1
-     ORDER BY si.id ASC`,
-    [sale_uuid]
-  );
+ const itemsResult = await conn.query(
+  `SELECT
+      si.id,
+      si.sale_uuid,
+      si.sale_id,
+      si.item_id,
+
+      -- ✅ ADD THIS
+      m.item_uuid,
+
+      si.item_name,
+      si.variant_id,
+      si.variant_name,
+      si.unit,
+      si.quantity,
+      si.price,
+      si.mrp,
+      si.discount,
+      si.hsn_code,
+      si.gst_percentage,
+      si.tax_amount,
+      si.cgst,
+      si.sgst,
+      si.tax_inclusive,
+      si.total_amount,
+
+      TO_CHAR(si.created_at, 'DD Mon YYYY') AS created_at_fmt
+
+   FROM tbl_sale_items si
+
+   -- ✅ JOIN MENU ITEMS
+   LEFT JOIN tbl_menu_items m
+     ON m.item_id = si.item_id
+
+   WHERE si.sale_uuid = $1
+   ORDER BY si.id ASC`,
+  [sale_uuid]
+);
  
   // ── 3. Payment history (all rows from tbl_sale_payment) ───────
   const paymentResult = await conn.query(
