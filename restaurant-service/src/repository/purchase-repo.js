@@ -149,27 +149,30 @@ exports.getPurchaseById = async (id, { branch_id, zodu_id } = {}) => {
   if (!purchase) return null;
 
   // ── 2. Purchase items ────────────────────────────────────────
-  const { rows: items } = await conn.query(
-    `SELECT
-       pi.purchase_item_id,
-       pi.item_id,
-       pi.item_uuid,
-       pi.item_name,
-       pi.qty,
-       pi.unit,
-       pi.purchase_price,
-       pi.gst_percentage,
-       pi.tax_amount,
-       pi.cgst,
-       pi.sgst,
-       pi.subtotal,
-       pi.total_price,
-       pi.category_id
-     FROM tbl_purchase_items pi
-     WHERE pi.purchase_id = $1
-     ORDER BY pi.purchase_item_id ASC`,
-    [purchase.purchase_id]
-  );
+const { rows: items } = await conn.query(
+  `SELECT
+     pi.purchase_item_id,
+     pi.item_id,
+     pi.item_uuid,
+     pi.item_name,
+     pi.qty,
+     pi.unit,
+     pi.purchase_price,
+     pi.gst_percentage,
+     pi.tax_amount,
+     pi.cgst,
+     pi.sgst,
+     pi.subtotal,
+     pi.total_price,
+     pi.category_id,
+     mi.hsn_code                -- 🔥 ADDED
+   FROM tbl_purchase_items pi
+   LEFT JOIN tbl_menu_items mi 
+     ON mi.item_id = pi.item_id   -- 🔥 JOIN USING item_id
+   WHERE pi.purchase_id = $1
+   ORDER BY pi.purchase_item_id ASC`,
+  [purchase.purchase_id]
+);
 
   // ── 3. Payment history ───────────────────────────────────────
   const { rows: payments } = await conn.query(

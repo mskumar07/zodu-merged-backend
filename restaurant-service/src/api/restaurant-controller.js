@@ -504,7 +504,6 @@ router.put(
 router.post("/api/add/orders", async (req, res) => {
   try {
     const { errors, input } = await RequestValidator(schema.order_create, req.body);
-    console.log(req.body)
     if (errors) {
       console.log(errors)
       return res.status(400).json({ errors });
@@ -529,6 +528,8 @@ router.put("/api/update/orders", async (req, res) => {
     const { errors, input } = await RequestValidator(schema.order_update, req.body);
 
     if (errors) return res.status(400).json({ errors });
+
+    console.log(input)
 
     const data = await service.updateOrder(input);
 

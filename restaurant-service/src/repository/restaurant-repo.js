@@ -2950,7 +2950,6 @@ function calculateOrderTotals(items, discount_type, discount_value) {
 // ─────────────────────────────────────────────────────────────
 exports.createOrder = async (orderData) => {
   try {
-    await conn.query("BEGIN");
  
     const sale_date = orderData.sale_date
       ? new Date(orderData.sale_date).toISOString().slice(0, 10)
@@ -3022,10 +3021,8 @@ exports.createOrder = async (orderData) => {
       ]
     );
  
-    await conn.query("COMMIT");
     return result.rows[0]; // includes sale_uuid (PK) and sale_id
   } catch (err) {
-    await conn.query("ROLLBACK");
     throw err;
   }
 };
@@ -3036,7 +3033,6 @@ exports.createOrder = async (orderData) => {
 // ─────────────────────────────────────────────────────────────
 exports.createSaleItems = async (orderData, sale) => {
   try {
-    await conn.query("BEGIN");
  
     const items = orderData.items;
  
@@ -3090,10 +3086,8 @@ exports.createSaleItems = async (orderData, sale) => {
       insertedItems.push(result.rows[0]);
     }
  
-    await conn.query("COMMIT");
     return insertedItems;
   } catch (err) {
-    await conn.query("ROLLBACK");
     throw new Error("Unable to create sale items: " + err.message);
   }
 };
@@ -3104,7 +3098,6 @@ exports.createSaleItems = async (orderData, sale) => {
 // ─────────────────────────────────────────────────────────────
 exports.createSalesPayment = async (orderData, sale) => {
   try {
-    await conn.query("BEGIN");
  
     const paid_amount  = round(Number(orderData.paid_amount ?? sale.total_amount));
     const total_amount = round(Number(sale.total_amount));
@@ -3137,10 +3130,8 @@ exports.createSalesPayment = async (orderData, sale) => {
       ]
     );
  
-    await conn.query("COMMIT");
     return result.rows[0];
   } catch (err) {
-    await conn.query("ROLLBACK");
     throw new Error("Unable to create payment: " + err.message);
   }
 };
@@ -3359,7 +3350,7 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
 
       -- ✅ ADD THIS
       m.item_uuid,
-
+      m.tax_incl_type AS tax_inclusive,
       si.item_name,
       si.variant_id,
       si.variant_name,

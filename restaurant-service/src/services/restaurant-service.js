@@ -1488,19 +1488,6 @@ async function createOrder(orderData) {
     if (paidAmount > 0) {
       payment = await repository.createSalesPayment(orderData, sale, client);
 
-      // ✅ UPDATE SALE PAYMENT STATUS
-      await client.query(
-        `UPDATE tbl_sales
-         SET paid_amount = COALESCE(paid_amount, 0) + $1,
-             payment_status =
-               CASE
-                 WHEN (COALESCE(paid_amount,0) + $1) >= total_amount THEN 'paid'
-                 WHEN (COALESCE(paid_amount,0) + $1) = 0 THEN 'pending'
-                 ELSE 'partial'
-               END
-         WHERE sale_uuid = $2`,
-        [paidAmount, sale.sale_uuid]
-      );
     }
 
     await client.query("COMMIT");
@@ -1527,7 +1514,6 @@ async function createOrder(orderData) {
   }
 }
 
-
 async function updateOrder(orderData) {
   const client = await conn.connect();
 
@@ -1536,72 +1522,150 @@ async function updateOrder(orderData) {
 
     const saleId = orderData.sale_uuid;
 
+    // ✅ SAFE CUSTOMER
+    const customerId =
+      orderData.customer_id !== undefined &&
+      orderData.customer_id !== null &&
+      orderData.customer_id !== ""
+        ? orderData.customer_id
+        : null;
+
+    // =========================================================
     // 1️⃣ GET OLD ITEMS
-  const oldItemsRes = await client.query(
-  `SELECT 
-      si.*,
-      m.item_uuid   -- ✅ GET UUID FROM MENU
-
-   FROM tbl_sale_items si
-
-   LEFT JOIN tbl_menu_items m
-     ON m.item_id::text = si.item_id   -- ✅ SAFE CAST
-
-   WHERE si.sale_uuid = $1`,
-  [saleId]
-);
+    // =========================================================
+    const oldItemsRes = await client.query(
+      `SELECT si.*, m.item_uuid
+       FROM tbl_sale_items si
+       LEFT JOIN tbl_menu_items m
+         ON m.item_id::text = si.item_id
+       WHERE si.sale_uuid = $1`,
+      [saleId]
+    );
 
     const oldItems = oldItemsRes.rows;
 
-    console.log(oldItems)
-
-    // 2️⃣ RESTORE STOCK
+    // =========================================================
+    // 2️⃣ RESTORE OLD STOCK
+    // =========================================================
     for (const item of oldItems) {
       const qty = Number(item.quantity);
 
+      if (!item.item_uuid) continue;
+
       const inv = await client.query(
-        `SELECT available_qty 
-         FROM tbl_inventory 
-         WHERE item_uuid = $1 
-         FOR UPDATE`,
+        `SELECT available_qty FROM tbl_inventory 
+         WHERE item_uuid = $1 FOR UPDATE`,
         [item.item_uuid]
       );
 
-      const stock = Number(inv.rows[0].available_qty);
+      if (!inv.rows.length) continue;
+
+      const stock_before = Number(inv.rows[0].available_qty);
+      const stock_after = stock_before + qty;
 
       await client.query(
         `UPDATE tbl_inventory 
          SET available_qty = $1 
          WHERE item_uuid = $2`,
-        [stock + qty, item.item_uuid]
+        [stock_after, item.item_uuid]
       );
+
+      await stockRepository.createStockLedger(client, {
+        item_uuid: item.item_uuid,
+        item_id: item.item_id,
+        zodu_id: orderData.zodu_id,
+        branch_id: orderData.branch_id,
+        item_name: item.item_name,
+        transaction_type: "sale_update_reverse",
+        reference_id: saleId,
+        qty_change: qty,
+        stock_before,
+        stock_after,
+        notes: "Sale Update Reverse",
+      });
     }
 
+    // =========================================================
     // 3️⃣ DELETE OLD ITEMS
+    // =========================================================
     await client.query(
       `DELETE FROM tbl_sale_items WHERE sale_uuid = $1`,
       [saleId]
     );
 
-    // 4️⃣ UPDATE SALE HEADER
+    // =========================================================
+    // 4️⃣ CALCULATE TOTALS (🔥 IMPORTANT FIX)
+    // =========================================================
+    let subtotal = 0;
+    let totalTax = 0;
+
+    for (const item of orderData.items) {
+      const qty = Number(item.quantity || 0);
+      const price = Number(item.price || 0);
+      const gst = Number(item.gst_percentage || 0);
+
+      if (qty <= 0) throw new Error(`Invalid qty for ${item.item_name}`);
+      if (price <= 0) throw new Error(`Invalid price for ${item.item_name}`);
+
+      const base = qty * price;
+
+      let tax = 0;
+
+      if (item.tax_inclusive) {
+        tax = base - base / (1 + gst / 100);
+      } else {
+        tax = base * (gst / 100);
+      }
+
+      subtotal += base;
+      totalTax += tax;
+    }
+
+    const totalAmount = subtotal;
+    const paidAmount = Number(orderData.paid_amount || 0);
+    const discountAmount = Number(orderData.discount_value || 0);
+    const balanceAmount = totalAmount - paidAmount;
+
+    let paymentStatus = "pending";
+
+    if (paidAmount >= totalAmount) {
+      paymentStatus = "paid";
+    } else if (paidAmount > 0) {
+      paymentStatus = "partial";
+    }
+
+    // =========================================================
+    // 5️⃣ UPDATE SALE HEADER
+    // =========================================================
     await client.query(
       `UPDATE tbl_sales
-       SET total_amount = $1,
-           paid_amount = $2,
-           discount_amount = $3,
+       SET subtotal = $1,
+           total_tax = $2,
+           total_amount = $3,
+           paid_amount = $4,
+           discount_amount = $5,
+           balance_amount = $6,
+           payment_status = $7,
+           customer_id = $8,
            updated_at = NOW()
-       WHERE sale_uuid = $4`,
+       WHERE sale_uuid = $9`,
       [
-        orderData.total_amount,
-        orderData.paid_amount,
-        orderData.discount || 0,
+        subtotal,
+        totalTax,
+        totalAmount,
+        paidAmount,
+        discountAmount,
+        balanceAmount,
+        paymentStatus,
+        customerId,
         saleId,
       ]
     );
 
-    // 5️⃣ INSERT NEW ITEMS + STOCK DEDUCT
+    // =========================================================
+    // 6️⃣ INSERT NEW ITEMS + STOCK DEDUCT
+    // =========================================================
     for (const item of orderData.items) {
-
       await client.query(
         `INSERT INTO tbl_sale_items (
           sale_uuid,
@@ -1632,31 +1696,45 @@ async function updateOrder(orderData) {
         ]
       );
 
-      // STOCK DEDUCT
-    const inv = await client.query(
-  `SELECT available_qty 
-   FROM tbl_inventory 
-   WHERE item_uuid = $1 
-   FOR UPDATE`,
-  [item.item_uuid]
-);
+      // 🔒 LOCK STOCK
+      const inv = await client.query(
+        `SELECT available_qty FROM tbl_inventory 
+         WHERE item_uuid = $1 FOR UPDATE`,
+        [item.item_uuid]
+      );
 
-if (!inv.rows.length) {
-  throw new Error(`Inventory not found for item ${item.item_name}`);
-}
+      if (!inv.rows.length) {
+        throw new Error(`Inventory not found for ${item.item_name}`);
+      }
 
-const stock = Number(inv.rows[0].available_qty);
+      const stock_before = Number(inv.rows[0].available_qty);
 
-      if (item.quantity > stock) {
+      if (item.quantity > stock_before) {
         throw new Error(`Insufficient stock for ${item.item_name}`);
       }
+
+      const stock_after = stock_before - item.quantity;
 
       await client.query(
         `UPDATE tbl_inventory 
          SET available_qty = $1 
          WHERE item_uuid = $2`,
-        [stock - item.quantity, item.item_uuid]
+        [stock_after, item.item_uuid]
       );
+
+      await stockRepository.createStockLedger(client, {
+        item_uuid: item.item_uuid,
+        item_id: item.item_id,
+        zodu_id: orderData.zodu_id,
+        branch_id: orderData.branch_id,
+        item_name: item.item_name,
+        transaction_type: "sale_update",
+        reference_id: saleId,
+        qty_change: -item.quantity,
+        stock_before,
+        stock_after,
+        notes: "Sale Update",
+      });
     }
 
     await client.query("COMMIT");
@@ -1668,7 +1746,7 @@ const stock = Number(inv.rows[0].available_qty);
 
   } catch (err) {
     await client.query("ROLLBACK");
-    console.log(err);
+    console.error(err);
 
     return { success: false, message: err.message };
   } finally {

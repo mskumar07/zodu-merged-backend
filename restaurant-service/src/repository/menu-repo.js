@@ -391,7 +391,7 @@ exports.getInventoryList = async (
        ROUND(i.available_qty * COALESCE(m.purchase_price, 0), 2) AS stock_value
      ${INV_FROM}
      ${where}
-     ORDER BY i.item_id ASC
+     ORDER BY i.item_id::bigint ASC
      LIMIT $${idx} OFFSET $${idx + 1}`,
     [...values, limit, offset]
   );
