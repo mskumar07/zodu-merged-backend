@@ -12,6 +12,13 @@ const { generatePublicOrderNo } = require('./generatePublicOrderNo');
 const orderSortFields = ["order_date", "order_id", "total_amt", "no_of_items"];
 
 const round = (n) => Math.round(n * 100) / 100;
+
+function toBoolean(value) {
+  if (typeof value === "string") {
+    return value.toLowerCase() === "true";
+  }
+  return Boolean(value);
+}
  
 function generateSaleId() {
   // e.g. "SALE-1716300000000"  – replace with your own scheme
@@ -2842,25 +2849,31 @@ exports.createProduct = async (data) => {
 
  
 function calculateItemTax(item) {
+  console.log(item)
   const gst_percentage = Number(item.gst_percentage ?? 0);
   const price          = Number(item.price          ?? 0);
   const quantity       = Number(item.quantity       ?? 1);
-  const tax_inclusive  = item.tax_inclusive         ?? false;
+  const tax_inclusive  = toBoolean(item.tax_inclusive);
   const line_discount  = Number(item.discount       ?? 0);  // per-line discount (₹)
- 
-  // Step 1: get base price per unit (strip GST if inclusive)
-  const base_per_unit = (tax_inclusive && gst_percentage > 0)
-    ? price / (1 + gst_percentage / 100)
-    : price;
- 
-  // Step 2: taxable value = (base × qty) − per-line discount
-  const taxable_value = Math.max(0, round(base_per_unit * quantity) - line_discount);
- 
-  // Step 3: GST on taxable value
+
+  const gross_line_total = Math.max(0, round(price * quantity) - line_discount);
+
+  let taxable_value = gross_line_total;
   let tax_amount = 0;
+
   if (gst_percentage > 0) {
-    tax_amount = round(taxable_value * gst_percentage / 100);
+    if (tax_inclusive) {
+      taxable_value = round(gross_line_total / (1 + gst_percentage / 100));
+      tax_amount = round(gross_line_total - taxable_value);
+    } else {
+      taxable_value = gross_line_total;
+      tax_amount = round(taxable_value * gst_percentage / 100);
+    }
   }
+
+  const base_per_unit = quantity > 0
+    ? round(taxable_value / quantity)
+    : 0;
  
   const half = round(tax_amount / 2);
   return {
@@ -2875,75 +2888,77 @@ function calculateItemTax(item) {
 }
  
 // ── order totals helper ───────────────────────────────────────
-// subtotal       = Σ base line totals (before order-level discount)
-// total_tax      = GST on (subtotal − order discount), split proportionally per item
-// discount_amount= order-level discount on subtotal
-// total_amount   = (subtotal − discount) + total_tax
+// subtotal       = Σ taxable line totals after order-level discount
+// total_tax      = Σ line tax after order-level discount
+// discount_amount= order-level discount on gross payable total
+// total_amount   = Σ discounted gross line totals
 function calculateOrderTotals(items, discount_type, discount_value) {
   const no_of_items = items.reduce((s, i) => s + Number(i.quantity ?? 0), 0);
- 
-  let subtotal = 0;
- 
-  // First pass: accumulate base subtotal (per-line discounts already handled in calculateItemTax)
-  for (const item of items) {
-    const qty           = Number(item.quantity        ?? 0);
-    const price         = Number(item.price           ?? 0);
-    const line_discount = Number(item.discount        ?? 0);
-    const tax_inclusive = item.tax_inclusive          ?? false;
-    const gst_pct       = Number(item.gst_percentage  ?? 0);
- 
-    const base_per_unit = (tax_inclusive && gst_pct > 0)
-      ? price / (1 + gst_pct / 100)
-      : price;
- 
-    subtotal += round(qty * base_per_unit - line_discount);
-  }
-  subtotal = round(subtotal);
- 
-  // Order-level discount applied on subtotal (base only)
+
+  const lineTotals = items.map((item) => {
+    const qty = Number(item.quantity ?? 0);
+    const price = Number(item.price ?? 0);
+    const gst_pct = Number(item.gst_percentage ?? 0);
+    const tax_inclusive = toBoolean(item.tax_inclusive);
+    const line_discount = Number(item.discount ?? 0);
+
+    const gross_before_order_discount = Math.max(0, round(qty * price) - line_discount);
+
+    return {
+      gst_pct,
+      tax_inclusive,
+      gross_before_order_discount,
+    };
+  });
+
+  const gross_subtotal = round(
+    lineTotals.reduce((sum, line) => sum + line.gross_before_order_discount, 0)
+  );
+
   let discount_amount = 0;
   const dv = Number(discount_value ?? 0);
   if (discount_type === "percentage") {
-    discount_amount = round((subtotal * dv) / 100);
+    discount_amount = round((gross_subtotal * dv) / 100);
   } else if (discount_type === "flat") {
-    discount_amount = round(Math.min(dv, subtotal)); // can't discount more than subtotal
+    discount_amount = round(Math.min(dv, gross_subtotal));
   }
- 
-  // Taxable base after order discount
-  const taxable_subtotal = round(subtotal - discount_amount);
- 
-  // Second pass: GST on each item's share of the taxable_subtotal
-  // Each item contributes proportionally to the order discount
+
+  let subtotal = 0;
   let total_tax = 0;
-  for (const item of items) {
-    const qty           = Number(item.quantity        ?? 0);
-    const price         = Number(item.price           ?? 0);
-    const line_discount = Number(item.discount        ?? 0);
-    const tax_inclusive = item.tax_inclusive          ?? false;
-    const gst_pct       = Number(item.gst_percentage  ?? 0);
- 
-    if (gst_pct === 0) continue;
- 
-    const base_per_unit  = (tax_inclusive && gst_pct > 0)
-      ? price / (1 + gst_pct / 100)
-      : price;
- 
-    const item_base      = round(qty * base_per_unit - line_discount);
- 
-    // Proportional share of order-level discount for this item
-    const item_order_disc = subtotal > 0
-      ? round(discount_amount * (item_base / subtotal))
+  let total_amount = 0;
+
+  for (const line of lineTotals) {
+    const item_order_discount = gross_subtotal > 0
+      ? round(discount_amount * (line.gross_before_order_discount / gross_subtotal))
       : 0;
- 
-    const item_taxable   = Math.max(0, item_base - item_order_disc);
-    total_tax            += round(item_taxable * gst_pct / 100);
+
+    const discounted_gross = Math.max(
+      0,
+      round(line.gross_before_order_discount - item_order_discount)
+    );
+
+    let taxable_value = discounted_gross;
+    let tax_amount = 0;
+
+    if (line.gst_pct > 0) {
+      taxable_value = round(discounted_gross / (1 + line.gst_pct / 100));
+      tax_amount = round(discounted_gross - taxable_value);
+    }
+
+    subtotal += taxable_value;
+    total_tax += tax_amount;
+    total_amount += discounted_gross;
   }
-  total_tax = round(total_tax);
- 
-  const total_amount = round(taxable_subtotal + total_tax);
- 
-  return { no_of_items, subtotal, total_tax, discount_amount, total_amount };
+
+  return {
+    no_of_items,
+    subtotal: round(subtotal),
+    total_tax: round(total_tax),
+    discount_amount,
+    total_amount: round(total_amount),
+  };
 }
+exports.calculateOrderTotals = calculateOrderTotals;
  
 // ─────────────────────────────────────────────────────────────
 //  1. CREATE SALE  →  tbl_sales
@@ -3031,7 +3046,7 @@ exports.createOrder = async (orderData) => {
 //  2. CREATE SALE ITEMS  →  tbl_sale_items
 //     FK: sale_uuid  (references tbl_sales.sale_uuid)
 // ─────────────────────────────────────────────────────────────
-exports.createSaleItems = async (orderData, sale) => {
+exports.createSaleItems = async (orderData, sale, db = conn) => {
   try {
  
     const items = orderData.items;
@@ -3045,7 +3060,7 @@ exports.createSaleItems = async (orderData, sale) => {
     for (const item of items) {
       const taxData = calculateItemTax(item);
  
-      const result = await conn.query(
+      const result = await db.query(
         `INSERT INTO tbl_sale_items (
             sale_uuid, sale_id,
             item_id, item_name,

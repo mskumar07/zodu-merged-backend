@@ -263,7 +263,7 @@ const INV_COLS = `
   i.item_id,
   i.zodu_id,
   i.branch_id,
-  i.item_name,
+  m.item_name      AS item_name,
   i.available_qty,
   i.reorder_level,
   i.last_stock_update,
@@ -349,7 +349,7 @@ exports.getInventoryList = async (
  
   if (search) {
     conditions.push(
-      `(i.item_name ILIKE $${idx} OR i.item_id ILIKE $${idx} OR m.barcode ILIKE $${idx})`
+      `(m.item_name ILIKE $${idx} OR i.item_id ILIKE $${idx} OR m.barcode ILIKE $${idx})`
     );
     values.push(`%${search}%`);
     idx++;

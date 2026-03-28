@@ -1521,6 +1521,19 @@ async function updateOrder(orderData) {
     await client.query("BEGIN");
 
     const saleId = orderData.sale_uuid;
+    const saleRes = await client.query(
+      `SELECT sale_uuid, sale_id
+       FROM tbl_sales
+       WHERE sale_uuid = $1
+       FOR UPDATE`,
+      [saleId]
+    );
+
+    if (!saleRes.rows.length) {
+      throw new Error("Sale not found");
+    }
+
+    const sale = saleRes.rows[0];
 
     // ✅ SAFE CUSTOMER
     const customerId =
@@ -1594,67 +1607,49 @@ async function updateOrder(orderData) {
     );
 
     // =========================================================
-    // 4️⃣ CALCULATE TOTALS (🔥 IMPORTANT FIX)
+    // 4️⃣ CALCULATE TOTALS USING SHARED CREATE-SALE LOGIC
     // =========================================================
-    let subtotal = 0;
-    let totalTax = 0;
+    const totals = repository.calculateOrderTotals(
+      orderData.items || [],
+      orderData.discount_type,
+      orderData.discount_value
+    );
 
-    for (const item of orderData.items) {
-      const qty = Number(item.quantity || 0);
-      const price = Number(item.price || 0);
-      const gst = Number(item.gst_percentage || 0);
+    const paidAmount = round(Number(orderData.paid_amount ?? totals.total_amount));
+    const balanceAmount = round(totals.total_amount - paidAmount);
 
-      if (qty <= 0) throw new Error(`Invalid qty for ${item.item_name}`);
-      if (price <= 0) throw new Error(`Invalid price for ${item.item_name}`);
-
-      const base = qty * price;
-
-      let tax = 0;
-
-      if (item.tax_inclusive) {
-        tax = base - base / (1 + gst / 100);
-      } else {
-        tax = base * (gst / 100);
-      }
-
-      subtotal += base;
-      totalTax += tax;
-    }
-
-    const totalAmount = subtotal;
-    const paidAmount = Number(orderData.paid_amount || 0);
-    const discountAmount = Number(orderData.discount_value || 0);
-    const balanceAmount = totalAmount - paidAmount;
-
-    let paymentStatus = "pending";
-
-    if (paidAmount >= totalAmount) {
-      paymentStatus = "paid";
-    } else if (paidAmount > 0) {
-      paymentStatus = "partial";
-    }
+    const paymentStatus =
+      paidAmount <= 0     ? "unpaid"
+      : balanceAmount > 0 ? "partially_paid"
+                          : "fully_paid";
 
     // =========================================================
     // 5️⃣ UPDATE SALE HEADER
     // =========================================================
     await client.query(
       `UPDATE tbl_sales
-       SET subtotal = $1,
-           total_tax = $2,
-           total_amount = $3,
-           paid_amount = $4,
-           discount_amount = $5,
-           balance_amount = $6,
-           payment_status = $7,
-           customer_id = $8,
+       SET total_items = $1,
+           subtotal = $2,
+           total_tax = $3,
+           discount_type = $4,
+           discount_value = $5,
+           discount_amount = $6,
+           total_amount = $7,
+           paid_amount = $8,
+           balance_amount = $9,
+           payment_status = $10,
+           customer_id = $11,
            updated_at = NOW()
-       WHERE sale_uuid = $9`,
+       WHERE sale_uuid = $12`,
       [
-        subtotal,
-        totalTax,
-        totalAmount,
+        totals.no_of_items,
+        totals.subtotal,
+        totals.total_tax,
+        orderData.discount_type ?? null,
+        Number(orderData.discount_value ?? 0),
+        totals.discount_amount,
+        totals.total_amount,
         paidAmount,
-        discountAmount,
         balanceAmount,
         paymentStatus,
         customerId,
@@ -1665,37 +1660,9 @@ async function updateOrder(orderData) {
     // =========================================================
     // 6️⃣ INSERT NEW ITEMS + STOCK DEDUCT
     // =========================================================
-    for (const item of orderData.items) {
-      await client.query(
-        `INSERT INTO tbl_sale_items (
-          sale_uuid,
-          item_id,
-          item_name,
-          unit,
-          quantity,
-          price,
-          gst_percentage,
-          discount,
-          hsn_code,
-          mrp,
-          tax_inclusive
-        )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-        [
-          saleId,
-          item.item_id,
-          item.item_name,
-          item.unit,
-          item.quantity,
-          item.price,
-          item.gst_percentage,
-          item.discount || 0,
-          item.hsn_code || null,
-          item.mrp || 0,
-          item.tax_inclusive || false,
-        ]
-      );
+    await repository.createSaleItems(orderData, sale, client);
 
+    for (const item of orderData.items) {
       // 🔒 LOCK STOCK
       const inv = await client.query(
         `SELECT available_qty FROM tbl_inventory 

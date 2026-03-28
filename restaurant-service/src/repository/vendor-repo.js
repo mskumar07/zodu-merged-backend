@@ -6,7 +6,7 @@ const getNextVendorId = async (client, zodu_id, branch_id) => {
     `SELECT vendor_id
      FROM tbl_vendor
      WHERE zodu_id = $1 AND branch_id = $2
-     ORDER BY vendor_id DESC
+     ORDER BY COALESCE(NULLIF(split_part(vendor_id, '-', 2), ''), '0')::int DESC
      LIMIT 1
      FOR UPDATE`,
     [zodu_id, branch_id]
@@ -21,8 +21,13 @@ const getNextVendorId = async (client, zodu_id, branch_id) => {
 // 🔹 CREATE Vendor
 exports.createVendor = async (data) => {
   const client = await conn.connect();
+  console.log(data)
   try {
     await client.query("BEGIN");
+
+    if (!data?.zodu_id || !data?.branch_id || !data?.vendor_name) {
+      throw new Error("zodu_id, branch_id and vendor_name are required");
+    }
 
     const vendor_id = await getNextVendorId(
       client,
