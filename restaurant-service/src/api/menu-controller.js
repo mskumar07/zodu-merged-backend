@@ -336,4 +336,37 @@ router.post('/inventory/adjust', async (req, res) => {
   }
 });
 
+router.get('/stock/history/:item_uuid', async (req, res) => {
+  try {
+    const { item_uuid } = req.params;
+    const { zodu_id, branch_id } = req.query;
+
+    if (!item_uuid || !zodu_id || !branch_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required parameters",
+      });
+    }
+
+    const result = await service.getStockHistoryService({
+      item_uuid,
+      zodu_id,
+      branch_id,
+    });
+
+    return res.json({
+      success: true,
+      ...result,
+    });
+
+  } catch (err) {
+    console.error("Stock History Error:", err);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal Server Error",
+    });
+  }
+});
+
 module.exports = router;

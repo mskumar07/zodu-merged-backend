@@ -1,9 +1,5 @@
-// ============================================================
-//  menu_item_repository.js
-//  Raw DB queries for tbl_menu_items — no business logic here.
-//  All functions receive a `client` (pg PoolClient) so they
-//  participate in the caller's transaction.
-// ============================================================
+const conn = require("../database/connection");
+
 
 const round = (n) => Math.round(n * 100) / 100;
 
@@ -507,4 +503,56 @@ exports.createStockLedger = async (client, data) => {
     ]
   );
   return rows[0];
+};
+
+
+
+exports.getStockHistoryRepo = async ({ item_uuid, zodu_id, branch_id }) => {
+  const query = `
+    SELECT 
+      l.ledger_id,
+      l.item_uuid,
+      l.item_id,
+
+      -- Prefer menu name, fallback to ledger name
+      COALESCE(m.item_name, l.item_name) AS item_name,
+
+      l.transaction_type,
+      l.qty_change,
+      l.stock_before,
+      l.stock_after,
+      l.notes,
+ TO_CHAR(l.created_at, 'DD Mon YYYY, HH12:MI AM') AS created_at,
+      inv.available_qty,
+      inv.reorder_level,
+
+      CASE 
+        WHEN l.qty_change > 0 THEN 'IN'
+        WHEN l.qty_change < 0 THEN 'OUT'
+        ELSE 'ADJUST'
+      END as movement_type
+
+    FROM tbl_stock_ledger l
+
+    -- ✅ Inventory (current stock)
+    LEFT JOIN tbl_inventory inv
+      ON inv.item_uuid = l.item_uuid
+      AND inv.zodu_id = l.zodu_id
+      AND inv.branch_id = l.branch_id
+
+    -- ✅ Menu Items (latest name)
+    LEFT JOIN tbl_menu_items m
+      ON m.item_uuid = l.item_uuid
+
+    WHERE l.item_uuid = $1
+      AND l.zodu_id = $2
+      AND l.branch_id = $3
+
+    ORDER BY l.created_at DESC
+  `;
+
+  const values = [item_uuid, zodu_id, branch_id];
+
+  const result = await conn.query(query, values);
+  return result.rows;
 };

@@ -358,7 +358,29 @@ async function adjustStock({
   }
 }
 
+async function getStockHistoryService({ item_uuid, zodu_id, branch_id }) {
+  const rows = await repository.getStockHistoryRepo({
+    item_uuid,
+    zodu_id,
+    branch_id,
+  });
+
+  const currentStock = rows[0]?.available_qty || 0;
+  const reorderLevel = rows[0]?.reorder_level || 0;
+
+  return {
+    data: rows,
+    summary: {
+      current_stock: currentStock,
+      low_stock_alert: reorderLevel,
+      is_low: currentStock <= reorderLevel,
+    },
+  };
+}
+
 module.exports = { createMenuItem, editMenuItem, getMenuItems, deleteMenuItem, getMenuItemById , getInventorySummary,
   getInventoryList,
   getInventoryDetail,
-  adjustStock,};
+  adjustStock,
+  getStockHistoryService
+};
