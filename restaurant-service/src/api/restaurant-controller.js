@@ -706,6 +706,37 @@ router.post(
   }
 );
 
+router.put("/api/customers/:cust_uuid", async (req, res) => {
+  try {
+    const bodyData = { ...req.body, cust_uuid: req.params.cust_uuid };
+    const { error, value } = schema.update_customer.validate(bodyData, {
+      abortEarly: false,
+    });
+
+    if (error) {
+      console.log(error)
+      return res.status(400).json({
+        errors: error.details.map((d) => d.message),
+      });
+    }
+
+    // Normalise: single string mobile/email → array
+    if (typeof value.mobile_no === "string") value.mobile_no = [value.mobile_no];
+    if (typeof value.email_id  === "string") value.email_id  = [value.email_id];
+
+    const data = await service.updateCustomer(value);
+
+    if (!data.success) {
+      return res.status(400).json({ message: data.message });
+    }
+
+    return res.status(200).json(data);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 router.put(
   "/api/edit/vendor",
   async (req, res) => {

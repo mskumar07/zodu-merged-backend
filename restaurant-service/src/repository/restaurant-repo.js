@@ -5,6 +5,7 @@ const { randomUUID } = require("crypto");
 const { deleteFileFromMinIO } = require('../services/restaurant-service');
 // const { calculateItemTax } = require('../utils/gstcalcukator');
 const { generatePublicOrderNo } = require('./generatePublicOrderNo');
+const { calculateItemTax } = require('../utils/gstcalcukator');
 
 
 // ========== Company Repository Functions ==========
@@ -20,9 +21,13 @@ function toBoolean(value) {
   return Boolean(value);
 }
  
-function generateSaleId() {
+function generateSaleId(saleType) {
   // e.g. "SALE-1716300000000"  – replace with your own scheme
-  return `SALE-${Date.now()}`;
+  if(saleType==="retail"){
+    return `SALE-${Date.now()}`;
+  } else {
+    return `${saleType.toUpperCase()}-${Date.now()}`;
+  } 
 }
  
 function generateTransactionId() {
@@ -2111,6 +2116,86 @@ exports.getCustomerById = async (cust_uuid) => {
   return result.rows[0] ?? null;
 };
 
+// ── 3. UPDATE CUSTOMER ──────────────────────────────────────
+exports.updateCustomer = async (data) => {
+  const {
+    cust_uuid,
+    cust_name,
+    cpy_name,
+    mobile_no,
+    email_id,
+    gst,
+    address_line1,
+    address_line2,
+    city,
+    state,
+    pincode,
+  } = data;
+
+  // Build dynamic update query
+  const updates = [];
+  const values = [];
+  let paramIndex = 1;
+
+  if (cust_name !== undefined) {
+    updates.push(`cust_name = $${paramIndex++}`);
+    values.push(cust_name ?? null);
+  }
+  if (cpy_name !== undefined) {
+    updates.push(`cpy_name = $${paramIndex++}`);
+    values.push(cpy_name ?? null);
+  }
+  if (mobile_no !== undefined) {
+    updates.push(`mobile_no = $${paramIndex++}`);
+    values.push(JSON.stringify(Array.isArray(mobile_no) ? mobile_no : [mobile_no]));
+  }
+  if (email_id !== undefined) {
+    updates.push(`email_id = $${paramIndex++}`);
+    values.push(JSON.stringify(Array.isArray(email_id) ? email_id : [email_id]));
+  }
+  if (gst !== undefined) {
+    updates.push(`gst = $${paramIndex++}`);
+    values.push(gst ?? null);
+  }
+  if (address_line1 !== undefined) {
+    updates.push(`address_line1 = $${paramIndex++}`);
+    values.push(address_line1 ?? null);
+  }
+  if (address_line2 !== undefined) {
+    updates.push(`address_line2 = $${paramIndex++}`);
+    values.push(address_line2 ?? null);
+  }
+  if (city !== undefined) {
+    updates.push(`city = $${paramIndex++}`);
+    values.push(city ?? null);
+  }
+  if (state !== undefined) {
+    updates.push(`state = $${paramIndex++}`);
+    values.push(state ?? null);
+  }
+  if (pincode !== undefined) {
+    updates.push(`pincode = $${paramIndex++}`);
+    values.push(pincode ?? null);
+  }
+
+  if (updates.length === 0) {
+    throw new Error("No fields to update");
+  }
+
+  updates.push(`updated_at = NOW()`);
+  values.push(cust_uuid);
+
+  const query = `
+    UPDATE tbl_customer
+    SET ${updates.join(", ")}
+    WHERE cust_uuid = $${paramIndex}
+    RETURNING *
+  `;
+
+  const result = await conn.query(query, values);
+  return result.rows[0] ?? null;
+};
+
 
 exports.get_menuItem_data = async (branch_id, page, limit, search) => {
   const offset = (page - 1) * limit;
@@ -2847,147 +2932,15 @@ exports.createProduct = async (data) => {
   }
 };
 
- 
-function calculateItemTax(item) {
-  console.log(item)
-  const gst_percentage = Number(item.gst_percentage ?? 0);
-  const price          = Number(item.price          ?? 0);
-  const quantity       = Number(item.quantity       ?? 1);
-  const tax_inclusive  = toBoolean(item.tax_inclusive);
-  const line_discount  = Number(item.discount       ?? 0);  // per-line discount (₹)
-
-  const gross_line_total = Math.max(0, round(price * quantity) - line_discount);
-
-  let taxable_value = gross_line_total;
-  let tax_amount = 0;
-
-  if (gst_percentage > 0) {
-    if (tax_inclusive) {
-      taxable_value = round(gross_line_total / (1 + gst_percentage / 100));
-      tax_amount = round(gross_line_total - taxable_value);
-    } else {
-      taxable_value = gross_line_total;
-      tax_amount = round(taxable_value * gst_percentage / 100);
-    }
-  }
-
-  const base_per_unit = quantity > 0
-    ? round(taxable_value / quantity)
-    : 0;
- 
-  const half = round(tax_amount / 2);
-  return {
-    gst_percentage,
-    tax_amount,
-    cgst:         half,
-    sgst:         round(tax_amount - half),
-    tax_inclusive,
-    base_per_unit: round(base_per_unit),
-    taxable_value,
-  };
-}
- 
-// ── order totals helper ───────────────────────────────────────
-// subtotal       = Σ taxable line totals after order-level discount
-// total_tax      = Σ line tax after order-level discount
-// discount_amount= order-level discount on gross payable total
-// total_amount   = Σ discounted gross line totals
-function calculateOrderTotals(items, discount_type, discount_value) {
-  const no_of_items = items.reduce((s, i) => s + Number(i.quantity ?? 0), 0);
-
-  const lineTotals = items.map((item) => {
-    const qty = Number(item.quantity ?? 0);
-    const price = Number(item.price ?? 0);
-    const gst_pct = Number(item.gst_percentage ?? 0);
-    const tax_inclusive = toBoolean(item.tax_inclusive);
-    const line_discount = Number(item.discount ?? 0);
-
-    const gross_before_order_discount = Math.max(0, round(qty * price) - line_discount);
-
-    return {
-      gst_pct,
-      tax_inclusive,
-      gross_before_order_discount,
-    };
-  });
-
-  const gross_subtotal = round(
-    lineTotals.reduce((sum, line) => sum + line.gross_before_order_discount, 0)
-  );
-
-  let discount_amount = 0;
-  const dv = Number(discount_value ?? 0);
-  if (discount_type === "percentage") {
-    discount_amount = round((gross_subtotal * dv) / 100);
-  } else if (discount_type === "flat") {
-    discount_amount = round(Math.min(dv, gross_subtotal));
-  }
-
-  let subtotal = 0;
-  let total_tax = 0;
-  let total_amount = 0;
-
-  for (const line of lineTotals) {
-    const item_order_discount = gross_subtotal > 0
-      ? round(discount_amount * (line.gross_before_order_discount / gross_subtotal))
-      : 0;
-
-    const discounted_gross = Math.max(
-      0,
-      round(line.gross_before_order_discount - item_order_discount)
-    );
-
-    let taxable_value = discounted_gross;
-    let tax_amount = 0;
-
-    if (line.gst_pct > 0) {
-      taxable_value = round(discounted_gross / (1 + line.gst_pct / 100));
-      tax_amount = round(discounted_gross - taxable_value);
-    }
-
-    subtotal += taxable_value;
-    total_tax += tax_amount;
-    total_amount += discounted_gross;
-  }
-
-  return {
-    no_of_items,
-    subtotal: round(subtotal),
-    total_tax: round(total_tax),
-    discount_amount,
-    total_amount: round(total_amount),
-  };
-}
-exports.calculateOrderTotals = calculateOrderTotals;
- 
-// ─────────────────────────────────────────────────────────────
-//  1. CREATE SALE  →  tbl_sales
-// ─────────────────────────────────────────────────────────────
-exports.createOrder = async (orderData) => {
+exports.createOrder = async (orderData,db) => {
   try {
- 
     const sale_date = orderData.sale_date
       ? new Date(orderData.sale_date).toISOString().slice(0, 10)
       : new Date().toISOString().slice(0, 10);
- 
-    // sale_id is a varchar(50) PK surrogate – generate it here
-    const sale_id = generateSaleId();
- 
-    const totals = calculateOrderTotals(
-      orderData.items || [],
-      orderData.discount_type,
-      orderData.discount_value
-    );
- 
-    const paid_amount    = round(Number(orderData.paid_amount ?? totals.total_amount));
-    const balance_amount = round(totals.total_amount - paid_amount);
- 
-    const payment_status =
-      paid_amount <= 0     ? "unpaid"
-      : balance_amount > 0 ? "partially_paid"
-                           : "fully_paid";
- 
-    const result = await conn.query(
+
+    const sale_id = generateSaleId(orderData.sale_type);
+
+    const result = await db.query(
       `INSERT INTO tbl_sales (
           sale_id, zodu_id, branch_id,
           sale_type,
@@ -3011,32 +2964,31 @@ exports.createOrder = async (orderData) => {
         sale_id,
         orderData.zodu_id,
         orderData.branch_id,
- 
-        orderData.sale_type    ?? null,
- 
-        // customer_id is uuid in the table; null if not provided
-        orderData.customer_id  ?? null,
- 
-        totals.no_of_items,
-        totals.subtotal,
-        totals.total_tax,
- 
-        orderData.discount_type  ?? null,
+
+        orderData.sale_type ?? null,
+        orderData.customer_id ?? null,
+
+        orderData.total_items,
+        orderData.subtotal,
+        orderData.total_tax,
+
+        orderData.discount_type ?? null,
         Number(orderData.discount_value ?? 0),
-        totals.discount_amount,
- 
-        totals.total_amount,
-        paid_amount,
-        balance_amount,
- 
-        payment_status,
-        orderData.notes    ?? null,
+        orderData.discount_amount,
+
+        orderData.total_amount,
+        orderData.paid_amount,
+        orderData.balance_amount,
+
+        orderData.payment_status,
+        orderData.notes ?? null,
         sale_date,
         orderData.sale_time ?? null,
       ]
     );
- 
-    return result.rows[0]; // includes sale_uuid (PK) and sale_id
+
+    return result.rows[0];
+
   } catch (err) {
     throw err;
   }
@@ -3046,7 +2998,7 @@ exports.createOrder = async (orderData) => {
 //  2. CREATE SALE ITEMS  →  tbl_sale_items
 //     FK: sale_uuid  (references tbl_sales.sale_uuid)
 // ─────────────────────────────────────────────────────────────
-exports.createSaleItems = async (orderData, sale, db = conn) => {
+exports.createSaleItems = async (orderData, sale,db ) => {
   try {
  
     const items = orderData.items;
@@ -3111,19 +3063,18 @@ exports.createSaleItems = async (orderData, sale, db = conn) => {
 //  3. CREATE PAYMENT  →  tbl_sale_payment
 //     (was tbl_payment with wrong column names — fixed)
 // ─────────────────────────────────────────────────────────────
-exports.createSalesPayment = async (orderData, sale) => {
+exports.createSalesPayment = async (orderData, sale,db) => {
   try {
- 
-    const paid_amount  = round(Number(orderData.paid_amount ?? sale.total_amount));
+    const paid_amount = round(Number(orderData.paid_amount ?? sale.total_amount));
     const total_amount = round(Number(sale.total_amount));
-    const txnId        = generateTransactionId();
- 
+    const txnId = generateTransactionId();
+
     const status =
       paid_amount >= total_amount ? "paid"
-      : paid_amount > 0           ? "partial"
-                                  : "pending";
- 
-    const result = await conn.query(
+      : paid_amount > 0 ? "partial"
+      : "pending";
+
+    const result = await db.query(
       `INSERT INTO tbl_sale_payment (
           sale_id,
           zodu_id, branch_id,
@@ -3135,17 +3086,18 @@ exports.createSalesPayment = async (orderData, sale) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7)
        RETURNING *`,
       [
-        sale.sale_id,                        // varchar FK
+        sale.sale_id,
         orderData.zodu_id,
         orderData.branch_id,
         paid_amount,
-        orderData.payment_mode ?? null,      // maps to transaction_type
-        orderData.transaction_id ?? txnId,   // prefer caller-supplied ID
+        orderData.payment_mode ?? null,
+        orderData.transaction_id ?? txnId,
         status,
       ]
     );
- 
+
     return result.rows[0];
+
   } catch (err) {
     throw new Error("Unable to create payment: " + err.message);
   }
@@ -3457,6 +3409,85 @@ exports.createCustomer = async (data) => {
   return result.rows[0];
 };
  
+exports.updateCustomer = async (data) => {
+  const {
+    cust_uuid,
+    cust_name,
+    cpy_name,
+    mobile_no,
+    email_id,
+    gst,
+    address_line1,
+    address_line2,
+    city,
+    state,
+    pincode,
+  } = data;
+
+  // Build dynamic update query
+  const updates = [];
+  const values = [];
+  let paramIndex = 1;
+
+  if (cust_name !== undefined) {
+    updates.push(`cust_name = $${paramIndex++}`);
+    values.push(cust_name ?? null);
+  }
+  if (cpy_name !== undefined) {
+    updates.push(`cpy_name = $${paramIndex++}`);
+    values.push(cpy_name ?? null);
+  }
+  if (mobile_no !== undefined) {
+    updates.push(`mobile_no = $${paramIndex++}`);
+    values.push(JSON.stringify(Array.isArray(mobile_no) ? mobile_no : [mobile_no]));
+  }
+  if (email_id !== undefined) {
+    updates.push(`email_id = $${paramIndex++}`);
+    values.push(JSON.stringify(Array.isArray(email_id) ? email_id : [email_id]));
+  }
+  if (gst !== undefined) {
+    updates.push(`gst = $${paramIndex++}`);
+    values.push(gst ?? null);
+  }
+  if (address_line1 !== undefined) {
+    updates.push(`address_line1 = $${paramIndex++}`);
+    values.push(address_line1 ?? null);
+  }
+  if (address_line2 !== undefined) {
+    updates.push(`address_line2 = $${paramIndex++}`);
+    values.push(address_line2 ?? null);
+  }
+  if (city !== undefined) {
+    updates.push(`city = $${paramIndex++}`);
+    values.push(city ?? null);
+  }
+  if (state !== undefined) {
+    updates.push(`state = $${paramIndex++}`);
+    values.push(state ?? null);
+  }
+  if (pincode !== undefined) {
+    updates.push(`pincode = $${paramIndex++}`);
+    values.push(pincode ?? null);
+  }
+
+  if (updates.length === 0) {
+    throw new Error("No fields to update");
+  }
+
+  updates.push(`updated_at = NOW()`);
+  values.push(cust_uuid);
+
+  const query = `
+    UPDATE tbl_customer
+    SET ${updates.join(", ")}
+    WHERE cust_uuid = $${paramIndex}
+    RETURNING *
+  `;
+
+  const result = await conn.query(query, values);
+  return result.rows[0] ?? null;
+};
+
  
 // ============================================================
 //  payment.repository.js

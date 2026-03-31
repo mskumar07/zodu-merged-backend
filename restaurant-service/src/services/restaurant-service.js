@@ -11,6 +11,8 @@ const { getDateRange } = require("../utils/Date_Folder/getDate.js");
 const { get } = require('../api/restaurant-controller.js');
 const { getPagination, getMeta } = require('../utils/pagination.js');
 const stockRepository = require('../repository/menu-repo');
+const { calculateOrderTotals } = require('../utils/gstcalcukator.js');
+const { round } = require('../utils/number.js');
 
 
 
@@ -1412,89 +1414,117 @@ async function createOrder(orderData) {
   try {
     await client.query("BEGIN");
 
-    // ✅ 1. CREATE SALE
-    const sale = await repository.createOrder(orderData, client);
+    const isQuotation = orderData.sale_type === "quotation";
 
-    // ✅ 2. CREATE ITEMS
+    // ✅ CALCULATE TOTALS WITH GST MODE
+    const totals = calculateOrderTotals(
+      orderData.items || [],
+      orderData.discount_type,
+      orderData.discount_value,
+      orderData.discount_gst_mode || "after"
+    );
+
+    // ✅ PAYMENT LOGIC
+ const finalTotal = totals.final_amount;
+
+const paidAmount = isQuotation
+  ? 0
+  : round(
+      orderData.paid_amount !== undefined
+        ? Number(orderData.paid_amount)
+        : finalTotal
+    );
+
+const balanceAmount = round(finalTotal - paidAmount);
+
+orderData.balance_amount=balanceAmount;
+
+   let paymentStatus = "unpaid";
+
+if (!isQuotation) {
+  if (paidAmount <= 0) {
+    paymentStatus = "unpaid";
+  } else if (paidAmount < finalTotal) {
+    paymentStatus = "partially_paid";
+  } else {
+    paymentStatus = "fully_paid";
+  }
+}
+
+    // ✅ CREATE SALE
+    const sale = await repository.createOrder(
+      {
+        ...orderData,
+        paid_amount: paidAmount,
+        payment_status: paymentStatus,
+        ...totals,
+      },
+      client
+    );
+
+    // ✅ CREATE ITEMS
     const items = await repository.createSaleItems(orderData, sale, client);
 
-    // ✅ 3. STOCK DEDUCTION + LEDGER
-    for (const item of orderData.items) {
-      const qty = Number(item.quantity || 0);
+    // 🚫 SKIP STOCK FOR QUOTATION
+    if (!isQuotation) {
+      for (const item of orderData.items) {
+        const qty = Number(item.quantity || 0);
 
-      if (!qty || qty <= 0) {
-        throw new Error(`Invalid quantity for item ${item.item_id}`);
+        if (qty <= 0) {
+          throw new Error(`Invalid quantity for ${item.item_name}`);
+        }
+
+        const inv = await client.query(
+          `SELECT available_qty FROM tbl_inventory WHERE item_uuid = $1 FOR UPDATE`,
+          [item.item_uuid]
+        );
+
+        if (!inv.rows.length) {
+          throw new Error(`Inventory not found for ${item.item_name}`);
+        }
+
+        const stock_before = Number(inv.rows[0].available_qty);
+
+        if (qty > stock_before) {
+          throw new Error(`Insufficient stock for ${item.item_name}`);
+        }
+
+        const stock_after = stock_before - qty;
+
+        await client.query(
+          `UPDATE tbl_inventory SET available_qty = $1 WHERE item_uuid = $2`,
+          [stock_after, item.item_uuid]
+        );
+
+        await stockRepository.createStockLedger(client, {
+          item_uuid: item.item_uuid,
+          item_id: item.item_id,
+          zodu_id: orderData.zodu_id,
+          branch_id: orderData.branch_id,
+          item_name: item.item_name,
+          transaction_type: "sale",
+          reference_id: sale.sale_uuid,
+          qty_change: -qty,
+          stock_before,
+          stock_after,
+          notes: "Sale Order",
+        });
       }
-
-
-      
-
-      // ✅ FIX: use correct repo method
-      const inventory = await stockRepository.getInventoryByItemUuid(
-        client,
-        item.item_uuid
-      );
-
-      if (!inventory) {
-        throw new Error(`Inventory not found for item ${item.item_id}`);
-      }
-
-      // 🔒 LOCK ROW (IMPORTANT)
-      const locked = await client.query(
-        `SELECT available_qty
-         FROM tbl_inventory
-         WHERE item_uuid = $1
-         FOR UPDATE`,
-        [item.item_uuid]
-      );
-
-      const stock_before = Number(locked.rows[0].available_qty);
-
-      if (qty > stock_before) {
-        throw new Error(`Insufficient stock for ${inventory.item_name}`);
-      }
-
-      const stock_after = stock_before - qty;
-
-      // ✅ UPDATE INVENTORY
-      await client.query(
-        `UPDATE tbl_inventory
-         SET available_qty = $1,
-             last_stock_update = NOW()
-         WHERE item_uuid = $2`,
-        [stock_after, item.item_uuid]
-      );
-
-      // ✅ STOCK LEDGER
-      await stockRepository.createStockLedger(client, {
-        item_uuid: inventory.item_uuid,
-        item_id: inventory.item_id,
-        zodu_id: inventory.zodu_id,
-        branch_id: inventory.branch_id,
-        item_name: inventory.item_name,
-        transaction_type: "sale",
-        reference_id: sale.sale_uuid,
-        qty_change: -qty,
-        stock_before,
-        stock_after,
-        notes: "Sale Order",
-      });
     }
 
-    // ✅ 4. PAYMENT HANDLING
+    // 🚫 SKIP PAYMENT FOR QUOTATION
     let payment = null;
-    const paidAmount = Number(orderData.paid_amount || 0);
-
-    if (paidAmount > 0) {
+    if (!isQuotation && paidAmount > 0) {
       payment = await repository.createSalesPayment(orderData, sale, client);
-
     }
 
     await client.query("COMMIT");
 
     return {
       success: true,
-      message: "Order created successfully",
+      message: isQuotation
+        ? "Quotation created successfully"
+        : "Order created successfully",
       order: sale,
       items,
       payment,
@@ -1502,13 +1532,7 @@ async function createOrder(orderData) {
 
   } catch (err) {
     await client.query("ROLLBACK");
-
-    console.error("Order Error:", err);
-
-    return {
-      success: false,
-      message: err.message,
-    };
+    return { success: false, message: err.message };
   } finally {
     client.release();
   }
@@ -1521,8 +1545,10 @@ async function updateOrder(orderData) {
     await client.query("BEGIN");
 
     const saleId = orderData.sale_uuid;
+
+    // ✅ GET SALE TYPE
     const saleRes = await client.query(
-      `SELECT sale_uuid, sale_id
+      `SELECT sale_uuid, sale_id, sale_type
        FROM tbl_sales
        WHERE sale_uuid = $1
        FOR UPDATE`,
@@ -1534,14 +1560,7 @@ async function updateOrder(orderData) {
     }
 
     const sale = saleRes.rows[0];
-
-    // ✅ SAFE CUSTOMER
-    const customerId =
-      orderData.customer_id !== undefined &&
-      orderData.customer_id !== null &&
-      orderData.customer_id !== ""
-        ? orderData.customer_id
-        : null;
+    const isQuotation = sale.sale_type === "quotation";
 
     // =========================================================
     // 1️⃣ GET OLD ITEMS
@@ -1558,44 +1577,44 @@ async function updateOrder(orderData) {
     const oldItems = oldItemsRes.rows;
 
     // =========================================================
-    // 2️⃣ RESTORE OLD STOCK
+    // 2️⃣ RESTORE STOCK (ONLY SALE)
     // =========================================================
-    for (const item of oldItems) {
-      const qty = Number(item.quantity);
+    if (!isQuotation) {
+      for (const item of oldItems) {
+        const qty = Number(item.quantity);
 
-      if (!item.item_uuid) continue;
+        if (!item.item_uuid) continue;
 
-      const inv = await client.query(
-        `SELECT available_qty FROM tbl_inventory 
-         WHERE item_uuid = $1 FOR UPDATE`,
-        [item.item_uuid]
-      );
+        const inv = await client.query(
+          `SELECT available_qty FROM tbl_inventory 
+           WHERE item_uuid = $1 FOR UPDATE`,
+          [item.item_uuid]
+        );
 
-      if (!inv.rows.length) continue;
+        if (!inv.rows.length) continue;
 
-      const stock_before = Number(inv.rows[0].available_qty);
-      const stock_after = stock_before + qty;
+        const stock_before = Number(inv.rows[0].available_qty);
+        const stock_after = stock_before + qty;
 
-      await client.query(
-        `UPDATE tbl_inventory 
-         SET available_qty = $1 
-         WHERE item_uuid = $2`,
-        [stock_after, item.item_uuid]
-      );
+        await client.query(
+          `UPDATE tbl_inventory SET available_qty = $1 WHERE item_uuid = $2`,
+          [stock_after, item.item_uuid]
+        );
 
-      await stockRepository.createStockLedger(client, {
-        item_uuid: item.item_uuid,
-        item_id: item.item_id,
-        zodu_id: orderData.zodu_id,
-        branch_id: orderData.branch_id,
-        item_name: item.item_name,
-        transaction_type: "sale_update_reverse",
-        reference_id: saleId,
-        qty_change: qty,
-        stock_before,
-        stock_after,
-        notes: "Sale Update Reverse",
-      });
+        await stockRepository.createStockLedger(client, {
+          item_uuid: item.item_uuid,
+          item_id: item.item_id,
+          zodu_id: orderData.zodu_id,
+          branch_id: orderData.branch_id,
+          item_name: item.item_name,
+          transaction_type: "sale_update_reverse",
+          reference_id: saleId,
+          qty_change: qty,
+          stock_before,
+          stock_after,
+          notes: "Sale Update Reverse",
+        });
+      }
     }
 
     // =========================================================
@@ -1607,24 +1626,31 @@ async function updateOrder(orderData) {
     );
 
     // =========================================================
-    // 4️⃣ CALCULATE TOTALS USING SHARED CREATE-SALE LOGIC
+    // 4️⃣ CALCULATE TOTALS (GST MODE)
     // =========================================================
-    const totals = repository.calculateOrderTotals(
+    const totals = calculateOrderTotals(
       orderData.items || [],
       orderData.discount_type,
-      orderData.discount_value
+      orderData.discount_value,
+      orderData.discount_gst_mode || "after"
     );
 
-    const paidAmount = round(Number(orderData.paid_amount ?? totals.total_amount));
+    const paidAmount = isQuotation
+      ? 0
+      : round(Number(orderData.paid_amount ?? totals.total_amount));
+
     const balanceAmount = round(totals.total_amount - paidAmount);
 
-    const paymentStatus =
-      paidAmount <= 0     ? "unpaid"
-      : balanceAmount > 0 ? "partially_paid"
-                          : "fully_paid";
+    const paymentStatus = isQuotation
+      ? "unpaid"
+      : paidAmount <= 0
+      ? "unpaid"
+      : balanceAmount > 0
+      ? "partially_paid"
+      : "fully_paid";
 
     // =========================================================
-    // 5️⃣ UPDATE SALE HEADER
+    // 5️⃣ UPDATE SALE
     // =========================================================
     await client.query(
       `UPDATE tbl_sales
@@ -1652,76 +1678,90 @@ async function updateOrder(orderData) {
         paidAmount,
         balanceAmount,
         paymentStatus,
-        customerId,
+        orderData.customer_id || null,
         saleId,
       ]
     );
 
     // =========================================================
-    // 6️⃣ INSERT NEW ITEMS + STOCK DEDUCT
+    // 6️⃣ INSERT NEW ITEMS
     // =========================================================
     await repository.createSaleItems(orderData, sale, client);
 
-    for (const item of orderData.items) {
-      // 🔒 LOCK STOCK
-      const inv = await client.query(
-        `SELECT available_qty FROM tbl_inventory 
-         WHERE item_uuid = $1 FOR UPDATE`,
-        [item.item_uuid]
-      );
+    // =========================================================
+    // 7️⃣ STOCK DEDUCT (ONLY SALE)
+    // =========================================================
+    if (!isQuotation) {
+      for (const item of orderData.items) {
+        const inv = await client.query(
+          `SELECT available_qty FROM tbl_inventory WHERE item_uuid = $1 FOR UPDATE`,
+          [item.item_uuid]
+        );
 
-      if (!inv.rows.length) {
-        throw new Error(`Inventory not found for ${item.item_name}`);
+        if (!inv.rows.length) {
+          throw new Error(`Inventory not found for ${item.item_name}`);
+        }
+
+        const stock_before = Number(inv.rows[0].available_qty);
+
+        if (item.quantity > stock_before) {
+          throw new Error(`Insufficient stock for ${item.item_name}`);
+        }
+
+        const stock_after = stock_before - item.quantity;
+
+        await client.query(
+          `UPDATE tbl_inventory SET available_qty = $1 WHERE item_uuid = $2`,
+          [stock_after, item.item_uuid]
+        );
+
+        await stockRepository.createStockLedger(client, {
+          item_uuid: item.item_uuid,
+          item_id: item.item_id,
+          zodu_id: orderData.zodu_id,
+          branch_id: orderData.branch_id,
+          item_name: item.item_name,
+          transaction_type: "sale_update",
+          reference_id: saleId,
+          qty_change: -item.quantity,
+          stock_before,
+          stock_after,
+          notes: "Sale Update",
+        });
       }
+    }
 
-      const stock_before = Number(inv.rows[0].available_qty);
-
-      if (item.quantity > stock_before) {
-        throw new Error(`Insufficient stock for ${item.item_name}`);
-      }
-
-      const stock_after = stock_before - item.quantity;
-
+    // =========================================================
+    // 8️⃣ PAYMENT UPDATE (ONLY SALE)
+    // =========================================================
+    if (!isQuotation) {
       await client.query(
-        `UPDATE tbl_inventory 
-         SET available_qty = $1 
-         WHERE item_uuid = $2`,
-        [stock_after, item.item_uuid]
+        `DELETE FROM tbl_sale_payment WHERE sale_id = $1`,
+        [sale.sale_id]
       );
 
-      await stockRepository.createStockLedger(client, {
-        item_uuid: item.item_uuid,
-        item_id: item.item_id,
-        zodu_id: orderData.zodu_id,
-        branch_id: orderData.branch_id,
-        item_name: item.item_name,
-        transaction_type: "sale_update",
-        reference_id: saleId,
-        qty_change: -item.quantity,
-        stock_before,
-        stock_after,
-        notes: "Sale Update",
-      });
+      if (paidAmount > 0) {
+        await repository.createSalesPayment(orderData, sale, client);
+      }
     }
 
     await client.query("COMMIT");
 
     return {
       success: true,
-      message: "Order updated successfully",
+      message: isQuotation
+        ? "Quotation updated successfully"
+        : "Order updated successfully",
     };
 
   } catch (err) {
     await client.query("ROLLBACK");
-    console.error(err);
-
     return { success: false, message: err.message };
   } finally {
     client.release();
   }
 }
  
-const round = (n) => Math.round(n * 100) / 100;
 
 async function getSalesHistory(filters) {
   try {
@@ -1781,6 +1821,15 @@ async function createCustomer(data) {
   }
 }
  
+async function updateCustomer(data) {
+  try {
+    const customer = await repository.updateCustomer(data);
+    return { success: true, message: "Customer updated successfully", customer };
+  } catch (err) {
+    console.error("updateCustomer error:", err);
+    return { success: false, message: err.message };
+  }
+}
  
 // ============================================================
 //  payment.service.js
@@ -2566,5 +2615,6 @@ module.exports = {
   getCustomerById,
   createCustomer,
   markPayment,
-  updateOrder
+  updateOrder,
+  updateCustomer
 };

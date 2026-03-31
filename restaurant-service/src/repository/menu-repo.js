@@ -509,46 +509,69 @@ exports.createStockLedger = async (client, data) => {
 
 exports.getStockHistoryRepo = async ({ item_uuid, zodu_id, branch_id }) => {
   const query = `
-    SELECT 
-      l.ledger_id,
-      l.item_uuid,
-      l.item_id,
+  SELECT 
+    l.ledger_id,
+    inv.item_uuid,
+    inv.item_id,
 
-      -- Prefer menu name, fallback to ledger name
-      COALESCE(m.item_name, l.item_name) AS item_name,
+    COALESCE(m.item_name, l.item_name) AS item_name,
 
-      l.transaction_type,
-      l.qty_change,
-      l.stock_before,
-      l.stock_after,
-      l.notes,
- TO_CHAR(l.created_at, 'DD Mon YYYY, HH12:MI AM') AS created_at,
-      inv.available_qty,
-      inv.reorder_level,
+    l.transaction_type,
 
-      CASE 
-        WHEN l.qty_change > 0 THEN 'IN'
-        WHEN l.qty_change < 0 THEN 'OUT'
-        ELSE 'ADJUST'
-      END as movement_type
+    COALESCE(
+      CASE
+        WHEN l.transaction_type IN ('sale', 'sale_update', 'sale_update_reverse')
+          THEN s.sale_id::TEXT
 
-    FROM tbl_stock_ledger l
+        WHEN l.transaction_type = 'purchase'
+          THEN p.purchase_id::TEXT
+      END,
+      l.reference_id::TEXT
+    ) AS reference_id,
 
-    -- ✅ Inventory (current stock)
-    LEFT JOIN tbl_inventory inv
-      ON inv.item_uuid = l.item_uuid
-      AND inv.zodu_id = l.zodu_id
-      AND inv.branch_id = l.branch_id
+    l.qty_change,
+    l.stock_before,
+    l.stock_after,
+    l.notes,
 
-    -- ✅ Menu Items (latest name)
-    LEFT JOIN tbl_menu_items m
-      ON m.item_uuid = l.item_uuid
+    TO_CHAR(l.created_at, 'DD Mon YYYY, HH12:MI AM') AS created_at,
 
-    WHERE l.item_uuid = $1
-      AND l.zodu_id = $2
-      AND l.branch_id = $3
+    -- ✅ ALWAYS AVAILABLE
+    inv.available_qty,
+    inv.reorder_level,
 
-    ORDER BY l.created_at DESC
+    CASE 
+      WHEN l.qty_change > 0 THEN 'IN'
+      WHEN l.qty_change < 0 THEN 'OUT'
+      WHEN l.qty_change IS NULL THEN 'NO_MOVEMENT'
+      ELSE 'ADJUST'
+    END as movement_type
+
+  FROM tbl_inventory inv
+
+  -- ✅ LEFT JOIN ledger (so inventory still comes even if no ledger)
+  LEFT JOIN tbl_stock_ledger l
+    ON l.item_uuid = inv.item_uuid
+    AND l.zodu_id = inv.zodu_id
+    AND l.branch_id = inv.branch_id
+
+  -- SALES
+  LEFT JOIN tbl_sales s
+    ON s.sale_uuid = l.reference_id
+
+  -- PURCHASE
+  LEFT JOIN tbl_purchase p
+    ON p.id = l.reference_id
+
+  -- MENU
+  LEFT JOIN tbl_menu_items m
+    ON m.item_uuid = inv.item_uuid
+
+  WHERE inv.item_uuid = $1
+    AND inv.zodu_id = $2
+    AND inv.branch_id = $3
+
+  ORDER BY l.created_at DESC NULLS LAST;
   `;
 
   const values = [item_uuid, zodu_id, branch_id];

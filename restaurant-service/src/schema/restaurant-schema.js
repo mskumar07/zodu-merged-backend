@@ -150,6 +150,10 @@ sale_time: Joi.string()
 
   notes: Joi.string().optional().allow(null, ""),
 
+  discount_gst_mode: Joi.string().valid("before", "after").default("after"),
+
+  roundoff: Joi.number().precision(2).optional().allow(null),
+
   items: Joi.array()
     .items(
       Joi.object({
@@ -315,6 +319,7 @@ const add_customer = Joi.object({
   }
   return value;
 }, "Name validation");
+
  
 // ── Mark Payment ─────────────────────────────────────────────
 const mark_payment = Joi.object({
@@ -557,6 +562,32 @@ const get_customer_by_id = Joi.object({
   cust_uuid: Joi.string().uuid().required(),
 });
 
+const update_customer = Joi.object({
+  cust_uuid: Joi.string().uuid().required(),
+  cust_name: Joi.string().optional().allow(null, ""),
+  cpy_name:  Joi.string().optional().allow(null, ""),
+  zodu_id:   Joi.string().optional(),
+    branch_id: Joi.string().optional(),
+  mobile_no: Joi.alternatives()
+    .try(
+      Joi.array().items(Joi.string().pattern(/^[0-9]{10}$/)).min(1),
+      Joi.string().pattern(/^[0-9]{10}$/)
+    )
+    .optional(),
+  email_id: Joi.alternatives()
+    .try(
+      Joi.array().items(Joi.string().email({ tlds: false })),
+      Joi.string().email({ tlds: false })
+    )
+    .optional(),
+  gst:          Joi.string().optional().allow(null, ""),
+  address_line1: Joi.string().optional().allow(null, ""),
+  address_line2: Joi.string().optional().allow(null, ""),
+  city:         Joi.string().optional().allow(null, ""),
+  state:        Joi.string().optional().allow(null, ""),
+  pincode:      Joi.string().pattern(/^[0-9]{6}$/).optional().allow(null, ""),
+});
+
 const createSchema = Joi.object({
   zodu_id:        Joi.string().required(),
   branch_id:      Joi.string().required(),
@@ -619,6 +650,7 @@ module.exports = {
   get_customers,
   get_customer_by_id,
   add_customer,
+  update_customer,
   mark_payment,
   createSchema,
   editSchema,

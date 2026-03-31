@@ -365,6 +365,8 @@ async function getStockHistoryService({ item_uuid, zodu_id, branch_id }) {
     branch_id,
   });
 
+  console.log(rows)
+
   const currentStock = rows[0]?.available_qty || 0;
   const reorderLevel = rows[0]?.reorder_level || 0;
 
