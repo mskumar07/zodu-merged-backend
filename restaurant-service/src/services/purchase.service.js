@@ -3,6 +3,7 @@ const repo = require("../repository/purchase-repo");
 const inventoryRepo = require("../repository/menu-repo");
 
 // Must use `client` so stock updates stay inside the same transaction
+// Returns the updated inventory record with new stock level
 const adjustStockWithLedger = async (client, payload) => {
   let current = await inventoryRepo.getInventoryByItemUuid(
     client,
@@ -73,6 +74,8 @@ const adjustStockWithLedger = async (client, payload) => {
     stock_before: current.available_qty,
     stock_after:  newStock.available_qty,
   });
+
+  return newStock;
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -181,7 +184,7 @@ exports.getPurchaseSummary = async ({ zodu_id, branch_id }) => {
   }
 };
 // ─────────────────────────────────────────────────────────────
-// UPDATE PURCHASE (WITH STOCK REVERSAL)
+// UPDATE PURCHASE (WITH SMART STOCK ADJUSTMENT)
 // ─────────────────────────────────────────────────────────────
 exports.updatePurchase = async (purchase_id, data) => {
   const client = await conn.connect();
@@ -196,39 +199,111 @@ exports.updatePurchase = async (purchase_id, data) => {
     }
 
     const oldItems = await repo.getPurchaseItems(client, purchase_id);
+    const newItems = data.items || [];
+    
+    const zodu_id = data.zodu_id || oldPurchase.zodu_id;
+    const branch_id = data.branch_id || oldPurchase.branch_id;
 
-    // Reverse stock for old items
-    for (const item of oldItems) {
-      await adjustStockWithLedger(client, {
-        item_uuid:       item.item_uuid,
-        item_id:         item.item_id,
-        item_name:       item.item_name,
-        zodu_id:         oldPurchase.zodu_id,
-        branch_id:       oldPurchase.branch_id,
-        adjustment_type: "subtract",
-        adjustment_qty:  item.qty,
-        reason:          "purchase_edit_reverse",
-        reference_id:    oldPurchase.id,  // ✅ uuid
-      });
+    // ── NORMALIZE QUANTITIES ──────
+    // Convert all qty values to numbers to ensure proper comparison
+    const normalizedOldItems = oldItems.map(i => ({
+      ...i,
+      qty: Number(i.qty),
+    }));
+    const normalizedNewItems = newItems.map(i => ({
+      ...i,
+      qty: Number(i.qty),
+    }));
+
+    // ── SMART STOCK ADJUSTMENT: Only adjust what changed ──────
+    // Create maps for quick lookup
+    const oldItemsMap = new Map(normalizedOldItems.map(i => [i.item_uuid, i]));
+    const newItemsMap = new Map(normalizedNewItems.map(i => [i.item_uuid, i]));
+
+    // Process old items: Remove or adjust quantity if it existed
+    for (const oldItem of normalizedOldItems) {
+      if (!oldItem.item_uuid) {
+        console.warn("Skipping old item without item_uuid:", oldItem);
+        continue;
+      }
+
+      const newItem = newItemsMap.get(oldItem.item_uuid);
+
+      if (!newItem) {
+        // Item was REMOVED: Subtract full quantity
+        console.log(
+          `Item ${oldItem.item_uuid} REMOVED - reverting ${oldItem.qty} units`
+        );
+        await adjustStockWithLedger(client, {
+          item_uuid:       oldItem.item_uuid,
+          item_id:         oldItem.item_id,
+          item_name:       oldItem.item_name,
+          zodu_id:         oldPurchase.zodu_id,
+          branch_id:       oldPurchase.branch_id,
+          adjustment_type: "subtract",
+          adjustment_qty:  oldItem.qty,
+          reason:          "purchase_item_removed",
+          reference_id:    oldPurchase.id,
+        });
+      } else if (newItem.qty !== oldItem.qty) {
+        // Item QUANTITY CHANGED: Adjust the difference
+        const qtyDifference = newItem.qty - oldItem.qty;
+        const adjustment_type = qtyDifference > 0 ? "add" : "subtract";
+        
+        console.log(
+          `Item ${oldItem.item_uuid} QTY CHANGED: ${oldItem.qty} → ${newItem.qty} (diff: ${qtyDifference})`
+        );
+        
+        await adjustStockWithLedger(client, {
+          item_uuid:       oldItem.item_uuid,
+          item_id:         oldItem.item_id,
+          item_name:       oldItem.item_name,
+          zodu_id:         oldPurchase.zodu_id,
+          branch_id:       oldPurchase.branch_id,
+          adjustment_type: adjustment_type,
+          adjustment_qty:  Math.abs(qtyDifference),
+          reason:          "purchase_item_qty_updated",
+          reference_id:    oldPurchase.id,
+        });
+      }
+      // If quantity hasn't changed, do nothing
     }
 
+    // Process new items: Add items that didn't exist before
+    for (const newItem of normalizedNewItems) {
+      if (!newItem.item_uuid) {
+        console.warn("Skipping new item without item_uuid:", newItem);
+        continue;
+      }
+
+      const oldItem = oldItemsMap.get(newItem.item_uuid);
+
+      if (!oldItem) {
+        // Item was ADDED: Add full quantity
+        console.log(
+          `Item ${newItem.item_uuid} ADDED - adding ${newItem.qty} units`
+        );
+        await adjustStockWithLedger(client, {
+          item_uuid:       newItem.item_uuid,
+          item_id:         newItem.item_id,
+          item_name:       newItem.item_name,
+          zodu_id:         zodu_id,
+          branch_id:       branch_id,
+          adjustment_type: "add",
+          adjustment_qty:  newItem.qty,
+          reason:          "purchase_item_added",
+          reference_id:    oldPurchase.id,
+        });
+      }
+      // If item existed in old list, it was already processed above
+    }
+
+    // Update database records
     await repo.deletePurchaseItems(client, purchase_id);
     await repo.updatePurchase(client, purchase_id, data);
-    await repo.createPurchaseItems(client, data.items, purchase_id);
-
-    // Apply stock for new items
-    for (const item of data.items) {
-      await adjustStockWithLedger(client, {
-        item_uuid:       item.item_uuid,
-        item_id:         item.item_id,
-        item_name:       item.item_name,
-        zodu_id:         data.zodu_id   || oldPurchase.zodu_id,
-        branch_id:       data.branch_id || oldPurchase.branch_id,
-        adjustment_type: "add",
-        adjustment_qty:  item.qty,
-        reason:          "purchase_edit_add",
-        reference_id:    oldPurchase.id,  // ✅ uuid
-      });
+    
+    if (newItems.length > 0) {
+      await repo.createPurchaseItems(client, newItems, purchase_id);
     }
 
     // Only record a new payment entry for the incremental difference

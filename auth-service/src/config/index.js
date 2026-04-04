@@ -2,7 +2,7 @@ const dotEnv = require("dotenv");
 
 console.log("Loading environment variables...",process.env.NODE_ENV);
 if (process.env.NODE_ENV !== "production") {
-  const configFile = `./.env.${process.env.NODE_ENV}`;
+  const configFile = process.env.NODE_ENV ? `./.env.${process.env.NODE_ENV}` : "./.env";
   dotEnv.config({ path: configFile });
 } else {
   dotEnv.config();
@@ -15,5 +15,6 @@ module.exports = {
   DB_PORT: process.env.DB_PORT,
   DB_HOSTNAME: process.env.DB_HOSTNAME,
   DB_NAME: process.env.DB_NAME,
-  APP_SECRET: process.env.APP_SECRET
+  APP_SECRET: process.env.APP_SECRET,
+  JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || process.env.APP_SECRET
 };

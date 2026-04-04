@@ -34,30 +34,21 @@ const minioClient = new Minio.Client({
 const bucketName = BUCKET_NAME;
 
 
-router.post("/api/createcompany", async (req, res) => {
+// route — remove the double BEGIN/COMMIT, let the service own its transaction
+router.post('/api/createcompany', async (req, res) => {
   try {
-    await conn.query('BEGIN');
-
-    // Validate using the update schema (all fields optional)
     const { errors, input } = await RequestValidator(schema.company_create, req.body);
     if (errors) {
-      await conn.query('ROLLBACK');
-      console.log(req.body, errors)
       return res.status(400).json({ errors });
     }
 
-    // Call service to update company
     const data = await service.createCompanyService(input);
     if (!data.success) {
-      await conn.query('ROLLBACK');
       return res.status(400).json({ message: data.message });
     }
 
-    await conn.query('COMMIT');
     return res.status(200).json({ success: true, data: data.data });
-
   } catch (error) {
-    await conn.query('ROLLBACK');
     console.error(error);
     return res.status(STATUS_CODES.INTERNAL_ERROR).json({ error: error.message });
   }
@@ -527,6 +518,9 @@ router.put("/api/update/orders", async (req, res) => {
   try {
     const { errors, input } = await RequestValidator(schema.order_update, req.body);
 
+    console.log(req.body)
+    console.log("from update order",errors)
+
     if (errors) return res.status(400).json({ errors });
 
     console.log(input)
@@ -601,6 +595,8 @@ router.post("/api/sales/:sale_id/payment", async (req, res) => {
   }
 });
 
+
+
 router.post("/api/customers", async (req, res) => {
   try {
     const { error, value } = schema.add_customer.validate(req.body, { abortEarly: false });
@@ -647,28 +643,55 @@ router.get("/api/customers", async (req, res) => {
 });
  
 // ── GET /api/customers/:cust_uuid
-router.get("/api/customers/:cust_uuid", async (req, res) => {
+router.get('/api/customers/:custUuid/ledger', async (req, res, next) => {
   try {
-    const { error, value } = schema.get_customer_by_id.validate(req.params, {
-      abortEarly: false,
+    // ✅ FIX: was only validating req.params, missing all query params
+    const { error, value } = schema.ledgerSchema.validate({
+      ...req.params,
+      ...req.query,
     });
  
     if (error) {
       return res.status(400).json({
+        success: false,
         errors: error.details.map((d) => d.message),
       });
     }
  
-    const data = await service.getCustomerById(value.cust_uuid);
+    // ✅ FIX: branchId / zoduId were never extracted from anywhere.
+    //         Primary source is the JWT (set by auth middleware as req.user).
+    //         Fall back to query params for internal/admin calls without a JWT.
+    const branchId = req.user?.branch_id ?? req.query.branch_id;
+    const zoduId   = req.user?.zodu_id   ?? req.query.zodu_id;
  
-    if (!data.success) {
-      return res.status(404).json({ message: data.message });
+    if (!branchId || !zoduId) {
+      return res.status(400).json({
+        success: false,
+        errors: ['branch_id and zodu_id are required (via auth token or query param).'],
+      });
     }
+
+    console.log("test",branchId,zoduId,value)
  
-    return res.status(200).json(data);
+    // ✅ FIX: was calling service.getCustomerById (wrong name) and passing
+    //         no arguments — now calls getCustomerLedger with all needed params
+    const data = await service.getCustomerLedger({
+      custUuid: value.custUuid,
+      branchId,
+      zoduId,
+      fromDate: value.fromDate,
+      toDate:   value.toDate,
+      method:   value.method,
+      page:     value.page,
+      limit:    value.limit,
+    });
+ 
+    return res.status(200).json({ success: true, data });
+ 
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: err.message });
+    // ✅ FIX: next(err) now lives in the router where it belongs,
+    //         not inside the service function
+    next(err);
   }
 });
 
@@ -1163,11 +1186,11 @@ router.put("/api/update/inventory", async (req, res) => {
   }
 })
 
-router.get("/get/category/:type/:branch_id", async (req, res) => {
+router.get("/get/category/:type/:branch_id/:zodu_id", async (req, res) => {
 
   try {
-    const { type, branch_id } = req.params;
-    const getCategoryData = await service.getCategoryData(type, branch_id);
+    const { type, branch_id, zodu_id } = req.params;
+    const getCategoryData = await service.getCategoryData(type, branch_id, zodu_id);
     if (!getCategoryData.success) return res.status(400).json({ message: getCategoryData.message });
     return res.status(201).json({ message: "Data Get Successfully", Data: getCategoryData.data });
   } catch (error) {
@@ -1458,10 +1481,10 @@ router.get("/get/menu_item/:branch_id", async (req, res) => {
   }
 });
 
-router.get("/get/pos_data/:branch_id", async (req, res) => {
+router.get("/get/pos_data/:branch_id/:zodu_id", async (req, res) => {
   try {
-    const { branch_id } = req.params
-    const getPosData = await service.get_pos_data(branch_id);
+    const { branch_id, zodu_id } = req.params;
+    const getPosData = await service.get_pos_data(branch_id, zodu_id);
     if (!getPosData.success) return res.status(400).json({ message: getPosData.message });
     return res.status(201).json({ message: "Data Get Successfully", Data: getPosData.data });
   } catch (error) {
@@ -1536,9 +1559,10 @@ router.get(
 );
 
 
-router.get("/get/units/:branch_id", async (req, res) => {
+router.get("/get/units/:branch_id/:zodu_id", async (req, res) => {
   try {
-    const data = await service.getUnits(req.params.branch_id);
+    
+    const data = await service.getUnits(req.params.branch_id, req.params.zodu_id);
     if (!data.success) return res.status(400).json({ message: data.message });
     return res.status(201).json({ message: "Data Get Successfully", Data: data.data });
   } catch (error) {
@@ -1608,11 +1632,13 @@ router.post("/replace/unit", async (req, res) => {
   }
 });
 
-router.get("/get/gst/:branch_id", async (req, res) => {
+router.get("/get/gst/:branch_id/:zodu_id", async (req, res) => {
   try {
-    const { branch_id } = req.params;
+    const { branch_id, zodu_id } = req.params;
 
-    const result = await service.getGST(branch_id);
+    console.log("me",branch_id,zodu_id)
+
+    const result = await service.getGST(branch_id, zodu_id);
 
     if (!result.success)
       return res.status(400).json({ message: result.message });

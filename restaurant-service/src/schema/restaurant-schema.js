@@ -203,7 +203,7 @@ sale_time: Joi.string()
   branch_id: Joi.string().max(50).required(),
 
   sale_type: Joi.string()
-    .valid("retail", "credit")
+    .valid("retail", "credit",'quotation')
     .required(),
 
   sale_date: Joi.date().required(),
@@ -229,9 +229,12 @@ sale_time: Joi.string()
     .min(0)
     .default(0),
 
-  payment_mode: Joi.string()
-    .valid("Cash", "Card", "UPI", "Credit")
-    .required(),
+  payment_mode: Joi.string().optional().allow(null, ""),
+
+
+    discount_gst_mode: Joi.string().valid("before", "after").default("after"),
+
+  roundoff: Joi.number().precision(2).optional().allow(null),
 
   transaction_id: Joi.string()
     .allow(null, ""),
@@ -540,6 +543,7 @@ const sales_history_query = Joi.object({
   sale_type:       Joi.string().optional(),
   customer_phone:  Joi.string().optional(),
   invoice_no:      Joi.string().optional(),
+  search:    Joi.string().optional(),
   page:            Joi.number().integer().min(1).optional().default(1),
   limit:           Joi.number().integer().min(1).max(100).optional().default(20),
 });
@@ -627,6 +631,19 @@ const editSchema = Joi.object({
     opening_stock:  Joi.number().min(0).allow(null),reorder_level:  Joi.number().min(0).allow(null),
 }).min(1); // at least one field required for edit
  
+const ledgerSchema = Joi.object({
+  // Path param
+  custUuid: Joi.string().uuid({ version: 'uuidv4' }).required(),
+ 
+  // Query params
+  fromDate: Joi.string().isoDate().optional(),
+  toDate:   Joi.string().isoDate().optional(),
+  method:   Joi.string()
+               .valid('cash', 'upi', 'card', 'bank transfer', 'store credit', 'all')
+               .default('all'),
+  page:     Joi.number().integer().min(1).default(1),
+  limit:    Joi.number().integer().min(1).max(100).default(20),
+}).options({ allowUnknown: true });
 
 module.exports = {
   company_create,
@@ -654,5 +671,6 @@ module.exports = {
   mark_payment,
   createSchema,
   editSchema,
-  order_update
+  order_update,
+  ledgerSchema
 };

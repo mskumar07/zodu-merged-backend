@@ -1,48 +1,178 @@
 const conn = require('../database/connection');
-
-// ========== Customer Repository Functions ==========
+const { v4: uuidv4 } = require('uuid');
 
 async function getNextZoduId() {
   const res = await conn.query("SELECT nextval('zodu_seq') as v");
   const n = parseInt(res.rows[0].v, 10);
-  return 'ZODU' + String(n).padStart(3, '0');
+  return 'Z' + String(n).padStart(3, '0');
 }
 
-// Find by Email
+// FIXED: select all fields needed for login — was only selecting id, email
 async function findEmailExist({ email }) {
-  return await conn.query(
-    'SELECT * FROM tbl_account_creation WHERE email = $1',[email]);
+  return conn.query(
+    `SELECT 
+       ac.id, ac.zodu_id, ac.restaurant_name,
+       ac.email, ac.phone_number, ac.password_hash,
+       u.user_id, u.user_type, u.is_active, u.is_deleted,u.branch_id
+     FROM tbl_account_creation ac
+     JOIN tbl_users u ON u.zodu_id = ac.zodu_id
+     WHERE ac.email = $1`,
+    [email]
+  );
 }
 
 async function findPhnExist({ phone_number }) {
-  return await conn.query(
-    'SELECT * FROM tbl_account_creation WHERE phone_number = $1',[phone_number]);
+  return conn.query(
+    `SELECT 
+       ac.id, ac.zodu_id, ac.restaurant_name,
+       ac.email, ac.phone_number, ac.password_hash,
+       u.user_id, u.user_type, u.is_active, u.is_deleted,u.branch_id
+     FROM tbl_account_creation ac
+     JOIN tbl_users u ON u.zodu_id = ac.zodu_id
+     WHERE ac.phone_number = $1`,
+    [phone_number]
+  );
 }
 
-
-
-
-// Create Accound
 async function AccountCreationQuery({ zodu_id, restaurant_name, phone_number, email, password_hash }) {
-  await conn.query('BEGIN');
-  const InsertQuery = await conn.query( 
-    `INSERT INTO tbl_account_creation (zodu_id, restaurant_name, phone_number, email, password_hash)
-     VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-    [zodu_id, restaurant_name, phone_number, email, password_hash]);
+  const client = await conn.connect();
+  try {
+    await client.query('BEGIN');
+    const user_id = uuidv4();
 
-  if (InsertQuery) {
-    await conn.query('COMMIT');       
-    return InsertQuery.rows[0];
+    // 1. tbl_account_creation
+    const accountResult = await client.query(
+      `INSERT INTO tbl_account_creation
+         (zodu_id, restaurant_name, email, phone_number, password_hash)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [zodu_id, restaurant_name, email || null, phone_number || null, password_hash]
+    );
+
+    // 2. tbl_users
+    await client.query(
+      `INSERT INTO tbl_users
+         (user_id, zodu_id, email, phone, password_hash, user_type, is_active)
+       VALUES ($1, $2, $3, $4, $5, 'super_admin', true)`,
+      [user_id, zodu_id, email || null, phone_number || null, password_hash]
+    );
+
+    // 3. Default "Owner" role
+    const roleResult = await client.query(
+      `INSERT INTO tbl_roles (zodu_id, role_name, description)
+       VALUES ($1, 'Owner', 'Full access — auto-created on registration')
+       RETURNING role_id`,
+      [zodu_id]
+    );
+    const role_id = roleResult.rows[0].role_id;
+
+    // 4. Grant all modules to Owner role
+    const { rows: modules } = await client.query(
+      'SELECT module_id FROM tbl_modules'
+    );
+
+    if (modules.length > 0) {
+      const placeholders = modules.map((_, i) =>
+        `(NULL, $${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3}, true, true, true, true)`
+      ).join(', ');
+      const params = modules.flatMap(m => [role_id, zodu_id, m.module_id]);
+
+      await client.query(
+        `INSERT INTO tbl_access_control
+           (user_id, role_id, zodu_id, module_id,
+            can_read, can_create, can_edit, can_delete)
+         VALUES ${placeholders}`,
+        params
+      );
+    }
+
+    // 5. Bind user → Owner role
+    await client.query(
+      `INSERT INTO tbl_user_roles (user_id, role_id, zodu_id)
+       VALUES ($1, $2, $3)`,
+      [user_id, role_id, zodu_id]
+    );
+
+    await client.query('COMMIT');
+    return { account: accountResult.rows[0], user_id, role_id };
+
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
   }
-  conn.query('ROLLBACK'); 
-  throw new Error('Unable to create account');
 }
 
+// ── session management ────────────────────────────────────────────────────────
 
-// Export functions
+async function createSession({ user_id, refresh_token, ip_address, user_agent, expires_at }) {
+  const result = await conn.query(
+    `INSERT INTO tbl_user_sessions
+       (user_id, refresh_token, ip_address, user_agent, expires_at, is_revoked)
+     VALUES ($1, $2, $3, $4, $5, false)
+     RETURNING session_id, expires_at`,
+    [user_id, refresh_token, ip_address || null, user_agent || null, expires_at]
+  );
+  return result.rows[0];
+}
+
+async function findSessionByRefreshToken({ refresh_token }) {
+  const result = await conn.query(
+    `SELECT s.session_id, s.user_id, s.expires_at, s.is_revoked,
+            u.zodu_id, u.user_type, u.is_active, u.is_deleted
+     FROM tbl_user_sessions s
+     JOIN tbl_users u ON u.user_id = s.user_id
+     WHERE s.refresh_token = $1`,
+    [refresh_token]
+  );
+  return result.rows[0] || null;
+}
+
+async function revokeSession({ session_id }) {
+  await conn.query(
+    `UPDATE tbl_user_sessions
+     SET is_revoked = true, updated_at = now()
+     WHERE session_id = $1`,
+    [session_id]
+  );
+}
+
+async function updateLastLogin({ user_id }) {
+  await conn.query(
+    `UPDATE tbl_users SET last_login_at = now() WHERE user_id = $1`,
+    [user_id]
+  );
+}
+
+// ── compensating delete ───────────────────────────────────────────────────────
+
+async function deleteAccountByZoduId(zodu_id) {
+  const client = await conn.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM tbl_user_roles       WHERE zodu_id = $1', [zodu_id]);
+    await client.query('DELETE FROM tbl_access_control   WHERE zodu_id = $1', [zodu_id]);
+    await client.query('DELETE FROM tbl_roles            WHERE zodu_id = $1', [zodu_id]);
+    await client.query('DELETE FROM tbl_users            WHERE zodu_id = $1', [zodu_id]);
+    await client.query('DELETE FROM tbl_account_creation WHERE zodu_id = $1', [zodu_id]);
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   AccountCreationQuery,
   findEmailExist,
   findPhnExist,
-  getNextZoduId
+  getNextZoduId,
+  deleteAccountByZoduId,
+  createSession,
+  findSessionByRefreshToken,
+  revokeSession,
+  updateLastLogin,
 };

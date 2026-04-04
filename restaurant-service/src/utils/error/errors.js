@@ -33,6 +33,8 @@ function NotFoundError(description = "not found") {
   return BaseError(description, STATUS_CODES.NOT_FOUND, description);
 }
 
+
+
 module.exports = {
   BaseError,
   APIError,

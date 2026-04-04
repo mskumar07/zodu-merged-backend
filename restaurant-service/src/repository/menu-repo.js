@@ -508,74 +508,97 @@ exports.createStockLedger = async (client, data) => {
 
 
 exports.getStockHistoryRepo = async ({ item_uuid, zodu_id, branch_id }) => {
-  const query = `
-  SELECT 
-    l.ledger_id,
-    inv.item_uuid,
-    inv.item_id,
-
-    COALESCE(m.item_name, l.item_name) AS item_name,
-
-    l.transaction_type,
-
-    COALESCE(
-      CASE
-        WHEN l.transaction_type IN ('sale', 'sale_update', 'sale_update_reverse')
-          THEN s.sale_id::TEXT
-
-        WHEN l.transaction_type = 'purchase'
-          THEN p.purchase_id::TEXT
-      END,
-      l.reference_id::TEXT
-    ) AS reference_id,
-
-    l.qty_change,
-    l.stock_before,
-    l.stock_after,
-    l.notes,
-
-    TO_CHAR(l.created_at, 'DD Mon YYYY, HH12:MI AM') AS created_at,
-
-    -- ✅ ALWAYS AVAILABLE
-    inv.available_qty,
-    inv.reorder_level,
-
-    CASE 
-      WHEN l.qty_change > 0 THEN 'IN'
-      WHEN l.qty_change < 0 THEN 'OUT'
-      WHEN l.qty_change IS NULL THEN 'NO_MOVEMENT'
-      ELSE 'ADJUST'
-    END as movement_type
-
-  FROM tbl_inventory inv
-
-  -- ✅ LEFT JOIN ledger (so inventory still comes even if no ledger)
-  LEFT JOIN tbl_stock_ledger l
-    ON l.item_uuid = inv.item_uuid
-    AND l.zodu_id = inv.zodu_id
-    AND l.branch_id = inv.branch_id
-
-  -- SALES
-  LEFT JOIN tbl_sales s
-    ON s.sale_uuid = l.reference_id
-
-  -- PURCHASE
-  LEFT JOIN tbl_purchase p
-    ON p.id = l.reference_id
-
-  -- MENU
-  LEFT JOIN tbl_menu_items m
-    ON m.item_uuid = inv.item_uuid
-
-  WHERE inv.item_uuid = $1
-    AND inv.zodu_id = $2
-    AND inv.branch_id = $3
-
-  ORDER BY l.created_at DESC NULLS LAST;
+  // ✅ 1. Get Item + Inventory Details (Always)
+  console.log(item_uuid)
+  const itemQuery = `
+    SELECT 
+      inv.item_uuid,
+      inv.item_id,
+      COALESCE(m.item_name, 'Unknown Item') AS item_name,
+      inv.available_qty,
+      inv.reorder_level
+    FROM tbl_inventory inv
+    LEFT JOIN tbl_menu_items m
+      ON m.item_uuid = inv.item_uuid
+    WHERE inv.item_uuid = $1
+      AND inv.zodu_id = $2
+      AND inv.branch_id = $3
   `;
 
-  const values = [item_uuid, zodu_id, branch_id];
+  const itemResult = await conn.query(itemQuery, [item_uuid, zodu_id, branch_id]);
 
-  const result = await conn.query(query, values);
-  return result.rows;
+  if (itemResult.rows.length === 0) {
+    return {
+      item: null,
+      data: [],
+      summary: null
+    };
+  }
+
+  const itemData = itemResult.rows[0];
+
+  // ✅ 2. Get Ledger History (ONLY if exists)
+  const historyQuery = `
+    SELECT 
+      l.ledger_id,
+      l.transaction_type,
+
+      COALESCE(
+        CASE
+          WHEN l.transaction_type IN ('sale', 'sale_update', 'sale_update_reverse')
+            THEN s.sale_id::TEXT
+          WHEN l.transaction_type IN ('purchase', 'purchase_item_added', 'purchase_item_qty_updated', 'purchase_item_removed', 'purchase_delete')
+            THEN p.purchase_id::TEXT
+        END,
+        l.reference_id::TEXT
+      ) AS reference_id,
+
+      l.qty_change,
+      l.stock_before,
+      l.stock_after,
+      l.notes,
+
+      TO_CHAR(l.created_at, 'DD Mon YYYY, HH12:MI AM') AS created_at,
+
+      CASE 
+        WHEN l.qty_change > 0 THEN 'IN'
+        WHEN l.qty_change < 0 THEN 'OUT'
+        ELSE 'ADJUST'
+      END as movement_type
+
+    FROM tbl_stock_ledger l
+
+    LEFT JOIN tbl_sales s
+      ON s.sale_uuid = l.reference_id
+
+    LEFT JOIN tbl_purchase p
+      ON p.id = l.reference_id
+
+    WHERE l.item_uuid = $1
+      AND l.zodu_id = $2
+      AND l.branch_id = $3
+
+    ORDER BY l.created_at DESC;
+  `;
+
+  const historyResult = await conn.query(historyQuery, [item_uuid, zodu_id, branch_id]);
+
+  return {
+    // ✅ Common item info (ALWAYS)
+    item: {
+      item_uuid: itemData.item_uuid,
+      item_id: itemData.item_id,
+      item_name: itemData.item_name
+    },
+
+    // ✅ History (empty if no ledger)
+    data: historyResult.rows,
+
+    // ✅ Summary
+    summary: {
+      current_stock: itemData.available_qty,
+      low_stock_alert: itemData.reorder_level,
+      is_low: Number(itemData.available_qty) <= Number(itemData.reorder_level)
+    }
+  };
 };
