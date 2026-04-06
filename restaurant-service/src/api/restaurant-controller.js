@@ -247,19 +247,22 @@ router.post(
       await client.query("BEGIN");
 
       let totalInserted = 0;
+      let totalInventoryProcessed = 0;
 
       for (let i = 0; i < data.length; i += BATCH_SIZE) {
         const batch = data.slice(i, i + BATCH_SIZE);
 
-        const values = [];
-        const placeholders = [];
+        // ── 1. tbl_menu_items ──────────────────────────────────────────
+        const productValues = [];
+        const productPlaceholders = [];
         let index = 1;
+        const validBatch = []; // track valid rows for inventory step
 
         for (const item of batch) {
           if (!item.item_name || !item.zodu_id) continue;
 
-          values.push(
-            item.item_id || null,         // ✅ USER PROVIDED
+          productValues.push(
+            item.item_id || null,
             item.zodu_id || null,
             item.branch_id || null,
             item.item_type || "S",
@@ -277,169 +280,99 @@ router.post(
             item.item_img || null
           );
 
-          placeholders.push(
+          productPlaceholders.push(
             `(
-              gen_random_uuid(),  -- item_uuid
+              gen_random_uuid(),
               $${index++}, $${index++}, $${index++}, $${index++},
               $${index++}, $${index++}, $${index++}, $${index++},
               $${index++}, $${index++}, $${index++}, $${index++},
               $${index++}, $${index++}, $${index++}, $${index++}
             )`
           );
+
+          validBatch.push(item); // collect for inventory insert
         }
 
-        if (!values.length) continue;
+        if (!productValues.length) continue;
 
-        const query = `
+        const productQuery = `
           INSERT INTO tbl_menu_items (
             item_uuid,
-            item_id,
-            zodu_id,
-            branch_id,
-            item_type,
-            item_name,
-            category_id,
-            sku,
-            barcode,
-            hsn_code,
-            unit,
-            mrp,
-            sell_price,
-            purchase_price,
-            gst_type,
-            tax_incl_type,
-            item_img
+            item_id, zodu_id, branch_id, item_type,
+            item_name, category_id, sku, barcode,
+            hsn_code, unit, mrp, sell_price,
+            purchase_price, gst_type, tax_incl_type, item_img
           )
-          VALUES ${placeholders.join(",")}
+          VALUES ${productPlaceholders.join(",")}
           ON CONFLICT (barcode) DO NOTHING
+          RETURNING item_uuid, item_id, zodu_id, branch_id, item_name
         `;
 
-        await client.query(query, values);
-        totalInserted += placeholders.length;
-      }
+        const productResult = await client.query(productQuery, productValues);
+        totalInserted += productPlaceholders.length;
 
-      await client.query("COMMIT");
+        // ── 2. tbl_inventory (using returned UUIDs) ────────────────────
+        if (!productResult.rows.length) continue;
 
-      res.json({
-        success: true,
-        message: "Products uploaded successfully",
-        inserted: totalInserted
-      });
+        const inventoryValues = [];
+        const inventoryPlaceholders = [];
+        let invIndex = 1;
 
-    } catch (error) {
-      await client.query("ROLLBACK");
-
-      res.status(500).json({
-        error: error.message
-      });
-    } finally {
-      client.release();
-    }
-  }
-);
-
-router.post(
-  "/api/inventory/upload-excel",
-  upload.single("file"),
-  async (req, res) => {
-    const client = await conn.connect();
-
-    try {
-      if (!req.file) {
-        return res.status(400).json({ error: "No file uploaded" });
-      }
-
-      const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
-      const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      const data = XLSX.utils.sheet_to_json(sheet);
-
-      if (!data.length) {
-        return res.status(400).json({ error: "Excel is empty" });
-      }
-
-      await client.query("BEGIN");
-
-      let totalProcessed = 0;
-
-      for (let i = 0; i < data.length; i += BATCH_SIZE) {
-        const batch = data.slice(i, i + BATCH_SIZE);
-
-        const values = [];
-        const placeholders = [];
-        let index = 1;
-
-        for (const item of batch) {
-          if (
-            !item.item_uuid ||
-            !item.item_id ||
-            !item.zodu_id ||
-            !item.branch_id ||
-            !item.item_name
-          )
-            continue;
-
-          values.push(
-            item.item_uuid,
-            item.item_id,
-            item.zodu_id,
-            item.branch_id,
-            item.item_name,
-            item.available_qty || 0,
-            item.reorder_level || 0
+        for (const row of productResult.rows) {
+          inventoryValues.push(
+            row.item_uuid,
+            row.item_id,
+            row.zodu_id,
+            row.branch_id,
+            row.item_name,
+            // pull qty / reorder from original excel row if provided
+            validBatch.find(i => i.item_id === row.item_id)?.available_qty || 0,
+            validBatch.find(i => i.item_id === row.item_id)?.reorder_level || 0
           );
 
-          placeholders.push(
+          inventoryPlaceholders.push(
             `(
               gen_random_uuid(),
-              $${index++}, $${index++}, $${index++}, $${index++},
-              $${index++}, $${index++}, $${index++},
+              $${invIndex++}, $${invIndex++}, $${invIndex++}, $${invIndex++},
+              $${invIndex++}, $${invIndex++}, $${invIndex++},
               CURRENT_TIMESTAMP
             )`
           );
         }
 
-        if (!values.length) continue;
-
-        const query = `
+        const inventoryQuery = `
           INSERT INTO tbl_inventory (
             inventory_uuid,
-            item_uuid,
-            item_id,
-            zodu_id,
-            branch_id,
-            item_name,
-            available_qty,
-            reorder_level,
+            item_uuid, item_id, zodu_id, branch_id,
+            item_name, available_qty, reorder_level,
             created_at
           )
-          VALUES ${placeholders.join(",")}
+          VALUES ${inventoryPlaceholders.join(",")}
           ON CONFLICT (item_uuid, branch_id)
           DO UPDATE SET
-            item_id = EXCLUDED.item_id,
-            item_name = EXCLUDED.item_name,
-            available_qty = EXCLUDED.available_qty,
-            reorder_level = EXCLUDED.reorder_level,
+            item_id         = EXCLUDED.item_id,
+            item_name       = EXCLUDED.item_name,
+            available_qty   = EXCLUDED.available_qty,
+            reorder_level   = EXCLUDED.reorder_level,
             last_stock_update = CURRENT_TIMESTAMP
         `;
 
-        await client.query(query, values);
-        totalProcessed += placeholders.length;
+        await client.query(inventoryQuery, inventoryValues);
+        totalInventoryProcessed += inventoryPlaceholders.length;
       }
 
       await client.query("COMMIT");
 
       res.json({
         success: true,
-        message: "Inventory uploaded successfully",
-        processed: totalProcessed,
+        message: "Products and inventory uploaded successfully",
+        inserted: totalInserted,
+        inventoryProcessed: totalInventoryProcessed,
       });
 
     } catch (error) {
       await client.query("ROLLBACK");
-
-      res.status(500).json({
-        error: error.message,
-      });
+      res.status(500).json({ error: error.message });
     } finally {
       client.release();
     }
@@ -2115,53 +2048,44 @@ router.get("/get/expense/:expense_id", async (req, res) => {
 
 
 router.post("/add/hold_menu", async (req, res) => {
-  console.log(req.body)
   try {
-    const { errors, input } = await RequestValidator(
-      schema.holdSchema,
-      req.body
-    );
-    if (errors) {
-      return res.status(400).json({ success: false, error: errors });
-    }
-    const data = await service.addHoldMenu(input);
+    const { errors, input } = await RequestValidator(schema.holdSchema, req.body);
+    if (errors) return res.status(400).json({ success: false, error: errors });
 
-    if (!data.success) {
-      return res.status(400).json({ message: data.message });
-    }
+    const data = await service.addHoldMenu(input);
+    if (!data.success) return res.status(400).json({ message: data.message });
 
     return res.status(201).json({ data });
   } catch (error) {
-    await client.query("ROLLBACK");
     console.error("Error adding hold:", error);
     res.status(500).json({ error: "Failed to save hold" });
   }
 });
 
+// ✅ :id is now hold_uuid
 router.delete("/delete/hold-menu/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const data = await service.deleteHoldMenu(id);
-    if (!data.success) {
-      return res.status(400).json({ message: data.message });
-    }
-    return res.status(201).json({ data });
+    if (!data.success) return res.status(400).json({ message: data.message });
+
+    return res.status(200).json({ data });  // ✅ 200 for DELETE, not 201
   } catch (error) {
     console.error("Error deleting hold:", error);
     res.status(500).json({ error: "Failed to delete hold" });
   }
 });
 
-router.get("/get/hold-orders/:branch_id", async (req, res) => {
-
+// ── Get holds for a branch (needed for POS recall) ────────────
+router.get("/get/hold_menu/:zodu_id/:branch_id", async (req, res) => {
   try {
-    const { branch_id } = req.params;
-    const getHoldData = await service.getHoldData(branch_id);
-    if (!getHoldData.success) return res.status(400).json({ message: getHoldData.message });
-    return res.status(201).json({ message: "Holds fetched successfully", Data: getHoldData.data });
+    const { zodu_id, branch_id } = req.params;
+    console.log(zodu_id,branch_id)
+    const data = await service.getHoldData(zodu_id, branch_id);
+    return res.status(200).json({ data });
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
+    console.error("Error fetching holds:", error);
+    res.status(500).json({ error: "Failed to fetch holds" });
   }
 });
 

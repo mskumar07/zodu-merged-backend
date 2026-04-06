@@ -15,7 +15,7 @@ const getNextVendorId = async (client, zodu_id, branch_id) => {
   if (rows.length === 0) return `${branch_id}-1`;
 
   const lastSeq = parseInt(rows[0].vendor_id.split("-")[1]);
-  return `${branch_id}-${lastSeq + 1}`;
+  return `V-${lastSeq + 1}`;
 };
 
 // 🔹 CREATE Vendor

@@ -2779,8 +2779,7 @@ exports.getNextItemId = async(zoduId, branchId) => {
 }
 
 exports.createMenuItem = async (data) => {
-  const seq     = await getNextItemId(data.zodu_id, data.branch_id);
-  const item_id = `${seq}`;
+
  
   const { rows } = await conn.query(
     `INSERT INTO tbl_menu_items (
@@ -2802,7 +2801,7 @@ exports.createMenuItem = async (data) => {
      )
      RETURNING *`,
     [
-      item_id,
+      data.item_id,
       data.zodu_id,
       data.branch_id,
       data.item_type,
@@ -3250,7 +3249,8 @@ exports.getSalesHistory = async (filters) => {
 // ═══════════════════════════════════════════════════════════════
  
 exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
- 
+  
+  console.log(sale_id,zodu_id,branch_id)
   const saleResult = await conn.query(
     `SELECT
         s.sale_uuid,
@@ -3290,7 +3290,7 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
         c.pincode          AS customer_pincode
  
      FROM tbl_sales s
-     LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid
+     LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid AND c.branch_id = s.branch_id
      WHERE s.sale_id   = $1
        AND s.zodu_id   = $2
        AND s.branch_id = $3
@@ -3302,6 +3302,7 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
  
   const row       = saleResult.rows[0];
   const sale_uuid = row.sale_uuid;
+
  
   const sale = {
     sale_uuid:       row.sale_uuid,
@@ -3378,7 +3379,7 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
         TO_CHAR(si.created_at, 'DD Mon YYYY')  AS created_at_fmt
  
      FROM tbl_sale_items si
-     LEFT JOIN tbl_menu_items m ON m.item_id = si.item_id
+     LEFT JOIN tbl_menu_items m ON m.item_id = si.item_id AND m.branch_id = $3 AND m.zodu_id = $2
  
      -- ✅ sum returned qty per original line item across all returns
      LEFT JOIN LATERAL (
@@ -3391,7 +3392,7 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
  
      WHERE si.sale_uuid = $1
      ORDER BY si.id ASC`,
-    [sale_uuid]
+    [sale_uuid,zodu_id,branch_id]
   );
  
   // Payment history
@@ -3459,6 +3460,8 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
    ORDER BY r.created_at DESC`,
   [sale_uuid]
 );
+
+console.log("test",sale,customer,itemsResult.rows,paymentResult.rows,returnResult.rows)
  
   return {
     sale,
@@ -4200,51 +4203,7 @@ exports.getPurchaseById = async (purchase_id) => {
 
 
 
-exports.getHold = async (branch_id) => {
-  try {
-    const result = await conn.query(
-      `
-      SELECT 
-        h.hold_id,
-        h.zodu_id,
-        h.branch_id,
-        h.order_type,
-        h.table_no,
-        h.customer_name,
-        h.customer_phone,
-        h.created_at,
-        COALESCE(
-          json_agg(
-            json_build_object(
-              'item_name', hi.item_name,
-              'item_id', hi.item_id,
-              'item_unit', hi.item_unit,
-              'qty', hi.qty,
-              'price', hi.price,
-              'variant_name', hi.variant_name,
-              'variant_id', hi.variant_id
-            )
-          ) FILTER (WHERE hi.hold_id IS NOT NULL),
-          '[]'
-        ) AS items
-      FROM tbl_hold h
-      LEFT JOIN tbl_hold_items hi ON h.hold_id = hi.hold_id
-      WHERE h.branch_id = $1
-      GROUP BY h.hold_id
-      ORDER BY h.created_at DESC;
-      `,
-      [String(branch_id)]
-    );
 
-    return {
-      success: true,
-      data: result.rows,
-    };
-  } catch (err) {
-    console.error("❌ Error in getHold:", err.message);
-    return { success: false, message: err.message };
-  }
-};
 
 
 
@@ -5065,64 +5024,115 @@ exports.getInventorySummary = async (
 
 
 
-exports.createHold = async (zodu_id, branch_id, orderType, table_no, customerName, customerPhone) => {
-  console.log(zodu_id);
+// ── Create hold header ────────────────────────────────────────
+exports.createHold = async (data) => {
+  const {
+    zodu_id, branch_id, order_type, table_no, notes,
+    customer_uuid, customer_name, customer_phone,
+    total_items, subtotal, total_tax,
+    discount_type, discount_value, discount_amount,
+    round_off, total_amount,
+  } = data;
+
+  // hold_id: H-<epoch ms> scoped unique per branch
+  const hold_id = `H-${Date.now()}`;
+
   const query = `
-    INSERT INTO tbl_hold (zodu_id, branch_id, order_type, table_no, customer_name, customer_phone)
-    VALUES ($1, $2, $3, $4, $5, $6)
-    RETURNING hold_id
+    INSERT INTO tbl_hold (
+      hold_id, zodu_id, branch_id, order_type, table_no, notes,
+      customer_uuid, customer_name, customer_phone,
+      total_items, subtotal, total_tax,
+      discount_type, discount_value, discount_amount,
+      round_off, total_amount, updated_at
+    ) VALUES (
+      $1,$2,$3,$4,$5,$6,
+      $7,$8,$9,
+      $10,$11,$12,
+      $13,$14,$15,
+      $16,$17, CURRENT_TIMESTAMP
+    )
+    RETURNING hold_uuid
   `;
 
   const result = await conn.query(query, [
-    zodu_id,
-    branch_id,
-    orderType,
-    table_no,
-    customerName,
-    customerPhone
+    hold_id, zodu_id, branch_id, order_type, table_no || null, notes || null,
+    customer_uuid || null, customer_name || null, customer_phone || null,
+    total_items, subtotal, total_tax,
+    discount_type || null, discount_value, discount_amount,
+    round_off, total_amount,
   ]);
 
-  return result.rows[0].hold_id;
-}
-
-exports.insertHoldItem = async (hold_id, zodu_id, branch_id, item) => {
-
-  const query = `
-    INSERT INTO tbl_hold_items 
-      (zodu_id, branch_id, hold_id, item_name, item_id, item_unit, qty, price, variant_name, variant_id)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-  `;
-
-  await conn.query(query, [
-    zodu_id,
-    branch_id,
-    hold_id,
-    item.item_name,
-    item.item_id,
-    item.item_unit || null,
-    item.qty || 0,
-    item.price || 0,
-    item.variant_name || null,
-    item.variant_id || null
-  ]);
-}
-
-exports.deleteHoldItems = async (hold_id) => {
-  const query = `
-    DELETE FROM tbl_hold_items  
-    WHERE hold_id = $1 
-  `;
-
-  await conn.query(query, [hold_id]);
+  return result.rows[0].hold_uuid;  // ✅ return uuid, not serial
 };
 
-exports.deleteHold = async (hold_id) => {
+// ── Bulk insert hold items ────────────────────────────────────
+exports.insertHoldItems = async (hold_uuid, items) => {
+  // Build a single multi-row INSERT instead of N round-trips
+  const values = [];
+  const params = [];
+  let   idx    = 1;
+
+  for (const item of items) {
+    values.push(`(
+      $${idx++},$${idx++},$${idx++},$${idx++},$${idx++},
+      $${idx++},$${idx++},$${idx++},$${idx++},$${idx++},
+      $${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++}
+    )`);
+    params.push(
+      hold_uuid,
+      item.item_uuid    || null,
+      item.item_id,
+      item.item_name,
+      item.variant_id   || null,
+      item.variant_name || null,
+      item.unit         || null,
+      item.quantity,
+      item.price,
+      item.mrp          ?? null,
+      item.discount     || 0,
+      item.hsn_code     || null,
+      item.gst_percentage || 0,
+      item.tax_amount   || 0,
+      item.cgst         || 0,
+      item.sgst         || 0,
+      item.tax_inclusive || false
+    );
+  }
+
   const query = `
-    DELETE FROM tbl_hold
-    WHERE hold_id = $1 
+    INSERT INTO tbl_hold_items (
+      hold_uuid, item_uuid, item_id, item_name,
+      variant_id, variant_name, unit,
+      quantity, price, mrp, discount,
+      hsn_code, gst_percentage, tax_amount, cgst, sgst,tax_inclusive
+    ) VALUES ${values.join(",")}
   `;
 
-  await conn.query(query, [hold_id]);
+  await conn.query(query, params);
+};
+
+// ── Delete hold (CASCADE removes items automatically) ─────────
+exports.deleteHold = async (hold_uuid) => {
+  await conn.query(
+    `DELETE FROM tbl_hold WHERE hold_uuid = $1`,
+    [hold_uuid]
+  );
+};
+
+// ── Get all holds for a branch ────────────────────────────────
+exports.getHoldsByBranch = async (zodu_id, branch_id) => {
+  console.log("from da",zodu_id,branch_id)
+  const result = await conn.query(
+    `SELECT h.*, 
+            json_agg(hi ORDER BY hi.id) AS items
+     FROM tbl_hold h
+     LEFT JOIN tbl_hold_items hi ON hi.hold_uuid = h.hold_uuid
+     WHERE h.zodu_id = $1 AND h.branch_id = $2
+     GROUP BY h.hold_uuid
+     ORDER BY h.created_at DESC`,
+    [zodu_id, branch_id]
+  );
+  return result.rows;
 };
 
 exports.ensurePaymentForSource = async ({

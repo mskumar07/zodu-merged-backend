@@ -1,196 +1,84 @@
 const express = require("express");
-const router = express.Router();
+const router  = express.Router();
 const service = require("../services/dashboard-service");
 
-const parseBranchIds = (rawBranchIds) => {
-  const parsed = Array.isArray(rawBranchIds)
-    ? rawBranchIds
-      .flatMap((value) => String(value).split(","))
-      .map((value) => value.trim())
-      .filter(Boolean)
-    : String(rawBranchIds ?? "")
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean);
-
-  if (parsed.some((value) => value.toLowerCase() === "all")) {
-    return [];
+function requireParams(res, ...params) {
+  const missing = params.filter(([val]) => !val).map(([, name]) => name);
+  if (missing.length) {
+    res.status(400).json({ error: `Missing required params: ${missing.join(", ")}` });
+    return false;
   }
+  return true;
+}
 
-  return parsed;
-};
-
-const getRequestedBranchIds = (req) => {
-  const branchIdsFromQuery = req.query.branch_ids ?? req.query.branchIds;
-  const rawBranchIds = branchIdsFromQuery ?? req.params.branch_id;
-
-  return parseBranchIds(rawBranchIds);
-};
-
-const getSummaryBranchIds = (req) => {
-  const branchIdsFromQuery = req.query.branch_ids ?? req.query.branchIds;
-  return parseBranchIds(branchIdsFromQuery);
-};
-
-router.get("/summary/:zodu_id", async (req, res) => {
+async function getStats(req, res) {
+  const { zodu_id, branch_id } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"])) return;
+console.log(zodu_id,branch_id)
   try {
-    const { zodu_id } = req.params;
-    const branchIds = getSummaryBranchIds(req);
-    console.log(branchIds)
-    const { dateType = "today", fromDate, toDate } = req.query;
-
-    const result = await service.getDashboardSummary(
-      zodu_id,
-      branchIds,
-      { dateType, fromDate, toDate }
-    );
-
-    return res.status(200).json({
-      message: "Summary fetched successfully",
-      data: result.data
-    });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
+    const data = await service.getStats(zodu_id, branch_id);
+    
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-});
+}
 
-router.get("/orders/:zodu_id", async (req, res) => {
+async function getSales(req, res) {
+  const { zodu_id, branch_id, cursor, limit } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"])) return;
+  console.log(zodu_id,branch_id,cursor,limit)
+
   try {
-    const { zodu_id } = req.params;
-    const branchIds = getRequestedBranchIds(req);
-    const {
-      page = 1,
-      limit = 10,
-      sortOrder = "desc",
-      dateType = "today",
-      fromDate,
-      toDate
-    } = req.query;
-
-    const result = await service.getDashboardOrders(
-      zodu_id,
-      branchIds,
-      {
-        page: +page,
-        limit: +limit,
-        sortOrder,
-        dateType,
-        fromDate,
-        toDate
-      }
-    );
-
-    return res.status(200).json({
-      message: "Orders fetched successfully",
-      data: result.data,
-      pagination: result.pagination
-    });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
+    const result = await service.getSales(zodu_id, branch_id, limit, cursor);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-});
+}
 
-router.get("/expenses/:zodu_id", async (req, res) => {
+async function getTopItems(req, res) {
+  const { zodu_id, branch_id, cursor, limit } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"])) return;
+
   try {
-    const { zodu_id } = req.params;
-    const branchIds = getRequestedBranchIds(req);
-    const {
-      page = 1,
-      limit = 10,
-      sortOrder = "desc",
-      dateType = "today",
-      fromDate,
-      toDate
-    } = req.query;
-
-    const result = await service.getDashboardExpenses(
-      zodu_id,
-      branchIds,
-      {
-        page: +page,
-        limit: +limit,
-        sortOrder,
-        dateType,
-        fromDate,
-        toDate
-      }
-    );
-
-    return res.status(200).json({
-      message: "Expenses fetched successfully",
-      data: result.data,
-      pagination: result.pagination
-    });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
+    const result = await service.getTopItems(zodu_id, branch_id, limit, cursor);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-});
+}
 
-router.get("/top-items/:zodu_id", async (req, res) => {
+async function getReminders(req, res) {
+  const { zodu_id, branch_id, cursor, limit } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"])) return;
+
   try {
-    const { zodu_id } = req.params;
-    const branchIds = getRequestedBranchIds(req);
-    const {
-      page = 1,
-      limit = 5,
-      dateType = "today",
-      fromDate,
-      toDate
-    } = req.query;
-
-    const result = await service.getDashboardTopItems(
-      zodu_id,
-      branchIds,
-      {
-        page: +page,
-        limit: +limit,
-        dateType,
-        fromDate,
-        toDate
-      }
-    );
-
-    return res.status(200).json({
-      message: "Top items fetched successfully",
-      data: result.data,
-      pagination: result.pagination
-    });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
+    const result = await service.getReminders(zodu_id, branch_id, limit, cursor);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.log(err)
+    res.status(500).json({ error: err.message });
   }
-});
+}
 
-router.get("/datewise/:zodu_id", async (req, res) => {
+async function getInventoryAlerts(req, res) {
+  const { zodu_id, branch_id, cursor, limit } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"])) return;
+
   try {
-    const { zodu_id } = req.params;
-    const branchIds = getRequestedBranchIds(req);
-    const {
-      page = 1,
-      limit = 10
-    } = req.query;
-
-    const result = await service.getDashboardDatewise(
-      zodu_id,
-      branchIds,
-      {
-        page: +page,
-        limit: +limit
-      }
-    );
-
-    return res.status(200).json({
-      message: "Datewise sales fetched successfully",
-      data: result.data,
-      pagination: result.pagination
-    });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
+    const result = await service.getInventoryAlerts(zodu_id, branch_id, limit, cursor);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-});
+}
+
+// ── Routes ────────────────────────────────────────────────────
+router.get("/stats",             getStats);
+router.get("/sales",             getSales);
+router.get("/top-items",         getTopItems);
+router.get("/reminders",         getReminders);
+router.get("/inventory-alerts",  getInventoryAlerts);
 
 module.exports = router;

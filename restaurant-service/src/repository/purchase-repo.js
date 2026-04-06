@@ -101,7 +101,7 @@ exports.getPurchases = async ({
        v.company_name,
        v.vendor_phone
      FROM tbl_purchase p
-     LEFT JOIN tbl_vendor v ON v.vendor_id = p.vendor_id
+     LEFT JOIN tbl_vendor v ON v.vendor_id = p.vendor_id AND p.zodu_id = v.zodu_id AND p.branch_id = v.branch_id
      ${where}
      ORDER BY p.purchase_date DESC, p.created_at DESC NULLS LAST`,
     values
@@ -140,7 +140,7 @@ exports.getPurchaseById = async (id, { branch_id, zodu_id } = {}) => {
      v.pincode,
      v.gst AS vendor_gst
    FROM tbl_purchase p
-   LEFT JOIN tbl_vendor v ON v.vendor_id = p.vendor_id
+   LEFT JOIN tbl_vendor v ON v.vendor_id = p.vendor_id AND p.zodu_id = v.zodu_id AND p.branch_id = v.branch_id
    WHERE ${conditions.join(" AND ")}`,
   values
 );
@@ -168,11 +168,13 @@ const { rows: items } = await conn.query(
      mi.hsn_code                -- 🔥 ADDED
    FROM tbl_purchase_items pi
    LEFT JOIN tbl_menu_items mi 
-     ON mi.item_id = pi.item_id   -- 🔥 JOIN USING item_id
+     ON mi.item_id = pi.item_id AND mi.branch_id = $3 AND mi.zodu_id = $2  -- 🔥 JOIN WITH MENU ITEMS TO GET HSN CODE
    WHERE pi.purchase_id = $1
    ORDER BY pi.purchase_item_id ASC`,
-  [purchase.purchase_id]
+  [purchase.purchase_id, purchase.zodu_id, purchase.branch_id]
 );
+
+console.log(items)
 
   // ── 3. Payment history ───────────────────────────────────────
   const { rows: payments } = await conn.query(

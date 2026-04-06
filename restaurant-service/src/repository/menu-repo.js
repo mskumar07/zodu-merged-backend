@@ -25,7 +25,7 @@ exports.getNextItemNumber = async (client, zoduId, branchId) => {
     `SELECT item_id
      FROM tbl_menu_items
      WHERE zodu_id = $1 AND branch_id = $2
-     ORDER BY item_id::bigint DESC
+     ORDER BY item_id DESC
      LIMIT 1
      FOR UPDATE`,
     [zoduId, branchId]
@@ -91,6 +91,7 @@ exports.createMenuItem = async (client, data) => {
  */
 exports.updateMenuItem = async (client, item_uuid, data) => {
   const ALLOWED_FIELDS = [
+    "item_id",
     "item_name", "item_type", "category_id", "unit",
     "mrp", "sell_price", "purchase_price",
     "gst_type", "tax_incl_type",
@@ -216,7 +217,7 @@ exports.getMenuItems = async (client, { zodu_id, branch_id, search, category_id,
   const { rows } = await client.query(
     `SELECT ${ITEM_SELECT}
      ${where}
-     ORDER BY m.item_id::bigint ASC
+     ORDER BY m.item_id ASC
      LIMIT $${idx} OFFSET $${idx + 1}`,
     [...values, limit, offset]
   );
@@ -387,7 +388,7 @@ exports.getInventoryList = async (
        ROUND(i.available_qty * COALESCE(m.purchase_price, 0), 2) AS stock_value
      ${INV_FROM}
      ${where}
-     ORDER BY i.item_id::bigint ASC
+     ORDER BY i.item_id ASC
      LIMIT $${idx} OFFSET $${idx + 1}`,
     [...values, limit, offset]
   );

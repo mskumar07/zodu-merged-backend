@@ -561,13 +561,10 @@ async function deleteExpenseCategory(id) {
   }
 }
 
-async function getHoldData(branch_id) {
+async function getHoldData(zodu_id,branch_id) {
   try {
-    const allCategoryData = await repository.getHold(branch_id);
-    return {
-      success: true,
-      data: allCategoryData,
-    };
+    const allCategoryData = await repository.getHoldsByBranch(zodu_id, branch_id);
+    return allCategoryData;
   } catch (error) {
     console.error("Category Data getting Error", error);
     return {
@@ -961,63 +958,31 @@ async function addin_Inventory(data) {
 
 async function addHoldMenu(data) {
   try {
+    const { items, ...holdData } = data;
 
-    const {
-      zodu_id,
-      branch_id,
-      orderType,
-      table_no,
-      customerName,
-      customerPhone,
-      items
-    } = data;
+    // 1. Insert hold header — returns hold_uuid
+    const hold_uuid = await repository.createHold(holdData);
 
-    // 1️⃣ Create new hold
-    const hold_id = await repository.createHold(
-      zodu_id,
-      branch_id,
-      orderType,
-      table_no,
-      customerName,
-      customerPhone
-    );
+    // 2. Bulk insert all items in one query
+    await repository.insertHoldItems(hold_uuid, items);
 
-    // 2️⃣ Insert all hold items
-    for (const item of items) {
-      await repository.insertHoldItem(hold_id, zodu_id, branch_id, item);
-    }
-
-
-    return {
-      success: true,
-      message: "Hold saved successfully",
-      hold_id,
-    };
+    return { success: true, message: "Hold saved successfully", hold_uuid };
 
   } catch (error) {
     console.error("❌ Hold Add Failed:", error);
-    return {
-      success: false,
-      message: error.message,
-    };
+    return { success: false, message: error.message };
   }
 }
 
-async function deleteHoldMenu(hold_id) {
-
+async function deleteHoldMenu(hold_uuid) {
   try {
-    await repository.deleteHold(hold_id);
+    await repository.deleteHold(hold_uuid);
+    // ✅ No need to delete items separately — ON DELETE CASCADE handles it
+    return { success: true, message: "Hold deleted successfully" };
 
-    return {
-      success: true,
-      message: "Hold deleted successfully",
-    };
   } catch (error) {
     console.error("❌ Hold Delete Failed:", error);
-    return {
-      success: false,
-      message: error.message,
-    };
+    return { success: false, message: error.message };
   }
 }
 

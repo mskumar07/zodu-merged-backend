@@ -1,173 +1,98 @@
-const repository = require("../repository/dashboard-repo");
-const { getPagination, getMeta } = require("../utils/pagination");
+const repo = require("../repository/dashboard-repo");
 
-const normalizeBranchIds = (branchIds) => {
-  const normalized = Array.isArray(branchIds)
-    ? branchIds
-      .flatMap((value) => String(value).split(","))
-      .map((value) => value.trim())
-      .filter(Boolean)
-    : String(branchIds ?? "")
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean);
+const DEFAULT_LIMIT = 20;
+const MAX_LIMIT     = 100;
 
-  if (normalized.some((value) => value.toLowerCase() === "all")) {
-    return [];
-  }
-
-  return normalized;
-};
-
-async function getDashboardSummary(zodu_id, branchIds, options) {
+function decodeCursor(token) {
+  if (!token) return null;
   try {
-    const { dateType = "today", fromDate, toDate } = options;
-    const normalizedBranchIds = normalizeBranchIds(branchIds);
-
-    const result = await repository.getDashboardSummary(
-      zodu_id,
-      normalizedBranchIds,
-      { dateType, fromDate, toDate }
-    );
-
-    return {
-      success: true,
-      data: result
-    };
-  } catch (err) {
-    console.error("Dashboard Summary Error:", err);
-    return { success: false, message: err.message };
+    return JSON.parse(Buffer.from(token, "base64url").toString("utf8"));
+  } catch {
+    return null;
   }
 }
 
-async function getDashboardOrders(zodu_id, branchIds, options) {
-  try {
-    const {
-      page = 1,
-      limit = 10,
-      sortOrder = "desc",
-      dateType = "today",
-      fromDate,
-      toDate
-    } = options;
-
-    const normalizedBranchIds = normalizeBranchIds(branchIds);
-    const pagination = getPagination({ page, limit });
-
-    const result = await repository.getDashboardOrders(
-      zodu_id,
-      normalizedBranchIds,
-      pagination,
-      sortOrder,
-      { dateType, fromDate, toDate }
-    );
-
-    return {
-      success: true,
-      data: result.rows,
-      pagination: getMeta({ ...pagination, total: result.count })
-    };
-  } catch (err) {
-    console.error("Dashboard Orders Error:", err);
-    return { success: false, message: err.message };
-  }
+function encodeCursor(obj) {
+  return Buffer.from(JSON.stringify(obj)).toString("base64url");
 }
 
-async function getDashboardExpenses(zodu_id, branchIds, options) {
-  try {
-    const {
-      page = 1,
-      limit = 10,
-      sortOrder = "desc",
-      dateType = "today",
-      fromDate,
-      toDate
-    } = options;
-
-    const normalizedBranchIds = normalizeBranchIds(branchIds);
-    const pagination = getPagination({ page, limit });
-
-    const result = await repository.getDashboardExpenses(
-      zodu_id,
-      normalizedBranchIds,
-      pagination,
-      sortOrder,
-      { dateType, fromDate, toDate }
-    );
-
-    return {
-      success: true,
-      data: result.rows,
-      pagination: getMeta({ ...pagination, total: result.count })
-    };
-  } catch (err) {
-    console.error("Dashboard Expenses Error:", err);
-    return { success: false, message: err.message };
-  }
+function paginate(rows, limit, cursorKeysFn) {
+  const hasMore = rows.length > limit;
+  const data    = hasMore ? rows.slice(0, limit) : rows;
+  return {
+    data,
+    pagination: {
+      hasMore,
+      nextCursor: hasMore ? encodeCursor(cursorKeysFn(data.at(-1))) : null,
+      count: data.length,
+    },
+  };
 }
 
-async function getDashboardTopItems(zodu_id, branchIds, options) {
-  try {
-    const {
-      page = 1,
-      limit = 5,
-      dateType = "today",
-      fromDate,
-      toDate
-    } = options;
-
-    const normalizedBranchIds = normalizeBranchIds(branchIds);
-    const pagination = getPagination({ page, limit });
-
-    const result = await repository.getDashboardTopItems(
-      zodu_id,
-      normalizedBranchIds,
-      pagination,
-      { dateType, fromDate, toDate }
-    );
-
-    return {
-      success: true,
-      data: result.rows,
-      pagination: getMeta({ ...pagination, total: result.count })
-    };
-  } catch (err) {
-    console.error("Dashboard Top Items Error:", err);
-    return { success: false, message: err.message };
-  }
+function parseLimit(raw) {
+  return Math.min(parseInt(raw) || DEFAULT_LIMIT, MAX_LIMIT);
 }
 
-async function getDashboardDatewise(zodu_id, branchIds, options) {
-  try {
-    const {
-      page = 1,
-      limit = 7
-    } = options;
+async function getStats(zodu_id, branch_id) {
+  const raw = await repo.getStats(zodu_id, branch_id);
+  return {
+    total_sales:     parseFloat(raw.total_sales),
+    total_invoices:  parseInt(raw.total_invoices),
+    todays_revenue:  parseFloat(raw.todays_revenue),
+    low_stock_items: parseInt(raw.low_stock_items),
+  };
+}
 
-    const normalizedBranchIds = normalizeBranchIds(branchIds);
-    const pagination = getPagination({ page, limit });
+async function getSales(zodu_id, branch_id, rawLimit, cursorToken) {
+  const limit  = parseLimit(rawLimit);
+  const cursor = decodeCursor(cursorToken);
+  const rows   = await repo.getSales(zodu_id, branch_id, limit + 1, cursor);
 
-    const result = await repository.getDashboardDatewiseSales(
-      zodu_id,
-      normalizedBranchIds,
-      pagination
-    );
+  return paginate(rows, limit, (r) => ({
+    sale_date: r.sale_date,
+    sale_time: r.sale_time,
+    sale_uuid: r.sale_uuid,
+  }));
+}
 
-    return {
-      success: true,
-      data: result.rows,
-      pagination: getMeta({ ...pagination, total: result.count })
-    };
-  } catch (err) {
-    console.error("Dashboard Datewise Error:", err);
-    return { success: false, message: err.message };
-  }
+async function getTopItems(zodu_id, branch_id, rawLimit, cursorToken) {
+  const limit  = parseLimit(rawLimit);
+  const cursor = decodeCursor(cursorToken);
+  const rows   = await repo.getTopItems(zodu_id, branch_id, limit + 1, cursor);
+
+  return paginate(rows, limit, (r) => ({
+    total_sold: r.total_sold,
+    item_id:    r.item_id,
+  }));
+}
+
+async function getReminders(zodu_id, branch_id, rawLimit, cursorToken) {
+  const limit  = parseLimit(rawLimit);
+  const cursor = decodeCursor(cursorToken);
+  const rows   = await repo.getReminders(zodu_id, branch_id, limit + 1, cursor);
+
+  return paginate(rows, limit, (r) => ({
+    due_date: r.due_date,
+    ref_id:   r.ref_id,
+    ref_type: r.ref_type,
+  }));
+}
+
+async function getInventoryAlerts(zodu_id, branch_id, rawLimit, cursorToken) {
+  const limit  = parseLimit(rawLimit);
+  const cursor = decodeCursor(cursorToken);
+  const rows   = await repo.getInventoryAlerts(zodu_id, branch_id, limit + 1, cursor);
+
+  return paginate(rows, limit, (r) => ({
+    available_qty: r.available_qty,
+    item_uuid:     r.item_uuid,
+  }));
 }
 
 module.exports = {
-  getDashboardSummary,
-  getDashboardOrders,
-  getDashboardExpenses,
-  getDashboardTopItems,
-  getDashboardDatewise
+  getStats,
+  getSales,
+  getTopItems,
+  getReminders,
+  getInventoryAlerts,
 };

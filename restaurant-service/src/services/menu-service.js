@@ -19,20 +19,13 @@ const conn = require('../database/connection');
  */
 async function createMenuItem(input) {
   const client = await conn.connect();
+  console.log(input)
   try {
     await client.query("BEGIN");
 
-    const nextNum = await repository.getNextItemNumber(
-      client,
-      input.zodu_id,
-      input.branch_id
-    );
-
-    const item_id = String(nextNum);
-
     const newItem = await repository.createMenuItem(client, {
       ...input,
-      item_id,
+      item_id: input.item_id
     });
 
     const openingStock = Number(input.opening_stock ?? 0);

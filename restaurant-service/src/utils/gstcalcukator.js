@@ -118,7 +118,7 @@ function calculateOrderTotals(
   const roundoff = Number((rounded_total - total_amount).toFixed(2));
 
   return {
-    no_of_items: items.length,
+    total_items: items.length,
     subtotal: round(subtotal),
     discount_amount: round(discount_amount),
     total_tax: round(total_tax),

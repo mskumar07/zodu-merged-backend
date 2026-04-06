@@ -511,26 +511,47 @@ const Inventory = Joi.object({
 })
 
 const holdSchema = Joi.object({
-  zodu_id: Joi.string().max(100).required(),
-  branch_id: Joi.string().max(100).required(),
-  orderType: Joi.string().max(100).required(),
-  table_no: Joi.string().max(20).allow(null, ""),
-  customerName: Joi.string().max(150).allow(null, ""),
-  customerPhone: Joi.string().max(13).allow(null, ""),
-  items: Joi.array()
-    .items(
-      Joi.object({
-        item_name: Joi.string().max(100).required(),
-        item_id: Joi.string().max(100).required(),
-        item_unit: Joi.string().max(20).allow(null, ""),
-        qty: Joi.number().precision(2).min(0).required(),
-        price: Joi.number().precision(2).min(0).required(),
-        variant_name: Joi.string().max(100).allow(null, ""),
-        variant_id: Joi.string().max(100).allow(null, "")
-      })
-    )
-    .min(1)
-    .required()
+  zodu_id:         Joi.string().max(50).required(),
+  branch_id:       Joi.string().max(50).required(),
+  order_type:      Joi.string().valid("SALE", "QUOTATION").required(),
+  table_no:        Joi.string().max(20).allow(null, ""),
+  notes:           Joi.string().allow(null, ""),
+
+  // customer
+  customer_uuid:   Joi.string().uuid().allow(null),
+  customer_name:   Joi.string().max(150).allow(null, ""),
+  customer_phone:  Joi.string().max(15).allow(null, ""),
+
+  // financials
+  total_items:     Joi.number().integer().min(0).required(),
+  subtotal:        Joi.number().precision(2).min(0).required(),
+  total_tax:       Joi.number().precision(2).min(0).default(0),
+  discount_type:   Joi.string().valid("percentage", "flat").allow(null, ""),
+  discount_value:  Joi.number().precision(2).min(0).default(0),
+  discount_amount: Joi.number().precision(2).min(0).default(0),
+  round_off:       Joi.number().precision(2).default(0),
+  total_amount:    Joi.number().precision(2).min(0).required(),
+
+  items: Joi.array().items(
+    Joi.object({
+      item_uuid:      Joi.string().allow(null, ""),
+      item_id:        Joi.string().max(100).required(),
+      item_name:      Joi.string().max(255).required(),
+      variant_id:     Joi.string().max(100).allow(null, ""),
+      variant_name:   Joi.string().max(100).allow(null, ""),
+      unit:           Joi.string().max(20).allow(null, ""),
+      quantity:       Joi.number().precision(2).min(0).required(),
+      price:          Joi.number().precision(2).min(0).required(),
+      mrp:            Joi.number().precision(2).min(0).allow(null),
+      discount:       Joi.number().precision(2).min(0).default(0),
+      hsn_code:       Joi.string().max(20).allow(null, ""),
+      gst_percentage: Joi.number().precision(2).min(0).default(0),
+      tax_amount:     Joi.number().precision(2).min(0).default(0),
+      cgst:           Joi.number().precision(2).min(0).default(0),
+      sgst:           Joi.number().precision(2).min(0).default(0),
+      tax_inclusive:  Joi.boolean().default(false),
+    })
+  ).min(1).required(),
 });
 
 
@@ -595,6 +616,7 @@ const update_customer = Joi.object({
 const createSchema = Joi.object({
   zodu_id:        Joi.string().required(),
   branch_id:      Joi.string().required(),
+  item_id:        Joi.string().max(100).required(),
   item_type:      Joi.string().valid("product", "service", "S", "P").required(),
   item_name:      Joi.string().trim().max(255).required(),
   category_id:    Joi.number().integer().allow(null).default(null),
@@ -614,6 +636,7 @@ const createSchema = Joi.object({
 });
  
 const editSchema = Joi.object({
+  item_id: Joi.string().max(100).required(),
   item_name:      Joi.string().trim().max(255),
   item_type:      Joi.string().valid("product", "service", "S", "P"),
   category_id:    Joi.number().integer().allow(null),
