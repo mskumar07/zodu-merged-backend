@@ -63,24 +63,28 @@ async function getTopItems(zodu_id, branch_id, limit, cursor) {
   }
 
   const { rows } = await conn.query(
-    `SELECT
-      si.item_id,
-      si.item_name,
-      m.category_id,
-      c.name AS category_name,
-      SUM(si.quantity)     AS total_sold,
-      SUM(si.total_amount) AS total_revenue
-    FROM tbl_sale_items si
-    JOIN tbl_sales s ON s.sale_uuid = si.sale_uuid
-    LEFT JOIN tbl_menu_items m
-      ON m.item_id = si.item_id AND m.zodu_id = $1 AND m.branch_id = $2
-    LEFT JOIN tbl_category c
-      ON c.category_id = m.category_id AND c.zodu_id = $1 AND c.branch_id = $2
-    WHERE s.zodu_id = $1 AND s.branch_id = $2
-    GROUP BY si.item_id, si.item_name, m.category_id
-    ${having}
-    ORDER BY total_sold DESC, si.item_id ASC
-    LIMIT $3`,
+  `SELECT
+    si.item_id,
+    si.item_name,
+    m.category_id,
+    c.name AS category_name,
+    SUM(si.quantity)     AS total_sold,
+    SUM(si.total_amount) AS total_revenue
+  FROM tbl_sale_items si
+  JOIN tbl_sales s ON s.sale_uuid = si.sale_uuid
+  LEFT JOIN tbl_menu_items m
+    ON m.item_id = si.item_id AND m.zodu_id = $1 AND m.branch_id = $2
+  LEFT JOIN tbl_category c
+    ON c.id = m.category_id AND c.zodu_id = $1 AND c.branch_id = $2
+  WHERE s.zodu_id = $1 AND s.branch_id = $2
+  GROUP BY 
+    si.item_id, 
+    si.item_name, 
+    m.category_id,
+    c.name
+  ${having}
+  ORDER BY total_sold DESC, si.item_id ASC
+  LIMIT $3`,
     values
   );
   return rows;
@@ -152,7 +156,7 @@ async function getReminders(zodu_id, branch_id, limit, cursor) {
     LEFT JOIN tbl_purchase_payment pp
       ON pp.purchase_id = p.purchase_id
      AND pp.zodu_id = $1 AND pp.branch_id = $2
-    LEFT JOIN tbl_vendor v ON v.id = p.vendor_uuid
+    LEFT JOIN tbl_vendor v ON v.vendor_id = p.vendor_id AND v.zodu_id = $1 AND v.branch_id = $2
     WHERE p.zodu_id = $1 AND p.branch_id = $2
       AND p.payment_status IN ('pending', 'partial')
 

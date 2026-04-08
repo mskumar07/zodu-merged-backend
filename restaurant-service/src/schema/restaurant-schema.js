@@ -154,6 +154,8 @@ sale_time: Joi.string()
 
   roundoff: Joi.number().precision(2).optional().allow(null),
 
+  due_date: Joi.date().iso().optional().allow(null, ""),
+
   items: Joi.array()
     .items(
       Joi.object({
@@ -241,6 +243,7 @@ sale_time: Joi.string()
 
   notes: Joi.string()
     .allow(null, ""),
+  due_date: Joi.date().iso().optional().allow(null, ""),
 
   // ✅ ITEMS (VERY IMPORTANT)
   items: Joi.array()

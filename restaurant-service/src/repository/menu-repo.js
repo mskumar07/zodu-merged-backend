@@ -177,10 +177,10 @@ exports.getMenuItemByUuid = async (client, item_uuid) => {
  * Returns { rows, total } — router builds the pagination envelope.
  */
 exports.getMenuItems = async (client, { zodu_id, branch_id, search, category_id, item_type, status, page, limit }) => {
-  // All WHERE conditions use m. prefix because of the JOIN
   const conditions = ["m.zodu_id = $1", "m.branch_id = $2"];
   const values     = [zodu_id, branch_id];
   let   idx        = 3;
+
  
   if (search) {
     conditions.push(`(m.item_name ILIKE $${idx} OR m.item_id::text ILIKE $${idx} OR m.barcode ILIKE $${idx})`);
@@ -198,10 +198,10 @@ exports.getMenuItems = async (client, { zodu_id, branch_id, search, category_id,
     values.push(item_type);
   }
  
-  if (status) {
-    conditions.push(`m.status = $${idx++}`);
-    values.push(status);
-  }
+  // if (status) {
+  //   conditions.push(`m.status = $${idx++}`);
+  //   values.push(status);
+  // }
  
   const where  = `WHERE ${conditions.join(" AND ")}`;
   const offset = (page - 1) * limit;
@@ -229,27 +229,51 @@ exports.getMenuItems = async (client, { zodu_id, branch_id, search, category_id,
  * Soft delete — sets status = 'inactive' and deleted_at timestamp.
  * Falls back to hard delete if deleted_at column doesn't exist.
  */
-exports.deleteMenuItem = async (client, item_uuid) => {
-  // Try soft delete first (status = inactive)
+exports.deleteMenuItem = async (client, item_uuid, status) => {
+  console.log(status)
   const { rows } = await client.query(
     `UPDATE tbl_menu_items
-     SET status = 'inactive'
-     WHERE item_uuid = $1 AND status != 'inactive'
+     SET status = $2
+     WHERE item_uuid = $1
      RETURNING *`,
-    [item_uuid]
+    [item_uuid, status]
   );
- 
   if (rows.length === 0) {
-    // Already inactive or not found — check which
     const check = await client.query(
       `SELECT item_uuid, status FROM tbl_menu_items WHERE item_uuid = $1`,
       [item_uuid]
     );
     if (check.rows.length === 0) throw new Error("Menu item not found");
-    // Was already inactive — still return success
     return check.rows[0];
   }
- 
+
+  console.log(rows[0])
+
+  return rows[0];
+};
+
+exports.hardDeleteMenuItem = async (client, item_uuid) => {
+  const check = await client.query(
+    `SELECT item_uuid FROM tbl_menu_items WHERE item_uuid = $1`,
+    [item_uuid]
+  );
+  if (check.rows.length === 0) throw new Error("Menu item not found");
+
+  await client.query(
+    `DELETE FROM tbl_inventory WHERE item_uuid = $1`,
+    [item_uuid]
+  );
+
+  await client.query(
+    `DELETE FROM tbl_stock_ledger WHERE item_uuid = $1`,
+    [item_uuid]
+  );
+
+  const { rows } = await client.query(
+    `DELETE FROM tbl_menu_items WHERE item_uuid = $1 RETURNING *`,
+    [item_uuid]
+  );
+
   return rows[0];
 };
  

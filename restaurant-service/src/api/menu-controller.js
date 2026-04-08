@@ -137,15 +137,17 @@ router.get("/menu_items", async (req, res) => {
 //  DELETE /restaurant/api/delete/menu_item/:item_uuid
 //  Soft-delete a menu item (sets status = 'inactive')
 // ─────────────────────────────────────────────────────────────
-router.delete("/api/delete/menu_item/:item_uuid", async (req, res) => {
+router.put("/status/:item_uuid", async (req, res) => {
   try {
     const { item_uuid } = req.params;
+    const {status} = req.body; // Optional query param to specify delete type (soft/hard)
+
  
     if (!UUID_REGEX.test(item_uuid)) {
       return res.status(400).json({ success: false, error: "Invalid item_uuid format" });
     }
  
-    const result = await service.deleteMenuItem(item_uuid);
+    const result = await service.deleteMenuItem(item_uuid,status);
  
     if (!result.success) {
       const status = result.message === "Menu item not found" ? 404 : 400;
@@ -159,6 +161,32 @@ router.delete("/api/delete/menu_item/:item_uuid", async (req, res) => {
     });
   } catch (error) {
     console.error("[menu] deleteMenuItem error:", error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.delete("/remove/menu_item/:item_uuid", async (req, res) => {
+  try {
+    const { item_uuid } = req.params;
+
+    if (!UUID_REGEX.test(item_uuid)) {
+      return res.status(400).json({ success: false, error: "Invalid item_uuid format" });
+    }
+
+    const result = await service.hardDeleteMenuItem(item_uuid);
+
+    if (!result.success) {
+      const status = result.message === "Menu item not found" ? 404 : 400;
+      return res.status(status).json({ success: false, message: result.message });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: result.message,
+      data:    result.data,
+    });
+  } catch (error) {
+    console.error("[menu] hardDeleteMenuItem error:", error);
     return res.status(500).json({ success: false, error: error.message });
   }
 });

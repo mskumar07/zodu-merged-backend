@@ -2949,7 +2949,7 @@ exports.createOrder = async (orderData, client) => {
         total_items, subtotal, total_tax,
         discount_type, discount_value, discount_amount,
         total_amount, paid_amount, balance_amount,
-        payment_status, notes, sale_date, sale_time
+        payment_status, notes, sale_date, sale_time,due_date
      )
      VALUES (
         $1,$2,$3,
@@ -2958,7 +2958,7 @@ exports.createOrder = async (orderData, client) => {
         $6,$7,$8,
         $9,$10,$11,
         $12,$13,$14,
-        $15,$16,$17,$18
+        $15,$16,$17,$18,$19
      )
      RETURNING *`,
     [
@@ -2985,10 +2985,17 @@ exports.createOrder = async (orderData, client) => {
       orderData.notes     ?? null,
       sale_date,
       orderData.sale_time ?? null,
+      orderData.due_date  ?? null,
     ]
   );
  
-  return result.rows[0];
+  const row = result.rows[0];
+
+  return {
+    ...row,
+    sale_date: row?.sale_date ? moment(row.sale_date).format("DD MMM YYYY") : null,
+    due_date: row?.due_date ? moment(row.due_date).format("DD MMM YYYY") : null,
+  };
 };
  
 

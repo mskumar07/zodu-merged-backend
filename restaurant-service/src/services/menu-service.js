@@ -142,16 +142,33 @@ async function getMenuItems(params) {
 /**
  * Soft-delete a menu item by item_uuid.
  */
-async function deleteMenuItem(item_uuid) {
+async function deleteMenuItem(item_uuid,status) {
   const client = await conn.connect();
   try {
     await client.query("BEGIN");
-    const deleted = await repository.deleteMenuItem(client, item_uuid);
+    const deleted = await repository.deleteMenuItem(client, item_uuid,status);
     await client.query("COMMIT");
-    return { success: true, message: "Menu item deleted successfully", data: deleted };
+    return { success: true, message: "Menu item marked as inactive", data: deleted };
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
+    console.log("test",err)
     console.error("[menu service] deleteMenuItem:", err.message);
+    return { success: false, message: err.message };
+  } finally {
+    client.release();
+  }
+}
+
+async function hardDeleteMenuItem(item_uuid) {
+  const client = await conn.connect();
+  try {
+    await client.query("BEGIN");
+    const deleted = await repository.hardDeleteMenuItem(client, item_uuid);
+    await client.query("COMMIT");
+    return { success: true, message: "Menu item permanently deleted", data: deleted };
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("[menu service] hardDeleteMenuItem:", err.message);
     return { success: false, message: err.message };
   } finally {
     client.release();
@@ -373,7 +390,7 @@ async function getStockHistoryService({ item_uuid, zodu_id, branch_id }) {
   };
 }
 
-module.exports = { createMenuItem, editMenuItem, getMenuItems, deleteMenuItem, getMenuItemById , getInventorySummary,
+module.exports = { createMenuItem, editMenuItem, getMenuItems, deleteMenuItem, hardDeleteMenuItem, getMenuItemById, getInventorySummary,
   getInventoryList,
   getInventoryDetail,
   adjustStock,
