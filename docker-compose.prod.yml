@@ -1,0 +1,73 @@
+version: "3.9"
+
+services:
+  # Auth Service
+  auth-service:
+    image: vicky0015/zodu-backemd-retail-auth-service:latest
+    container_name: retail-auth-service
+    restart: always
+    expose:
+      - "3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DB_HOSTNAME: postgres_prod
+      DB_PORT: 5432
+      DB_USERNAME: zoduprod
+      DB_PASSWORD: zodu@2025
+      DB_NAME: auth_service
+
+
+  # Restaurant Service
+  restaurant-service:
+    image: vicky0015/zodu-backemd-retail-restaurant-service:latest
+    container_name: retail-restaurant-service
+    restart: always
+    expose:
+      - "3001"
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DB_HOSTNAME: postgres_prod
+      DB_PORT: 5432
+      DB_USERNAME: zoduprod
+      DB_PASSWORD: zodu@2025
+      DB_NAME: retail_service
+      MINIO_HOST: 72.60.206.59
+      MINIO_PORT: 9000
+      MINIO_ACCESSKEY: zoduminio
+      MINIO_SECRETKEY: zodu@2025
+      MINIO_BUCKET_NAME: zodu
+
+  # Employee Service
+  employee-service:
+    image: vicky0015/zodu-backemd-retail-employee-service:latest
+    container_name: retail-employee-service
+    restart: always
+    expose:
+      - "3002"
+    environment:
+      NODE_ENV: production
+      PORT: 3002
+      DB_HOSTNAME: postgres_prod
+      DB_PORT: 5432
+      DB_USERNAME: zoduprod
+      DB_PASSWORD: zodu@2025
+      DB_NAME: employee_service
+      MINIO_HOST: 72.60.206.59
+      MINIO_PORT: 9000
+      MINIO_ACCESSKEY: zoduminio
+      MINIO_SECRETKEY: zodu@2025
+      MINIO_BUCKET_NAME: zodu
+
+  # API Gateway
+  apigateway:
+    image: vicky0015/zodu-backemd-retail-apigateway:latest
+    container_name: retail-apigateway
+    restart: always
+    ports:
+      - "5000:5000"
+    depends_on:
+      - auth-service
+      - restaurant-service
+      - employee-service

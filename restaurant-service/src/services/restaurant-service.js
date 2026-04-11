@@ -6,7 +6,7 @@ const conn = require('../database/connection.js');
 const repository = require('../repository/restaurant-repo.js');
 const { PDFDocument } = require('pdf-lib');
 const moment = require('moment/moment');
-const { DB_HOSTNAME, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY, BUCKET_NAME } = require('../config/index.js');
+const { MINIO_HOST, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY, BUCKET_NAME } = require('../config/index.js');
 const { getDateRange } = require("../utils/Date_Folder/getDate.js");
 const { get } = require('../api/restaurant-controller.js');
 const { getPagination, getMeta } = require('../utils/pagination.js');
@@ -18,7 +18,7 @@ const { round } = require('../utils/number.js');
 
 
 const minioClient = new Minio.Client({
-  endPoint: DB_HOSTNAME, // e.g. 123.45.67.89
+  endPoint: MINIO_HOST,
   port: MINIO_PORT,
   useSSL: false,
   accessKey: MINIO_ACCESSKEY,
@@ -395,7 +395,6 @@ async function updateMenustaus(menu_id, active) {
 
 async function getData(zudo_id) {
   try {
-    zudo_id = "ZODU001"; // Default for testing
     // Fetch company details
     const SingleCompanyData = await repository.FindExistingData("tbl_company_registration", 'zodu_id', zudo_id);
     return {
@@ -1865,6 +1864,17 @@ async function getSaleById(sale_id, zodu_id, branch_id) {
   }
 }
 
+async function deleteSale(sale_id, zodu_id, branch_id) {
+  try {
+    const result = await repository.deleteSale(sale_id, zodu_id, branch_id);
+    if (!result) return { success: false, message: "Sale not found" };
+    return { success: true, data: result };
+  } catch (err) {
+    console.error("deleteSale Error:", err);
+    return { success: false, message: err.message };
+  }
+}
+
 
 async function getCustomers(filters) {
   try {
@@ -2767,6 +2777,7 @@ module.exports = {
   getExpenseReportServices,
   getSalesHistory,
   getSaleById,
+  deleteSale,
   markSalePayment,
   getCustomers,
   getCustomerLedger,

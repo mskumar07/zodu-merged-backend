@@ -161,7 +161,7 @@ async function getCategoryWiseSales(zodu_id, branch_id, from_date, to_date, page
     total_sales:   parseFloat(r.total_sales),
     growth:        r.growth !== null ? parseFloat(r.growth) : null,
   }));
-
+console.log(data)
   return {
     from_date: from,
     to_date:   to,

@@ -17,7 +17,8 @@ module.exports = {
   DB_HOSTNAME: process.env.DB_HOSTNAME,
   DB_NAME: process.env.DB_NAME,
   APP_SECRET: process.env.APP_SECRET,
-MINIO_PORT: process.env.MINIO_PORT,
+MINIO_HOST: process.env.MINIO_HOST,
+MINIO_PORT: parseInt(process.env.MINIO_PORT),
 MINIO_ACCESSKEY: process.env.MINIO_ACCESSKEY,
 MINIO_SECRETKEY: process.env.MINIO_SECRETKEY,
 BUCKET_NAME: process.env.MINIO_BUCKET_NAME

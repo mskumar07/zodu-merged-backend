@@ -16,7 +16,7 @@ const upload = multer({
 const mime = require("mime-types");
 const moment = require('moment/moment');
 const { validateDateFilter } = require("../utils/Date_Folder/valaidator");
-const { DB_HOSTNAME, MINIO_PORT, MINIO_ACCESSKEY, BUCKET_NAME, MINIO_SECRETKEY } = require("../config");
+const { MINIO_HOST, MINIO_PORT, MINIO_ACCESSKEY, BUCKET_NAME, MINIO_SECRETKEY } = require("../config");
 
 
 const router = express.Router();
@@ -24,7 +24,7 @@ const router = express.Router();
 
 // MinIO client
 const minioClient = new Minio.Client({
-  endPoint: DB_HOSTNAME, // e.g. 123.45.67.89
+  endPoint: MINIO_HOST,
   port: MINIO_PORT,
   useSSL: false,
   accessKey: MINIO_ACCESSKEY,
@@ -372,6 +372,7 @@ router.post(
 
     } catch (error) {
       await client.query("ROLLBACK");
+      console.log("Excel upload error:", error);
       res.status(500).json({ error: error.message });
     } finally {
       client.release();
@@ -502,6 +503,35 @@ router.get("/api/sales/:sale_id", async (req, res) => {
     if (!data.success) return res.status(404).json({ message: data.message });
  
     return res.status(200).json(data);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.delete("/api/sales/:sale_id", async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(schema.sale_by_id_params, {
+      sale_id: req.params.sale_id,
+      zodu_id: req.query.zodu_id,
+      branch_id: req.query.branch_id,
+    });
+
+    if (errors) return res.status(400).json({ errors });
+
+    const data = await service.deleteSale(
+      input.sale_id,
+      input.zodu_id,
+      input.branch_id
+    );
+
+    if (!data.success) return res.status(404).json({ message: data.message });
+
+    return res.status(200).json({
+      success: true,
+      message: "Sale deleted successfully",
+      data: data.data,
+    });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: error.message });

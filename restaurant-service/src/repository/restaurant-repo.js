@@ -3479,6 +3479,214 @@ console.log("test",sale,customer,itemsResult.rows,paymentResult.rows,returnResul
   };
 };
 
+exports.deleteSale = async (sale_id, zodu_id, branch_id) => {
+  const client = await conn.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const saleResult = await client.query(
+      `SELECT sale_uuid, sale_id, sale_type
+       FROM tbl_sales
+       WHERE sale_id = $1
+         AND zodu_id = $2
+         AND branch_id = $3
+       FOR UPDATE`,
+      [sale_id, zodu_id, branch_id]
+    );
+
+    if (!saleResult.rows.length) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const sale = saleResult.rows[0];
+
+    const soldItemsResult = await client.query(
+      `SELECT
+          si.item_id,
+          COALESCE(mi.item_uuid, inv.item_uuid) AS item_uuid,
+          COALESCE(mi.item_name, inv.item_name, MAX(si.item_name)) AS item_name,
+          SUM(COALESCE(si.quantity, 0))::numeric AS sold_qty
+       FROM tbl_sale_items si
+       LEFT JOIN tbl_menu_items mi
+         ON mi.item_id = si.item_id
+        AND mi.branch_id = $3
+        AND mi.zodu_id = $2
+       LEFT JOIN tbl_inventory inv
+         ON inv.item_id = si.item_id
+        AND inv.branch_id = $3
+        AND inv.zodu_id = $2
+       WHERE si.sale_uuid = $1
+       GROUP BY si.item_id, mi.item_uuid, inv.item_uuid, mi.item_name, inv.item_name`,
+      [sale.sale_uuid, zodu_id, branch_id]
+    );
+
+    const returnItemsResult = await client.query(
+      `SELECT
+          sri.item_id,
+          COALESCE(mi.item_uuid, inv.item_uuid) AS item_uuid,
+          COALESCE(mi.item_name, inv.item_name, MAX(sri.item_name)) AS item_name,
+          SUM(COALESCE(sri.return_qty, 0))::numeric AS return_qty
+       FROM tbl_sale_return_items sri
+       INNER JOIN tbl_sale_returns sr
+         ON sr.return_uuid = sri.return_uuid
+       LEFT JOIN tbl_menu_items mi
+         ON mi.item_id = sri.item_id
+        AND mi.branch_id = $3
+        AND mi.zodu_id = $2
+       LEFT JOIN tbl_inventory inv
+         ON inv.item_id = sri.item_id
+        AND inv.branch_id = $3
+        AND inv.zodu_id = $2
+       WHERE sr.original_sale_uuid = $1
+       GROUP BY sri.item_id, mi.item_uuid, inv.item_uuid, mi.item_name, inv.item_name`,
+      [sale.sale_uuid, zodu_id, branch_id]
+    );
+
+    const netQtyByItem = new Map();
+
+    for (const row of soldItemsResult.rows) {
+      netQtyByItem.set(String(row.item_id), {
+        item_id: row.item_id,
+        item_uuid: row.item_uuid,
+        item_name: row.item_name,
+        net_qty: Number(row.sold_qty || 0),
+      });
+    }
+
+    for (const row of returnItemsResult.rows) {
+      const key = String(row.item_id);
+      const existing = netQtyByItem.get(key) || {
+        item_id: row.item_id,
+        item_uuid: row.item_uuid,
+        item_name: row.item_name,
+        net_qty: 0,
+      };
+
+      existing.item_uuid = existing.item_uuid || row.item_uuid;
+      existing.item_name = existing.item_name || row.item_name;
+      existing.net_qty -= Number(row.return_qty || 0);
+      netQtyByItem.set(key, existing);
+    }
+
+    for (const item of netQtyByItem.values()) {
+      if (!item.item_id || item.net_qty === 0) continue;
+
+      const inventoryResult = await client.query(
+        `SELECT inventory_uuid, item_uuid, item_name, available_qty
+         FROM tbl_inventory
+         WHERE item_id = $1
+           AND zodu_id = $2
+           AND branch_id = $3
+         FOR UPDATE`,
+        [item.item_id, zodu_id, branch_id]
+      );
+
+      if (!inventoryResult.rows.length) continue;
+
+      const inventory = inventoryResult.rows[0];
+      const stockBefore = Number(inventory.available_qty || 0);
+      const stockAfter = stockBefore + Number(item.net_qty);
+
+      await client.query(
+        `UPDATE tbl_inventory
+         SET available_qty = $1,
+             last_stock_update = CURRENT_TIMESTAMP
+         WHERE inventory_uuid = $2`,
+        [stockAfter, inventory.inventory_uuid]
+      );
+
+      await client.query(
+        `INSERT INTO tbl_stock_ledger (
+          item_uuid, item_id, zodu_id, branch_id,
+          item_name, transaction_type,
+          reference_id, qty_change,
+          stock_before, stock_after, notes
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [
+          inventory.item_uuid,
+          item.item_id,
+          zodu_id,
+          branch_id,
+          item.item_name,
+          "sale_deleted",
+          sale.sale_uuid,
+          Number(item.net_qty),
+          stockBefore,
+          stockAfter,
+          `Stock reversed on deletion of sale ${sale.sale_id}`,
+        ]
+      );
+    }
+
+    const returnIdsResult = await client.query(
+      `SELECT return_uuid
+       FROM tbl_sale_returns
+       WHERE original_sale_uuid = $1`,
+      [sale.sale_uuid]
+    );
+
+    const returnUuids = returnIdsResult.rows.map((row) => row.return_uuid);
+    const stockLedgerRefIds = [...returnUuids];
+
+    if (stockLedgerRefIds.length > 0) {
+      await client.query(
+        `DELETE FROM tbl_stock_ledger
+         WHERE reference_id = ANY($1::uuid[])`,
+        [stockLedgerRefIds]
+      );
+    }
+
+    await client.query(
+      `DELETE FROM tbl_sale_return_items
+       WHERE return_uuid IN (
+         SELECT return_uuid
+         FROM tbl_sale_returns
+         WHERE original_sale_uuid = $1
+       )`,
+      [sale.sale_uuid]
+    );
+
+    await client.query(
+      `DELETE FROM tbl_sale_returns
+       WHERE original_sale_uuid = $1`,
+      [sale.sale_uuid]
+    );
+
+    await client.query(
+      `DELETE FROM tbl_sale_payment
+       WHERE sale_id = $1
+         AND zodu_id = $2
+         AND branch_id = $3`,
+      [sale.sale_id, zodu_id, branch_id]
+    );
+
+    await client.query(
+      `DELETE FROM tbl_sale_items
+       WHERE sale_uuid = $1`,
+      [sale.sale_uuid]
+    );
+
+    const deletedSaleResult = await client.query(
+      `DELETE FROM tbl_sales
+       WHERE sale_uuid = $1
+       RETURNING *`,
+      [sale.sale_uuid]
+    );
+
+    await client.query("COMMIT");
+
+    return deletedSaleResult.rows[0] ?? null;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+};
+
 exports.createCustomer = async (data) => {
   const result = await conn.query(
     `INSERT INTO tbl_customer (

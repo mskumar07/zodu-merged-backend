@@ -134,9 +134,9 @@ async function getCategoryItemSalesSummary(zodu_id, branch_id, from_date, to_dat
       SELECT c.name AS cat_name, SUM(si.total_amount) AS cat_sales
       FROM tbl_sale_items si
       JOIN tbl_sales s ON s.sale_uuid = si.sale_uuid
-      LEFT JOIN tbl_menu_items m
+      JOIN tbl_menu_items m
         ON m.item_id = si.item_id AND m.zodu_id = $1 AND m.branch_id = $2
-      LEFT JOIN tbl_category c
+      JOIN tbl_category c
         ON c.id = m.category_id AND c.zodu_id = $1
       WHERE s.zodu_id = $1 AND s.branch_id = $2
         AND s.sale_date BETWEEN $3 AND $4

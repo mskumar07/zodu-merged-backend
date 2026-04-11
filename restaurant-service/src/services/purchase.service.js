@@ -349,29 +349,16 @@ exports.deletePurchase = async (purchase_id) => {
       return { success: false, message: "Purchase not found" };
     }
 
-    const items = await repo.getPurchaseItems(client, purchase_id);
-
-    for (const item of items) {
-      await adjustStockWithLedger(client, {
-        item_uuid:       item.item_uuid,
-        item_id:         item.item_id,
-        item_name:       item.item_name,
-        zodu_id:         purchase.zodu_id,
-        branch_id:       purchase.branch_id,
-        adjustment_type: "subtract",
-        adjustment_qty:  item.qty,
-        reason:          "purchase_delete",
-        reference_id:    purchase.id,  // ✅ uuid
-      });
-    }
-
     // Delete children before parent to satisfy FK constraints
     await repo.deletePurchaseItems(client, purchase_id);
     await repo.deletePurchasePayments(client, purchase_id);
     await repo.deletePurchase(client, purchase_id);
 
     await client.query("COMMIT");
-    return { success: true, message: "Deleted successfully" };
+    return {
+      success: true,
+      message: "Deleted successfully. Inventory was not reversed.",
+    };
   } catch (err) {
     await client.query("ROLLBACK");
     return { success: false, message: err.message };

@@ -570,7 +570,7 @@ exports.getStockHistoryRepo = async ({ item_uuid, zodu_id, branch_id }) => {
 
       COALESCE(
         CASE
-          WHEN l.transaction_type IN ('sale', 'sale_update', 'sale_update_reverse')
+          WHEN l.transaction_type IN ('sale', 'sale_update', 'sale_update_reverse', 'sale_deleted')
             THEN s.sale_id::TEXT
           WHEN l.transaction_type IN ('purchase', 'purchase_item_added', 'purchase_item_qty_updated', 'purchase_item_removed', 'purchase_delete')
             THEN p.purchase_id::TEXT
@@ -585,11 +585,22 @@ exports.getStockHistoryRepo = async ({ item_uuid, zodu_id, branch_id }) => {
 
       TO_CHAR(l.created_at, 'DD Mon YYYY, HH12:MI AM') AS created_at,
 
-      CASE 
+      CASE
         WHEN l.qty_change > 0 THEN 'IN'
         WHEN l.qty_change < 0 THEN 'OUT'
         ELSE 'ADJUST'
-      END as movement_type
+      END as movement_type,
+
+      CASE
+        WHEN l.transaction_type = 'sale_deleted' THEN 'Reverse'
+        WHEN l.transaction_type IN ('sale', 'sale_update') THEN 'Sale'
+        WHEN l.transaction_type = 'sale_update_reverse' THEN 'Sale Adjust'
+        WHEN l.transaction_type = 'purchase' THEN 'Purchase'
+        WHEN l.transaction_type IN ('purchase_item_added', 'purchase_item_qty_updated') THEN 'Purchase Update'
+        WHEN l.transaction_type = 'purchase_item_removed' THEN 'Purchase Remove'
+        WHEN l.transaction_type = 'purchase_delete' THEN 'Purchase Delete'
+        ELSE INITCAP(REPLACE(l.transaction_type, '_', ' '))
+      END AS label
 
     FROM tbl_stock_ledger l
 

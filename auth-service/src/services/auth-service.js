@@ -69,7 +69,7 @@ async function CreateAccount(userInputs) {
   }
 
   try {
-    await axios.post('http://restaurant-service:4001/api/createcompany', {
+    await axios.post('http://restaurant-service:3001/api/createcompany', {
       zodu_id,
       restaurant_name,
       mobile_no: phone_number,
@@ -142,6 +142,18 @@ async function AccountLogin(userInputs, meta = {}) {
   // 4. Update last_login_at
   await repository.updateLastLogin({ user_id: user.user_id });
 
+  // 5. Fetch company address & bank details from restaurant-service
+  let companyDetails = null;
+  try {
+    const { data: companyRes } = await axios.get(
+      `http://restaurant-service:3001/get/company_details/${user.zodu_id}`
+    );
+    companyDetails = companyRes?.Data?.[0] ?? null;
+    console.log(companyDetails)
+  } catch (err) {
+    console.error('Failed to fetch company details:', err.message);
+  }
+
   return FormateData({
     message: 'Login successful',
     access_token:  accessToken,
@@ -155,6 +167,19 @@ async function AccountLogin(userInputs, meta = {}) {
       user_type:       user.user_type,
       branch_id:       user.branch_id,
     },
+    company: companyDetails ? {
+      owner_admin_name:  companyDetails.owner_admin_name,
+      gst_no:            companyDetails.gst_no,
+      building_no:       companyDetails.building_no,
+      area_street_name:  companyDetails.area_street_name,
+      city:              companyDetails.city,
+      district:          companyDetails.district,
+      state:             companyDetails.state,
+      pincode:           companyDetails.pincode,
+      account_number:    companyDetails.account_number,
+      account_type:      companyDetails.account_type,
+      ifsc_code:         companyDetails.ifsc_code,
+    } : null,
   });
 }
 

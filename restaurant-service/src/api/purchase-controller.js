@@ -38,6 +38,7 @@ router.put("/:id", async (req, res) => {
 // DELETE (WITH STOCK REVERSAL)
 router.delete("/:id", async (req, res) => {
   const result = await service.deletePurchase(req.params.id);
+  console.log(result)
   return res.status(result.success ? 200 : 400).json(result);
 });
 

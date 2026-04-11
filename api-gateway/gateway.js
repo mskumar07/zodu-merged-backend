@@ -15,18 +15,18 @@ app.use(cors({
 
 // Route /auth → localhost:3000
 app.use('/auth', createProxyMiddleware({
-  target: 'http://localhost:4000',
+  target: 'http://auth-service:3000',
   changeOrigin: true
 }));
 
 // Route /restaurant → localhost:3001
 app.use('/restaurant', createProxyMiddleware({
-  target: 'http://localhost:4001',
+  target: 'http://restaurant-service:3001',
   changeOrigin: true
 }));
 
 app.use('/employee', createProxyMiddleware({
-  target: 'http://localhost:4002',
+  target: 'http://employee-service:3002',
   changeOrigin: true
 }));
 
@@ -36,4 +36,4 @@ app.use("/", (req, res) => {
 });
 
 // Start the server
-app.listen(5001, () => console.log('API Gateway running on http://localhost:5001'));
+app.listen(5000, () => console.log('API Gateway running on http://localhost:5000'));
