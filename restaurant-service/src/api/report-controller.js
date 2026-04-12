@@ -116,4 +116,35 @@ router.get("/category-item-sales/sales-velocity", async (req, res) => {
   }
 });
 
+// GET /api/report/sales/datewise/summary?zodu_id=&branch_id=&from_date=&to_date=
+// Summary cards: total_sales, total_orders, total_profit for the date range
+router.get("/sales/datewise/summary", async (req, res) => {
+  const { zodu_id, branch_id, from_date, to_date } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"])) return;
+
+  try {
+    const data = await service.getDatewiseSummary(zodu_id, branch_id, from_date, to_date);
+    res.json({ success: true, data });
+  } catch (err) {
+    console.log(err)
+    console.error("[report] getDatewiseSummary:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/report/sales/datewise?zodu_id=&branch_id=&from_date=&to_date=&page=&limit=
+// Paginated day-by-day breakdown: orders, sales, profit per date
+router.get("/sales/datewise", async (req, res) => {
+  const { zodu_id, branch_id, from_date, to_date, page = 1, limit = 10 } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"])) return;
+
+  try {
+    const result = await service.getDatewiseBreakdown(zodu_id, branch_id, from_date, to_date, page, limit);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error("[report] getDatewiseBreakdown:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 module.exports = router;

@@ -67,6 +67,11 @@ services:
     restart: always
     ports:
       - "5000:5000"
+    environment:
+      PORT: 5000
+      AUTH_SERVICE_URL: http://auth-service:3000
+      RESTAURANT_SERVICE_URL: http://restaurant-service:3001
+      EMPLOYEE_SERVICE_URL: http://employee-service:3002
     depends_on:
       - auth-service
       - restaurant-service

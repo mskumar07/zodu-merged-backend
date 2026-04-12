@@ -75,6 +75,7 @@ async function getReminders(zodu_id, branch_id, rawLimit, cursorToken) {
     due_date: r.due_date,
     ref_id:   r.ref_id,
     ref_type: r.ref_type,
+    ref_uuid: r.ref_uuid,
   }));
 }
 

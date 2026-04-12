@@ -215,6 +215,49 @@ async function getSalesVelocity(zodu_id, branch_id, from_date, to_date) {
   return { from_date: from, to_date: to, data };
 }
 
+// ── Datewise Summary Cards ────────────────────────────────────
+async function getDatewiseSummary(zodu_id, branch_id, from_date, to_date) {
+  const defaults = getDefaultDateRange();
+  const from     = from_date || defaults.from;
+  const to       = to_date   || defaults.to;
+
+  const raw = await repo.getDatewiseSaleSummary(zodu_id, branch_id, from, to);
+
+  return {
+    from_date:    from,
+    to_date:      to,
+    total_orders: parseInt(raw?.total_orders   || 0),
+    total_sales:  parseFloat(raw?.total_sales  || 0),
+    total_tax:    parseFloat(raw?.total_tax    || 0),
+    total_profit: parseFloat(raw?.total_profit || 0),
+  };
+}
+
+// ── Datewise Breakdown (paginated) ───────────────────────────
+async function getDatewiseBreakdown(zodu_id, branch_id, from_date, to_date, page, limit) {
+  const defaults = getDefaultDateRange();
+  const from     = from_date || defaults.from;
+  const to       = to_date   || defaults.to;
+
+  const { page: pg, limit: lmt, offset } = getPagination({ page, limit });
+  const { rows, total } = await repo.getDatewiseSaleBreakdown(zodu_id, branch_id, from, to, lmt, offset);
+
+  const data = rows.map((r) => ({
+    date:         r.sale_date,
+    total_orders: r.total_orders,
+    total_sales:  parseFloat(r.total_sales),
+    total_tax:    parseFloat(r.total_tax),
+    total_profit: parseFloat(r.total_profit),
+  }));
+
+  return {
+    from_date: from,
+    to_date:   to,
+    data,
+    pagination: getMeta({ page: pg, limit: lmt, total }),
+  };
+}
+
 module.exports = {
   getSalesSummary,
   getMonthlyBreakdown,
@@ -223,4 +266,6 @@ module.exports = {
   getCategoryWiseSales,
   getItemWiseSales,
   getSalesVelocity,
+  getDatewiseSummary,
+  getDatewiseBreakdown,
 };

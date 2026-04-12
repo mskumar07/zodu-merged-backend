@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { createProxyMiddleware } = require('http-proxy-middleware');
@@ -13,20 +14,22 @@ app.use(cors({
 
 
 
-// Route /auth → localhost:3000
+const AUTH_SERVICE_URL       = process.env.AUTH_SERVICE_URL       || 'http://auth-service:3000';
+const RESTAURANT_SERVICE_URL = process.env.RESTAURANT_SERVICE_URL || 'http://restaurant-service:3001';
+const EMPLOYEE_SERVICE_URL   = process.env.EMPLOYEE_SERVICE_URL   || 'http://employee-service:3002';
+
 app.use('/auth', createProxyMiddleware({
-  target: 'http://auth-service:3000',
+  target: AUTH_SERVICE_URL,
   changeOrigin: true
 }));
 
-// Route /restaurant → localhost:3001
 app.use('/restaurant', createProxyMiddleware({
-  target: 'http://restaurant-service:3001',
+  target: RESTAURANT_SERVICE_URL,
   changeOrigin: true
 }));
 
 app.use('/employee', createProxyMiddleware({
-  target: 'http://employee-service:3002',
+  target: EMPLOYEE_SERVICE_URL,
   changeOrigin: true
 }));
 
@@ -36,4 +39,8 @@ app.use("/", (req, res) => {
 });
 
 // Start the server
-app.listen(5000, () => console.log('API Gateway running on http://localhost:5000'));
+const PORT = process.env.PORT || 5001;
+
+console.log(PORT)
+
+app.listen(PORT, () => console.log(`API Gateway running on http://localhost:${PORT}`));

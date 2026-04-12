@@ -120,31 +120,30 @@ async function getReminders(zodu_id, branch_id, limit, cursor) {
 
     SELECT
       s.sale_id                               AS ref_id,
+      s.sale_uuid                             AS ref_uuid,
       'SALE'                                  AS ref_type,
       TO_CHAR(s.sale_date, 'DD Mon YYYY')     AS txn_date,
-      sp.payment_date::date                   AS due_date,   -- raw date
+      s.due_date::date                        AS due_date,
       s.total_amount,
       s.paid_amount,
       s.balance_amount,
       s.payment_status,
-      sp.transaction_type,
+      NULL::varchar                           AS transaction_type,
       COALESCE(c.cust_name, 'Walk-in')        AS party_name,
       NULL::varchar                           AS vendor_name
     FROM tbl_sales s
-    LEFT JOIN tbl_sale_payment sp
-      ON sp.sale_id = s.sale_id
-     AND sp.zodu_id = $1 AND sp.branch_id = $2
     LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid
     WHERE s.zodu_id = $1 AND s.branch_id = $2
-      AND s.payment_status IN ('pending', 'partial')
+      AND s.payment_status IN ('unpaid', 'partially_paid')
 
     UNION ALL
 
     SELECT
       p.purchase_id                                       AS ref_id,
+      NULL::uuid                                          AS ref_uuid,
       'PURCHASE'                                          AS ref_type,
       TO_CHAR(p.purchase_date, 'DD Mon YYYY')             AS txn_date,
-      COALESCE(pp.payment_date, p.due_date)::date         AS due_date,   -- raw date
+      COALESCE(pp.payment_date, p.due_date)::date         AS due_date,
       p.total_amount,
       p.paid_amount,
       p.balance_amount,

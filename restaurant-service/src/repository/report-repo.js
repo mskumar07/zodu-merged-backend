@@ -306,6 +306,60 @@ async function getSalesVelocity(zodu_id, branch_id, from_date, to_date) {
   return rows;
 }
 
+// ── Datewise Sale Report ──────────────────────────────────────
+async function getDatewiseSaleSummary(zodu_id, branch_id, from_date, to_date) {
+  const { rows } = await conn.query(
+    `SELECT
+       COUNT(DISTINCT s.sale_uuid)                                         AS total_orders,
+       COALESCE(SUM(s.total_amount), 0)                                   AS total_sales,
+       COALESCE(SUM(s.total_tax), 0)                                      AS total_tax,
+       COALESCE(SUM(
+         si.quantity * (si.price - COALESCE(m.purchase_price, 0))
+       ), 0)                                                               AS total_profit
+     FROM tbl_sales s
+     JOIN tbl_sale_items si ON si.sale_uuid = s.sale_uuid
+     LEFT JOIN tbl_menu_items m
+       ON m.item_id = si.item_id AND m.zodu_id = $1 AND m.branch_id = $2
+     WHERE s.zodu_id = $1 AND s.branch_id = $2
+       AND s.sale_date BETWEEN $3 AND $4`,
+    [zodu_id, branch_id, from_date, to_date]
+  );
+  return rows[0] || null;
+}
+
+async function getDatewiseSaleBreakdown(zodu_id, branch_id, from_date, to_date, limit, offset) {
+  const countResult = await conn.query(
+    `SELECT COUNT(DISTINCT sale_date) AS total
+     FROM tbl_sales
+     WHERE zodu_id = $1 AND branch_id = $2
+       AND sale_date BETWEEN $3 AND $4`,
+    [zodu_id, branch_id, from_date, to_date]
+  );
+
+  const { rows } = await conn.query(
+    `SELECT
+       s.sale_date,
+       COUNT(DISTINCT s.sale_uuid)::int                                   AS total_orders,
+       COALESCE(SUM(s.total_amount), 0)                                   AS total_sales,
+       COALESCE(SUM(s.total_tax), 0)                                      AS total_tax,
+       COALESCE(SUM(
+         si.quantity * (si.price - COALESCE(m.purchase_price, 0))
+       ), 0)                                                               AS total_profit
+     FROM tbl_sales s
+     JOIN tbl_sale_items si ON si.sale_uuid = s.sale_uuid
+     LEFT JOIN tbl_menu_items m
+       ON m.item_id = si.item_id AND m.zodu_id = $1 AND m.branch_id = $2
+     WHERE s.zodu_id = $1 AND s.branch_id = $2
+       AND s.sale_date BETWEEN $3 AND $4
+     GROUP BY s.sale_date
+     ORDER BY s.sale_date DESC
+     LIMIT $5 OFFSET $6`,
+    [zodu_id, branch_id, from_date, to_date, limit, offset]
+  );
+
+  return { rows, total: parseInt(countResult.rows[0]?.total || 0) };
+}
+
 module.exports = {
   getSalesSummary,
   getMonthlyBreakdown,
@@ -314,4 +368,6 @@ module.exports = {
   getCategoryWiseSales,
   getItemWiseSales,
   getSalesVelocity,
+  getDatewiseSaleSummary,
+  getDatewiseSaleBreakdown,
 };

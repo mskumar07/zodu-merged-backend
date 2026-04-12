@@ -7,6 +7,8 @@ const {
   DB_NAME,
 } = require('../config');
 
+console.log(DB_HOSTNAME,DB_NAME,DB_USERNAME)
+
 const pool = new Pool({
   user: DB_USERNAME,
   host: DB_HOSTNAME,

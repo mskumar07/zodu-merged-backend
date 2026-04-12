@@ -1,0 +1,83 @@
+version: "3.8"
+
+services:
+  # Auth Service
+  auth-service:
+    image: vicky0015/zodu-backemd-retail-auth-service:uat
+    container_name: uat-auth-service
+    restart: always
+    expose:
+      - "4000"
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DB_HOSTNAME: 72.60.206.59
+      DB_PORT: 5432
+      DB_USERNAME: zodudb
+      DB_PASSWORD: zodu@2025
+      DB_NAME: retail_auth_service
+
+
+  # Restaurant Service
+  restaurant-service:
+    image: vicky0015/zodu-backemd-retail-restaurant-service:uat
+    container_name: uat-restaurant-service
+    restart: always
+    expose:
+      - "4001"
+    environment:
+      NODE_ENV: production
+      PORT: 4001
+      DB_HOSTNAME: 72.60.206.59
+      DB_PORT: 5432
+      DB_USERNAME: zodudb
+      DB_PASSWORD: zodu@2025
+      DB_Name: retail_restaurant_service
+      MINIO_HOST: 72.60.206.59
+      MINIO_PORT: 9000
+      MINIO_ACCESSKEY: zoduminio
+      MINIO_SECRETKEY: zodu@2025
+      MINIO_BUCKET_NAME: zodu
+
+
+  # Employee Service
+  employee-service:
+    image: vicky0015/zodu-backemd-retail-employee-service:uat
+    container_name: uat-employee-service
+    restart: always
+    expose:
+      - "4002"
+    environment:
+      NODE_ENV: production
+      PORT: 4002
+      DB_HOSTNAME: 72.60.206.59
+      DB_PORT: 5432
+      DB_USERNAME: zodudb
+      DB_PASSWORD: zodu@2025
+      DB_NAME: retail_employee_service
+      MINIO_HOST: 72.60.206.59
+      MINIO_PORT: 9000
+      MINIO_ACCESSKEY: zoduminio
+      MINIO_SECRETKEY: zodu@2025
+      MINIO_BUCKET_NAME: zodu
+
+
+  # API Gateway
+  apigateway:
+    image: vicky0015/zodu-backemd-retail-apigateway:uat
+    container_name: uat-apigateway
+    restart: always
+    ports:
+      - "5001:5001"
+    environment:
+      PORT: 5001
+      AUTH_SERVICE_URL: http://auth-service:4000
+      RESTAURANT_SERVICE_URL: http://restaurant-service:4001
+      EMPLOYEE_SERVICE_URL: http://employee-service:4002
+    depends_on:
+      - auth-service
+      - restaurant-service
+      - employee-service
+
+
+
