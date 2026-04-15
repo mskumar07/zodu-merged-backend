@@ -8,6 +8,7 @@ if (process.env.NODE_ENV !== "production") {
   dotEnv.config();
 }
 
+
 module.exports = {
   PORT: process.env.PORT,
   DB_USERNAME: process.env.DB_USERNAME,
@@ -16,5 +17,6 @@ module.exports = {
   DB_HOSTNAME: process.env.DB_HOSTNAME,
   DB_NAME: process.env.DB_NAME,
   APP_SECRET: process.env.APP_SECRET,
-  JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || process.env.APP_SECRET
+  JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || process.env.APP_SECRET,
+  RESTAURANT_SERVICE_URL: process.env.RESTAURANT_SERVICE_URL || 'http://restaurant-service:4001',
 };

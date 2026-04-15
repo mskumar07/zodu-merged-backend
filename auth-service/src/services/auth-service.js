@@ -9,10 +9,12 @@ const {
 const repository = require('../repository/auth-repo');
 const axios = require('axios');
 const jwt = require('jsonwebtoken');
-const { JWT_REFRESH_SECRET } = require('../config');
+const { APP_SECRET, RESTAURANT_SERVICE_URL } = require('../config');
 
-const REFRESH_SECRET  = JWT_REFRESH_SECRET;
+const REFRESH_SECRET  = APP_SECRET;
 const REFRESH_EXPIRY_DAYS = 7;
+
+console.log(RESTAURANT_SERVICE_URL)
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -36,7 +38,7 @@ function refreshTokenExpiresAt() {
 // ── CreateAccount ─────────────────────────────────────────────────────────────
 
 async function CreateAccount(userInputs) {
-  const { restaurant_name, phone_number, email, password } = userInputs;
+  const { restaurant_name, phone_number, email, password, same_for_branch } = userInputs;
 
   if (phone_number) {
     const phoneCheck = await repository.findPhnExist({ phone_number });
@@ -69,7 +71,7 @@ async function CreateAccount(userInputs) {
   }
 
   try {
-    await axios.post('http://restaurant-service:3001/api/createcompany', {
+    await axios.post(`${RESTAURANT_SERVICE_URL}/api/createcompany`, {
       zodu_id,
       restaurant_name,
       mobile_no: phone_number,
@@ -79,6 +81,20 @@ async function CreateAccount(userInputs) {
     console.error('restaurant-service failed — rolling back:', err.message);
     await repository.deleteAccountByZoduId(zodu_id).catch(() => {});
     return FormateData({ error: 'Registration failed. Please try again.' });
+  }
+console.log(same_for_branch)
+  if (same_for_branch === true) {
+    try {
+      await axios.post(`${RESTAURANT_SERVICE_URL}/api/branch/signup-default`, {
+        zodu_id,
+        branch_name: restaurant_name,
+        branch_mobile_no: phone_number,
+        branch_mail_id: email,
+      });
+    } catch (err) {
+      console.log(err)
+      console.error('Default branch creation failed (non-fatal):', err.message);
+    }
   }
 
   return FormateData({ insertData: createdData.account });
@@ -124,7 +140,6 @@ async function AccountLogin(userInputs, meta = {}) {
     user_type: user.user_type,
     email:     user.email,
     phone_number: user.phone_number,
-    branch_id: user.branch_id,
   });
 
   // 3. Issue refresh token + persist session to tbl_user_sessions
@@ -142,17 +157,44 @@ async function AccountLogin(userInputs, meta = {}) {
   // 4. Update last_login_at
   await repository.updateLastLogin({ user_id: user.user_id });
 
-  // 5. Fetch company address & bank details from restaurant-service
-  let companyDetails = null;
-  try {
-    const { data: companyRes } = await axios.get(
-      `http://restaurant-service:3001/get/company_details/${user.zodu_id}`
-    );
-    companyDetails = companyRes?.Data?.[0] ?? null;
-    console.log(companyDetails)
-  } catch (err) {
-    console.error('Failed to fetch company details:', err.message);
-  }
+  // 5. Fetch all companies the user belongs to
+  const userCompanies = await repository.getUserCompanies({ user_id: user.user_id });
+
+  // 6. For each company, fetch company details + branches in parallel
+  const companies = await Promise.all(
+    userCompanies.map(async (uc) => {
+      const [companyRes, branchRes] = await Promise.allSettled([
+        axios.get(`${RESTAURANT_SERVICE_URL}/get/company_details/${uc.zodu_id}`),
+        axios.get(`${RESTAURANT_SERVICE_URL}/api/branch/${uc.zodu_id}`),
+      ]);
+
+      const companyInfo = companyRes.status === 'fulfilled'
+        ? (companyRes.value.data?.Data?.[0] ?? null)
+        : null;
+
+      const branches = branchRes.status === 'fulfilled'
+        ? (branchRes.value.data?.data ?? [])
+        : [];
+
+      return {
+        zodu_id:           uc.zodu_id,
+        is_primary:        uc.is_primary,
+        restaurant_name:   companyInfo?.restaurant_name   ?? null,
+        owner_admin_name:  companyInfo?.owner_admin_name  ?? null,
+        gst_no:            companyInfo?.gst_no            ?? null,
+        building_no:       companyInfo?.building_no       ?? null,
+        area_street_name:  companyInfo?.area_street_name  ?? null,
+        city:              companyInfo?.city               ?? null,
+        district:          companyInfo?.district           ?? null,
+        state:             companyInfo?.state              ?? null,
+        pincode:           companyInfo?.pincode            ?? null,
+        account_number:    companyInfo?.account_number    ?? null,
+        account_type:      companyInfo?.account_type      ?? null,
+        ifsc_code:         companyInfo?.ifsc_code         ?? null,
+        branches,
+      };
+    })
+  );
 
   return FormateData({
     message: 'Login successful',
@@ -165,21 +207,8 @@ async function AccountLogin(userInputs, meta = {}) {
       email:           user.email,
       phone_number:    user.phone_number,
       user_type:       user.user_type,
-      branch_id:       user.branch_id,
     },
-    company: companyDetails ? {
-      owner_admin_name:  companyDetails.owner_admin_name,
-      gst_no:            companyDetails.gst_no,
-      building_no:       companyDetails.building_no,
-      area_street_name:  companyDetails.area_street_name,
-      city:              companyDetails.city,
-      district:          companyDetails.district,
-      state:             companyDetails.state,
-      pincode:           companyDetails.pincode,
-      account_number:    companyDetails.account_number,
-      account_type:      companyDetails.account_type,
-      ifsc_code:         companyDetails.ifsc_code,
-    } : null,
+    companies,
   });
 }
 
@@ -256,9 +285,199 @@ async function Logout({ refresh_token }) {
   return FormateData({ message: 'Logged out successfully' });
 }
 
+// ── AddCompany ────────────────────────────────────────────────────────────────
+
+async function AddCompany(userInputs, user_id) {
+  const {
+    restaurant_name,
+    owner_admin_name,
+    gst_no,
+    phone_number,
+    email,
+    pincode,
+    city,
+    district,
+    state,
+    building_no,
+    area_street_name,
+    account_number,
+    account_type,
+    ifsc_code,
+    same_for_branch = true,
+  } = userInputs;
+
+  const zodu_id = await repository.getNextZoduId();
+
+  try {
+    await axios.post(`${RESTAURANT_SERVICE_URL}/api/createcompany`, {
+      zodu_id,
+      restaurant_name,
+      owner_admin_name,
+      mobile_no: phone_number,
+      mail_id: email,
+      gst_no,
+      pincode,
+      city,
+      district,
+      state,
+      building_no,
+      area_street_name,
+      account_number,
+      account_type,
+      ifsc_code,
+    });
+  } catch (err) {
+    console.error('createcompany failed:', err.message);
+    return FormateData({ error: 'Failed to create company. Please try again.' });
+  }
+
+  await repository.addUserCompany({ user_id, zodu_id, is_primary: false });
+
+  if (same_for_branch === true) {
+    try {
+      await axios.post(`${RESTAURANT_SERVICE_URL}/api/branch/signup-default`, {
+        zodu_id,
+        branch_name: restaurant_name,
+        branch_mobile_no: phone_number,
+        branch_mail_id: email,
+      });
+    } catch (err) {
+      console.error('Default branch creation failed (non-fatal):', err.message);
+    }
+  }
+
+  return FormateData({ zodu_id, restaurant_name });
+}
+
+async function AddBranch(userInputs, user_id) {
+  const { zodu_id } = userInputs;
+
+  const userCompanies = await repository.getUserCompanies({ user_id });
+  const hasAccess = userCompanies.some((company) => company.zodu_id === zodu_id);
+
+  if (!hasAccess) {
+    return FormateData({ error: 'You do not have access to add a branch for this company' });
+  }
+
+  try {
+    const response = await axios.post(`${RESTAURANT_SERVICE_URL}/add/branch`, userInputs);
+    return FormateData({
+      message: 'Branch created successfully',
+      branch: response.data?.Data?.data ?? response.data?.data ?? response.data,
+    });
+  } catch (err) {
+    console.error('add branch failed:', err.message);
+    return FormateData({
+      error: err.response?.data?.message || err.response?.data?.error || 'Failed to create branch. Please try again.',
+    });
+  }
+}
+
+async function EditCompany(userInputs, user_id) {
+  const {
+    zodu_id,
+    phone_number,
+    email,
+    ...rest
+  } = userInputs;
+
+  const userCompanies = await repository.getUserCompanies({ user_id });
+  const hasAccess = userCompanies.some((company) => company.zodu_id === zodu_id);
+
+  if (!hasAccess) {
+    return FormateData({ error: 'You do not have access to edit this company' });
+  }
+
+  try {
+    const response = await axios.put(`${RESTAURANT_SERVICE_URL}/api/company/${zodu_id}`, {
+      ...rest,
+      ...(phone_number !== undefined ? { mobile_no: phone_number } : {}),
+      ...(email !== undefined ? { mail_id: email } : {}),
+    });
+
+    return FormateData({
+      message: 'Company updated successfully',
+      company: response.data?.data ?? response.data,
+    });
+  } catch (err) {
+    console.error('edit company failed:', err.message);
+    return FormateData({
+      error: err.response?.data?.message || err.response?.data?.error || 'Failed to update company. Please try again.',
+    });
+  }
+}
+
+async function EditBranch(userInputs, user_id) {
+  const { zodu_id, branch_id, ...rest } = userInputs;
+
+  console.log(rest)
+
+  const userCompanies = await repository.getUserCompanies({ user_id });
+  const hasAccess = userCompanies.some((company) => company.zodu_id === zodu_id);
+
+  if (!hasAccess) {
+    return FormateData({ error: 'You do not have access to edit a branch for this company' });
+  }
+
+  try {
+    const response = await axios.put(`${RESTAURANT_SERVICE_URL}/api/branch/${zodu_id}/${branch_id}`, rest);
+    return FormateData({
+      message: 'Branch updated successfully',
+      branch: response.data?.data ?? response.data,
+    });
+  } catch (err) {
+    console.log(err)
+    console.error('edit branch failed:', err.message);
+    return FormateData({
+      error: err.response?.data?.message || err.response?.data?.error || 'Failed to update branch. Please try again.',
+    });
+  }
+}
+
+// ── GetMyCompanies ────────────────────────────────────────────────────────────
+
+async function GetMyCompanies(user_id) {
+  const userCompanies = await repository.getUserCompanies({ user_id });
+
+  if (!userCompanies.length) {
+    return FormateData({ companies: [] });
+  }
+
+  const details = await Promise.all(
+    userCompanies.map(async (uc) => {
+      const [companyRes, branchRes] = await Promise.allSettled([
+        axios.get(`${RESTAURANT_SERVICE_URL}/get/company_details/${uc.zodu_id}`),
+        axios.get(`${RESTAURANT_SERVICE_URL}/api/branch/${uc.zodu_id}`),
+      ]);
+
+      const companyInfo = companyRes.status === 'fulfilled'
+        ? (companyRes.value.data?.Data?.[0] ?? null)
+        : null;
+
+      const branches = branchRes.status === 'fulfilled'
+        ? (branchRes.value.data?.data ?? [])
+        : [];
+
+      return {
+        ...(companyInfo ?? {}),
+        zodu_id:          companyInfo?.zodu_id ?? uc.zodu_id,
+        is_primary:       uc.is_primary,
+        branches,
+      };
+    })
+  );
+
+  return FormateData({ companies: details });
+}
+
 module.exports = {
   CreateAccount,
   AccountLogin,
   RefreshToken,
   Logout,
+  AddCompany,
+  AddBranch,
+  EditCompany,
+  EditBranch,
+  GetMyCompanies,
 };

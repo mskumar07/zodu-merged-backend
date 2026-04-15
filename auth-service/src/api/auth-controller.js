@@ -7,6 +7,73 @@ const { logger, ValidateSignature } = require('../utils');
 
 const router = express.Router();
 
+async function handleCreateCompany(req, res) {
+  try {
+    const { errors, input } = await RequestValidator(schema.add_company, req.body);
+    console.log(errors)
+    if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
+
+    const data = await authService.AddCompany(input, req.user.user_id);
+    if (data.error) return res.status(400).json(data);
+    return res.status(201).json(data);
+  } catch (error) {
+    logger.error(error);
+    return res.status(STATUS_CODES.INTERNAL_ERROR).json({ message: error.message });
+  }
+}
+
+async function handleAddBranch(req, res) {
+  try {
+    const { errors, input } = await RequestValidator(schema.add_branch, req.body);
+    console.log(errors)
+    if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
+
+    const data = await authService.AddBranch(input, req.user.user_id);
+    if (data.error) return res.status(400).json(data);
+    return res.status(201).json(data);
+  } catch (error) {
+    logger.error(error);
+    return res.status(STATUS_CODES.INTERNAL_ERROR).json({ message: error.message });
+  }
+}
+
+async function handleEditCompany(req, res) {
+  try {
+    const { errors, input } = await RequestValidator(schema.edit_company, {
+      ...req.body,
+      zodu_id: req.params.zodu_id,
+    });
+
+    console.log(errors)
+    if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
+
+    const data = await authService.EditCompany(input, req.user.user_id);
+    if (data.error) return res.status(400).json(data);
+    return res.status(200).json(data);
+  } catch (error) {
+    logger.error(error);
+    return res.status(STATUS_CODES.INTERNAL_ERROR).json({ message: error.message });
+  }
+}
+
+async function handleEditBranch(req, res) {
+  try {
+    const { errors, input } = await RequestValidator(schema.edit_branch, {
+      ...req.body,
+      zodu_id: req.params.zodu_id,
+      branch_id: req.params.branch_id,
+    });
+    if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
+
+    const data = await authService.EditBranch(input, req.user.user_id);
+    if (data.error) return res.status(400).json(data);
+    return res.status(200).json(data);
+  } catch (error) {
+    logger.error(error);
+    return res.status(STATUS_CODES.INTERNAL_ERROR).json({ message: error.message });
+  }
+}
+
 // ── POST /api/create-account ──────────────────────────────────────────────────
 router.post('/api/create-account', async (req, res) => {
   try {
@@ -90,6 +157,25 @@ router.get('/api/auth-check', ValidateSignature, async (req, res) => {
       message: 'You are authorized',
       user: req.user,
     });
+  } catch (error) {
+    logger.error(error);
+    return res.status(STATUS_CODES.INTERNAL_ERROR).json({ message: error.message });
+  }
+});
+
+// ── POST /api/company/add ─────────────────────────────────────────────────────
+router.post('/api/company/add', ValidateSignature, handleCreateCompany);
+router.post('/api/create-company', ValidateSignature, handleCreateCompany);
+router.post('/api/branch/add', ValidateSignature, handleAddBranch);
+router.put('/api/company/edit/:zodu_id', ValidateSignature, handleEditCompany);
+router.put('/api/branch/edit/:zodu_id/:branch_id', ValidateSignature, handleEditBranch);
+
+// ── GET /api/my-companies ─────────────────────────────────────────────────────
+router.get('/api/my-companies', ValidateSignature, async (req, res) => {
+  try {
+    console.log("test")
+    const data = await authService.GetMyCompanies(req.user.user_id);
+    return res.status(STATUS_CODES.OK).json(data);
   } catch (error) {
     logger.error(error);
     return res.status(STATUS_CODES.INTERNAL_ERROR).json({ message: error.message });

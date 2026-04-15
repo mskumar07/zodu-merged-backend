@@ -23,7 +23,7 @@ select * from tbl_company_registration;
 
 CREATE TABLE tbl_resturant_branch (
     id SERIAL PRIMARY KEY,
-    branch_id VARCHAR(50) UNIQUE NOT NULL,
+    branch_id VARCHAR(50) NOT NULL,
     zodu_id VARCHAR(50) NOT NULL,
     qr_code_id VARCHAR(50),
     branch_name VARCHAR(100) NOT NULL,
@@ -51,7 +51,8 @@ CREATE TABLE tbl_resturant_branch (
     ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT fk_qr_code_id FOREIGN KEY (qr_code_id) 
     REFERENCES tbl_qr_code (id)
-    ON DELETE CASCADE ON UPDATE CASCADE
+    ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT uq_branch_zodu UNIQUE (branch_id, zodu_id)
 );
 
 select * from tbl_resturant_branch;
@@ -66,6 +67,11 @@ CREATE TABLE tbl_qr_code (
 );
 
 select * from tbl_qr_code;
+
+-- Existing DB migration for branch_id scope:
+-- DROP INDEX IF EXISTS tbl_resturant_branch_branch_id_key;
+-- ALTER TABLE tbl_resturant_branch
+--   ADD CONSTRAINT uq_branch_zodu UNIQUE (branch_id, zodu_id);
 
 CREATE TABLE tbl_category (
     id SERIAL PRIMARY KEY,

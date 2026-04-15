@@ -2,7 +2,7 @@ const dotEnv = require("dotenv");
 
 console.log("Loading environment variables...",process.env.NODE_ENV);
 if (process.env.NODE_ENV !== "production") {
-  const configFile = `./.env.${process.env.NODE_ENV}`;
+  const configFile = process.env.NODE_ENV ? `./.env.${process.env.NODE_ENV}` : "./.env";
   dotEnv.config({ path: configFile });
 } else {
   dotEnv.config();

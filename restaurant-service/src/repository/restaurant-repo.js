@@ -38,14 +38,30 @@ function generateTransactionId() {
 
 // repository — FIXED: ON CONFLICT DO NOTHING returns no row, handle it explicitly
 exports.createCompany = async (companyData) => {
+  console.log(companyData)
   const query = `
     INSERT INTO tbl_company_registration
-      (zodu_id, restaurant_name, mobile_no, mail_id)
-    VALUES ($1, $2, $3, $4)
+      (
+        zodu_id, restaurant_name, owner_admin_name, mobile_no, mail_id,
+        gst_no, pincode, city, district, state, building_no,
+        area_street_name, account_number, account_type, ifsc_code
+      )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
     ON CONFLICT (zodu_id) DO UPDATE           -- FIXED: DO UPDATE so it always returns a row
       SET restaurant_name = EXCLUDED.restaurant_name,
+          owner_admin_name = EXCLUDED.owner_admin_name,
           mobile_no       = EXCLUDED.mobile_no,
           mail_id         = EXCLUDED.mail_id,
+          gst_no          = EXCLUDED.gst_no,
+          pincode         = EXCLUDED.pincode,
+          city            = EXCLUDED.city,
+          district        = EXCLUDED.district,
+          state           = EXCLUDED.state,
+          building_no     = EXCLUDED.building_no,
+          area_street_name = EXCLUDED.area_street_name,
+          account_number  = EXCLUDED.account_number,
+          account_type    = EXCLUDED.account_type,
+          ifsc_code       = EXCLUDED.ifsc_code,
           updated_at      = now()
     RETURNING *
   `;
@@ -53,8 +69,19 @@ exports.createCompany = async (companyData) => {
   const values = [
     companyData.zodu_id,
     companyData.restaurant_name,
+    companyData.owner_admin_name || null,
     companyData.mobile_no,
     companyData.mail_id,
+    companyData.gst_no || null,
+    companyData.pincode || null,
+    companyData.city || null,
+    companyData.district || null,
+    companyData.state || null,
+    companyData.building_no || null,
+    companyData.area_street_name || null,
+    companyData.account_number || null,
+    companyData.account_type || null,
+    companyData.ifsc_code || null,
   ];
 
   const { rows } = await conn.query(query, values);
@@ -71,7 +98,10 @@ exports.updateCompany = async (zodu_id, fields) => {
   if (keys.length === 0) return null;
 
   const values = Object.values(fields);
-  const setQuery = keys.map((k, i) => `${k}=$${i + 1}`).join(', ');
+  const setQuery = [
+    ...keys.map((k, i) => `${k}=$${i + 1}`),
+    `updated_at=now()`,
+  ].join(', ');
 
   const res = await conn.query(
     `UPDATE tbl_company_registration
@@ -2301,6 +2331,20 @@ exports.findMaxBranchID = async (zodu_id) => {
     'SELECT max(branch_id) FROM tbl_resturant_branch where zodu_id = $1', [zodu_id]);
 }
 
+exports.createDefaultBranch = async ({ branch_id, zodu_id, qr_code_id, branch_name, branch_mobile_no, branch_mail_id }) => {
+  
+  console.log(branch_id, zodu_id, qr_code_id, branch_name, branch_mobile_no, branch_mail_id )
+  const { rows } = await conn.query(
+    `INSERT INTO tbl_resturant_branch
+       (branch_id, zodu_id, qr_code_id, branch_name, branch_mobile_no, branch_mail_id)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING *`,
+    [branch_id, zodu_id, qr_code_id, branch_name, branch_mobile_no, branch_mail_id]
+  );
+  console.log(rows)
+  return rows[0] || null;
+};
+
 exports.FindExistingData = async (tbl_name, column_name, value) => {
   console.log("repository", tbl_name, column_name, value);
   return await conn.query(
@@ -2308,19 +2352,18 @@ exports.FindExistingData = async (tbl_name, column_name, value) => {
 }
 
 exports.createBranch = async (branchData) => {
-  console.log("repository branchData", branchData);
   try {
     const query = `
       INSERT INTO tbl_resturant_branch (
         branch_id, zodu_id, qr_code_id, branch_name, branch_manager_or_admin,
         branch_mobile_no, branch_mail_id, branch_city, branch_pincode, branch_district,
-        branch_state, branch_image, fssai, opening_hours, branch_floor_building_no,
+        branch_state, branch_image, branch_floor_building_no,
         branch_area_street_name, branch_account_no, branch_ifsc, branch_account_type
       ) VALUES (
         $1, $2, $3, $4, $5,
         $6, $7, $8, $9, $10,
         $11, $12, $13, $14, $15,
-        $16, $17, $18, $19
+        $16, $17
       )
       RETURNING *;
     `;
@@ -2338,8 +2381,6 @@ exports.createBranch = async (branchData) => {
       branchData.branch_district,
       branchData.branch_state,
       branchData.branch_image,
-      branchData.fssai,
-      branchData.opening_hours ? JSON.stringify(branchData.opening_hours) : null,
       branchData.branch_floor_building_no,
       branchData.branch_area_street_name,
       branchData.branch_account_no,

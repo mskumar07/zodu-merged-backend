@@ -4,35 +4,37 @@ const Joi = require("joi");
 const company_create = Joi.object({
   zodu_id: Joi.required(),
   restaurant_name: Joi.string().min(2).max(255).required(),
-  // owner_admin_name: Joi.string().max(100).required(),
-  mobile_no: Joi.number().min(15).required(), // allows 10-15 digit numbers,
+  owner_admin_name: Joi.string().max(100).allow(null, ''),
+  mobile_no: Joi.string().pattern(/^[0-9]{10,15}$/).required(),
   mail_id: Joi.string().email().max(100).required(),
-  // gst_no: Joi.string().max(50).required(),
-  // pincode: Joi.string().pattern(/^[0-9]{5,10}$/).required(), // allows 5-10 digit numbers,
-  // city: Joi.string().max(50).required(),
-  // district: Joi.string().max(50).required(),
-  // state: Joi.string().max(50).required(),
-  // building_no: Joi.string().max(100).required(),
-  // area_street_name: Joi.string().max(100).required(),
-  // account_number: Joi.string().pattern(/^[0-9]{6,30}$/).required(), // typical bank account numbers,
-  // account_type: Joi.string().required(),
-  // ifsc_code: Joi.string().pattern(/^[A-Z]{4}0[A-Z0-9]{6}$/).required(), // standard IFSC code format
+  gst_no: Joi.string().max(50).allow(null, ''),
+  pincode: Joi.string().pattern(/^[0-9]{5,10}$/).allow(null, ''),
+  city: Joi.string().max(50).allow(null, ''),
+  district: Joi.string().max(50).allow(null, ''),
+  state: Joi.string().max(50).allow(null, ''),
+  building_no: Joi.string().max(100).allow(null, ''),
+  area_street_name: Joi.string().max(100).allow(null, ''),
+  account_number: Joi.string().max(30).allow(null, ''),
+  account_type: Joi.string().allow(null, ''),
+  ifsc_code: Joi.string().max(20).allow(null, ''),
 });
 
 const update_company = Joi.object({
-
-  owner_admin_name: Joi.string().max(100).required(),
-  gst_no: Joi.string().max(50).required(),
-  pincode: Joi.string().pattern(/^[0-9]{5,10}$/).required(), // allows 5-10 digit numbers,
-  city: Joi.string().max(50).required(),
-  district: Joi.string().max(50).required(),
-  state: Joi.string().max(50).required(),
-  building_no: Joi.string().max(100).required(),
-  area_street_name: Joi.string().max(100).required(),
-  account_number: Joi.string().pattern(/^[0-9]{6,30}$/).required(), // typical bank account numbers,
-  account_type: Joi.string().required(),
-  ifsc_code: Joi.string().pattern(/^[A-Z]{4,5}0[A-Z0-9]{6}$/).required(), // standard IFSC code format
-});
+  restaurant_name: Joi.string().min(2).max(255),
+  owner_admin_name: Joi.string().max(100).allow(null, ''),
+  mobile_no: Joi.string().pattern(/^[0-9]{10,15}$/),
+  mail_id: Joi.string().email().max(100),
+  gst_no: Joi.string().max(50).allow(null, ''),
+  pincode: Joi.string().pattern(/^[0-9]{5,10}$/).allow(null, ''),
+  city: Joi.string().max(50).allow(null, ''),
+  district: Joi.string().max(50).allow(null, ''),
+  state: Joi.string().max(50).allow(null, ''),
+  building_no: Joi.string().max(100).allow(null, ''),
+  area_street_name: Joi.string().max(100).allow(null, ''),
+  account_number: Joi.string().pattern(/^[0-9]{6,30}$/).allow(null, ''),
+  account_type: Joi.string().allow(null, ''),
+  ifsc_code: Joi.string().pattern(/^[A-Z]{4,5}0[A-Z0-9]{6}$/).allow(null, ''),
+}).min(1);
 
 const branch_create = Joi.object({
   zodu_id: Joi.required(),
@@ -45,7 +47,7 @@ const branch_create = Joi.object({
   branch_pincode: Joi.string().pattern(/^[0-9]{5,10}$/).required(),
   branch_district: Joi.string().max(50).required(),
   branch_state: Joi.string().max(50).required(),
-  branch_image: Joi.string().uri(), // Optional image URL
+  branch_image: Joi.string().uri().allow(null, ''), // Optional image URL
   fssai: Joi.string().max(50),
   opening_hours: Joi.array().items(
     Joi.object({
@@ -60,6 +62,31 @@ const branch_create = Joi.object({
   branch_ifsc: Joi.string().max(20).required(),
   branch_account_type: Joi.string().max(20).required()
 });
+
+const update_branch = Joi.object({
+  branch_name: Joi.string().max(100),
+  branch_manager_or_admin: Joi.string().max(100).allow(null, ''),
+  branch_mobile_no: Joi.string().pattern(/^[0-9]{10,15}$/),
+  branch_mail_id: Joi.string().email().max(100),
+  branch_city: Joi.string().max(50),
+  branch_pincode: Joi.string().pattern(/^[0-9]{5,10}$/),
+  branch_district: Joi.string().max(50),
+  branch_state: Joi.string().max(50),
+  branch_image: Joi.string().uri().allow(null, ''),
+  fssai: Joi.string().max(50).allow(null, ''),
+  opening_hours: Joi.array().items(
+    Joi.object({
+      day: Joi.string().required(),
+      open: Joi.string().required(),
+      close: Joi.string().required(),
+    })
+  ).allow(null),
+  branch_floor_building_no: Joi.string().max(100),
+  branch_area_street_name: Joi.string().max(100),
+  branch_account_no: Joi.string().max(30),
+  branch_ifsc: Joi.string().max(20),
+  branch_account_type: Joi.string().max(20),
+}).min(1);
 
 const product_create = Joi.object({
   zodu_id: Joi.string().required(),
@@ -674,6 +701,7 @@ const ledgerSchema = Joi.object({
 module.exports = {
   company_create,
   branch_create,
+  update_branch,
   product_create,
   update_company,
   order_create,

@@ -1262,30 +1262,9 @@ async function update_Final_payment(data) {
 
 async function createBranch(branchData) {
   try {
-    const duplicateFields = [];
-    const fieldsToCheck = ["branch_mobile_no", "branch_mail_id"];
-
-    // Check existing data for given fields
-    for (const field of fieldsToCheck) {
-      if (branchData[field]) {
-        const result = await repository.FindExistingData("tbl_resturant_branch", field, branchData[field]);
-
-        if (result.rows.length > 0) {
-          // Check if any record has same field but different zodu_id
-          const sameCompanyDetails = result.rows.find(row => row.zodu_id === branchData.zodu_id);
-          if (!sameCompanyDetails) {
-            duplicateFields.push(field);
-          }
-        }
-      }
-    }
+    // Allow owners to reuse the same mobile number and email
+    // across multiple companies and branches.
     // If duplicates found → return error
-    if (duplicateFields.length > 0) {
-      return {
-        success: false,
-        message: `${duplicateFields.join(", ")} already exists`,
-      };
-    }
     // Generate new zodu_id if not provided
     let BranchId = await repository.findMaxBranchID(branchData.zodu_id);
     console.log("BranchId", BranchId.rows);
@@ -1318,6 +1297,34 @@ async function createBranch(branchData) {
       success: false,
       message: err.message
     };
+  }
+}
+
+async function createDefaultBranchService({ zodu_id, branch_name, branch_mobile_no, branch_mail_id }) {
+  try {
+    const maxResult = await repository.findMaxBranchID(zodu_id);
+    const branch_id = 'B1';
+
+    if (maxResult.rows[0]?.max) {
+      // Branch already exists for this company — skip silently
+      return { success: true, branch_id: maxResult.rows[0].max };
+    }
+
+    const createQr = await repository.createQRCode(branch_id);
+    const branch = await repository.createDefaultBranch({
+      branch_id,
+      zodu_id,
+      qr_code_id: createQr.id,
+      branch_name,
+      branch_mobile_no: branch_mobile_no || null,
+      branch_mail_id:   branch_mail_id   || null,
+    });
+    console.log("vv",branch)
+
+    return { success: true, branch_id, data: branch };
+  } catch (err) {
+    console.error('Error creating default branch:', err);
+    return { success: false, message: err.message };
   }
 }
 
@@ -2710,6 +2717,7 @@ module.exports = {
   createCompanyService,
   getData,
   createBranch,
+  createDefaultBranchService,
   createProduct,
   getCategoryData,
   get_menuItem_data,

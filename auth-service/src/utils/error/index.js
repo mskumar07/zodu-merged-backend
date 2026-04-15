@@ -36,11 +36,17 @@ module.exports.ValidateSignature = async (req, res, next) => {
     if (!signature) {
       return res.status(401).json({ message: "Authorization token missing" });
     }
-    const token = signature.split(" ")[1];
+
+    const token = signature.startsWith("Bearer ") ? signature.split(" ")[1] : null;
+    if (!token) {
+      return res.status(401).json({ message: "Authorization token missing" });
+    }
+
     const payload = await jwt.verify(token, APP_SECRET);
     req.user = payload; 
     next();
   } catch (error) {
+    logger.error("JWT validation error:", error);
     console.error("JWT validation error:", error.message);
     return res.status(401).json({ message: "Unauthorized: Invalid token" });
   }

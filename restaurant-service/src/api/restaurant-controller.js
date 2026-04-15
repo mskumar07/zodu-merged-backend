@@ -4,6 +4,7 @@ const RequestValidator = require("../utils/requestValidator")
 const schema = require("../schema/restaurant-schema");
 const STATUS_CODES = require("../utils/error/status-codes");
 const service = require("../services/restaurant-service");
+const branchService = require("../services/branch-service");
 const conn = require("../database/connection");
 const Minio = require("minio");
 const multer = require("multer")
@@ -15,8 +16,9 @@ const upload = multer({
 // memory storage
 const mime = require("mime-types");
 const moment = require('moment/moment');
+const jwt = require("jsonwebtoken");
 const { validateDateFilter } = require("../utils/Date_Folder/valaidator");
-const { MINIO_HOST, MINIO_PORT, MINIO_ACCESSKEY, BUCKET_NAME, MINIO_SECRETKEY } = require("../config");
+const { MINIO_HOST, MINIO_PORT, MINIO_ACCESSKEY, BUCKET_NAME, MINIO_SECRETKEY, APP_SECRET } = require("../config");
 
 
 const router = express.Router();
@@ -32,6 +34,7 @@ const minioClient = new Minio.Client({
 });
 
 const bucketName = BUCKET_NAME;
+
 
 
 // route — remove the double BEGIN/COMMIT, let the service own its transaction
@@ -95,6 +98,94 @@ router.get("/get/company_details/:zudo_id", async (req, res) => {
     return res.status(201).json({ message: "Data Get Successfully", Data: getData.data });
   } catch (error) {
     console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /get/my-companies
+// Returns all companies (with their branches) that the authenticated user belongs to.
+// Derives the user's zodu_id from the JWT bearer token — no URL param needed.
+router.get("/get/my-companies", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization || '';
+    console.log(authHeader)
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    if (!token) {
+      return res.status(401).json({ error: 'Authorization token missing' });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, APP_SECRET);
+    } catch {
+      return res.status(401).json({ error: 'Invalid or expired token' });
+    }
+
+    const { zodu_id } = decoded;
+    if (!zodu_id) {
+      return res.status(400).json({ error: 'Token missing zodu_id' });
+    }
+
+    // Fetch company details
+    const companyResult = await conn.query(
+      `SELECT *
+         FROM tbl_company_registration
+        WHERE zodu_id = $1`,
+      [zodu_id]
+    );
+
+    if (companyResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Company not found' });
+    }
+
+    const company = companyResult.rows[0];
+
+    // Fetch branches for this company
+    const branchResult = await conn.query(
+      `SELECT *
+         FROM tbl_resturant_branch
+        WHERE zodu_id = $1
+        ORDER BY branch_id ASC`,
+      [zodu_id]
+    );
+
+    return res.status(200).json({
+      data: [
+        {
+          zodu_id:         company.zodu_id,
+          restaurant_name: company.restaurant_name,
+          gst_no:          company.gst_no || null,
+          branches:        branchResult.rows.map((branch) => ({
+            ...branch,
+            city: branch.city ?? branch.branch_city ?? null,
+            district: branch.district ?? branch.branch_district ?? null,
+            state: branch.state ?? branch.branch_state ?? null,
+            area_street_name: branch.area_street_name ?? branch.branch_area_street_name ?? null,
+          })),
+        },
+      ],
+    });
+  } catch (error) {
+    console.error('[GET /get/my-companies]', error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.get("/get/branches/:zodu_id", async (req, res) => {
+  try {
+    const { zodu_id } = req.params;
+    const result = await branchService.getBranches(zodu_id);
+
+    if (!result.success) {
+      return res.status(400).json({ message: result.message });
+    }
+
+    return res.status(200).json({
+      message: "Branches fetched successfully",
+      data: result.data,
+    });
+  } catch (error) {
+    console.error("[GET /get/branches/:zodu_id]", error);
     return res.status(500).json({ error: error.message });
   }
 });
