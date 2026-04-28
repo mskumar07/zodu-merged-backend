@@ -9,7 +9,7 @@ const router = express.Router();
 
 async function handleCreateCompany(req, res) {
   try {
-    const { errors, input } = await RequestValidator(schema.add_company, req.body);
+    const { errors, input } = await RequestValidator(schema.add_business, req.body);
     console.log(errors)
     if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
 
@@ -25,7 +25,7 @@ async function handleCreateCompany(req, res) {
 async function handleAddBranch(req, res) {
   try {
     const { errors, input } = await RequestValidator(schema.add_branch, req.body);
-    console.log(errors)
+    console.log("new",errors)
     if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
 
     const data = await authService.AddBranch(input, req.user.user_id);
@@ -39,7 +39,8 @@ async function handleAddBranch(req, res) {
 
 async function handleEditCompany(req, res) {
   try {
-    const { errors, input } = await RequestValidator(schema.edit_company, {
+    console.log(req.body)
+    const { errors, input } = await RequestValidator(schema.edit_business, {
       ...req.body,
       zodu_id: req.params.zodu_id,
     });
@@ -48,6 +49,7 @@ async function handleEditCompany(req, res) {
     if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
 
     const data = await authService.EditCompany(input, req.user.user_id);
+    console.log(data)
     if (data.error) return res.status(400).json(data);
     return res.status(200).json(data);
   } catch (error) {
@@ -63,6 +65,7 @@ async function handleEditBranch(req, res) {
       zodu_id: req.params.zodu_id,
       branch_id: req.params.branch_id,
     });
+    console.log(errors)
     if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
 
     const data = await authService.EditBranch(input, req.user.user_id);

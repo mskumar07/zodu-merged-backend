@@ -49,6 +49,25 @@ const normalizeBranchIds = (branchIds) => {
 async function createCompanyService(companyData) {
   try {
     const company = await repository.createCompany(companyData);
+
+    if (companyData.can_use_for_branch) {
+      const branchRepo = require('../repository/branch-repo');
+
+      const branch_id = 'B1';
+      const createQr = await repository.createQRCode(branch_id);
+
+      await branchRepo.createBranch({
+        branch_id,
+        zodu_id:          company.zodu_id,
+        branch_name:      companyData.city || companyData.restaurant_name,
+        branch_mobile_no: companyData.mobile_no   || null,
+        branch_mail_id:   companyData.mail_id      || null,
+        address_id:       company.address_id       || null,
+        bank_details_id:  company.bank_details_id  || null,
+        qr_code_id:       createQr.id,
+      });
+    }
+
     return { success: true, message: 'Company created successfully', data: company };
   } catch (err) {
     console.error('Error inserting company:', err);
@@ -396,10 +415,10 @@ async function updateMenustaus(menu_id, active) {
 async function getData(zudo_id) {
   try {
     // Fetch company details
-    const SingleCompanyData = await repository.FindExistingData("tbl_company_registration", 'zodu_id', zudo_id);
+    const companyRow = await repository.getCompanyByZoduId(zudo_id);
     return {
       success: true,
-      data: SingleCompanyData.rows,
+      data: companyRow ? [companyRow] : [],
     };
   } catch (error) {
     console.error("Company Data Getting Error", error);
@@ -1262,10 +1281,7 @@ async function update_Final_payment(data) {
 
 async function createBranch(branchData) {
   try {
-    // Allow owners to reuse the same mobile number and email
-    // across multiple companies and branches.
-    // If duplicates found → return error
-    // Generate new zodu_id if not provided
+    // Generate branch_id if not provided
     let BranchId = await repository.findMaxBranchID(branchData.zodu_id);
     console.log("BranchId", BranchId.rows);
     if (BranchId.rows[0].max === null || BranchId.rows[0].max === undefined) {
@@ -1284,12 +1300,18 @@ async function createBranch(branchData) {
     const createQr = await repository.createQRCode(branchData.branch_id);
     branchData.qr_code_id = createQr.id;
 
-    const branch = await repository.createBranch(branchData);
+    // Use branch service which handles smart address/bank reuse
+    const branchService = require('./branch-service');
+    const result = await branchService.createBranch(branchData);
+
+    if (!result.success) {
+      throw new Error(result.message);
+    }
 
     return {
       success: true,
       message: "Branch created successfully",
-      data: branch,
+      data: result.data,
     };
   } catch (err) {
     console.error("Error inserting branch:", err);

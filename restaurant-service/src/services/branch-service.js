@@ -17,6 +17,23 @@ async function getBranches(zodu_id, branch_id) {
   }
 }
 
+async function createBranch(branchData) {
+  try {
+    const branch = await repository.createBranch(branchData);
+    return {
+      success: true,
+      message: "Branch created successfully",
+      data: branch
+    };
+  } catch (error) {
+    console.error("Create Branch Error:", error);
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+}
+
 async function updateBranch(zodu_id, branch_id, updateData) {
   try {
     console.log("repo",updateData)
@@ -45,5 +62,6 @@ async function updateBranch(zodu_id, branch_id, updateData) {
 
 module.exports = {
   getBranches,
+  createBranch,
   updateBranch
 };

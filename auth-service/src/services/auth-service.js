@@ -61,7 +61,7 @@ async function CreateAccount(userInputs) {
   let createdData;
   try {
     createdData = await repository.AccountCreationQuery({
-      zodu_id, restaurant_name, phone_number, email, password_hash,
+      zodu_id, phone_number, email, password_hash,
     });
   } catch (err) {
     if (err.code === '23505') {
@@ -97,7 +97,7 @@ console.log(same_for_branch)
     }
   }
 
-  return FormateData({ insertData: createdData.account });
+  return FormateData({ insertData: { user_id: createdData.user_id } });
 }
 
 // ── AccountLogin ──────────────────────────────────────────────────────────────
@@ -139,7 +139,7 @@ async function AccountLogin(userInputs, meta = {}) {
     zodu_id:   user.zodu_id,
     user_type: user.user_type,
     email:     user.email,
-    phone_number: user.phone_number,
+    phone:     user.phone,
   });
 
   // 3. Issue refresh token + persist session to tbl_user_sessions
@@ -179,11 +179,13 @@ async function AccountLogin(userInputs, meta = {}) {
       return {
         zodu_id:           uc.zodu_id,
         is_primary:        uc.is_primary,
-        restaurant_name:   companyInfo?.restaurant_name   ?? null,
+        store_name:        companyInfo?.store_name        ?? null,
         owner_admin_name:  companyInfo?.owner_admin_name  ?? null,
         gst_no:            companyInfo?.gst_no            ?? null,
-        building_no:       companyInfo?.building_no       ?? null,
-        area_street_name:  companyInfo?.area_street_name  ?? null,
+        address_line_1:    companyInfo?.address_line_1    ?? companyInfo?.building_no ?? null,
+        address_line_2:    companyInfo?.address_line_2    ?? companyInfo?.area_street_name ?? null,
+        building_no:       companyInfo?.building_no       ?? companyInfo?.address_line_1 ?? null,
+        area_street_name:  companyInfo?.area_street_name  ?? companyInfo?.address_line_2 ?? null,
         city:              companyInfo?.city               ?? null,
         district:          companyInfo?.district           ?? null,
         state:             companyInfo?.state              ?? null,
@@ -201,12 +203,11 @@ async function AccountLogin(userInputs, meta = {}) {
     access_token:  accessToken,
     refresh_token: refreshToken,
     user: {
-      user_id:         user.user_id,
-      zodu_id:         user.zodu_id,
-      restaurant_name: user.restaurant_name,
-      email:           user.email,
-      phone_number:    user.phone_number,
-      user_type:       user.user_type,
+      user_id:   user.user_id,
+      zodu_id:   user.zodu_id,
+      email:     user.email,
+      phone:     user.phone,
+      user_type: user.user_type,
     },
     companies,
   });
@@ -298,11 +299,16 @@ async function AddCompany(userInputs, user_id) {
     city,
     district,
     state,
+    address_line_1,
+    address_line_2,
     building_no,
     area_street_name,
     account_number,
     account_type,
     ifsc_code,
+    holder_name,
+    bank_name,
+    bank_branch,
     same_for_branch = true,
   } = userInputs;
 
@@ -320,11 +326,15 @@ async function AddCompany(userInputs, user_id) {
       city,
       district,
       state,
-      building_no,
-      area_street_name,
+      address_line_1: address_line_1 ?? building_no,
+      address_line_2: address_line_2,
       account_number,
       account_type,
       ifsc_code,
+      holder_name,
+      bank_name,
+      bank_branch,
+      can_use_for_branch: same_for_branch,
     });
   } catch (err) {
     console.error('createcompany failed:', err.message);
@@ -332,6 +342,14 @@ async function AddCompany(userInputs, user_id) {
   }
 
   await repository.addUserCompany({ user_id, zodu_id, is_primary: false });
+
+  // Create default role for the company if user is super_admin
+  try {
+    await repository.createDefaultRoleForCompany({ user_id, zodu_id });
+  } catch (err) {
+    console.error('Default role creation failed (non-fatal):', err.message);
+    // Non-fatal error - company was created successfully, role creation failure shouldn't block
+  }
 
   if (same_for_branch === true) {
     try {
@@ -400,6 +418,7 @@ async function EditCompany(userInputs, user_id) {
       company: response.data?.data ?? response.data,
     });
   } catch (err) {
+    console.log(err)
     console.error('edit company failed:', err.message);
     return FormateData({
       error: err.response?.data?.message || err.response?.data?.error || 'Failed to update company. Please try again.',

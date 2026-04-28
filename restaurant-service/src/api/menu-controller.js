@@ -32,7 +32,6 @@ router.post("/add/menu_item", async (req, res) => {
       data:    result.data,
     });
   } catch (error) {
-    console.log(err)
     console.error("[menu] create error:", error);
     return res.status(500).json({ success: false, error: error.message });
   }
@@ -103,6 +102,7 @@ router.get("/menu_items", async (req, res) => {
  
     const parsedPage  = Math.max(1, parseInt(page,  10) || 1);
     const parsedLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+    console.log(zodu_id,branch_id,page,limit)
  
     const result = await service.getMenuItems({
       zodu_id,
@@ -119,6 +119,7 @@ router.get("/menu_items", async (req, res) => {
       return res.status(400).json({ success: false, message: result.message });
     }
  
+    console.log("result",result)
     return res.status(200).json({
       success:     true,
       total:       result.total,
@@ -147,11 +148,11 @@ router.put("/status/:item_uuid", async (req, res) => {
       return res.status(400).json({ success: false, error: "Invalid item_uuid format" });
     }
  
-    const result = await service.deleteMenuItem(item_uuid,status);
- 
+    const result = await service.deleteMenuItem(item_uuid, status);
+
     if (!result.success) {
-      const status = result.message === "Menu item not found" ? 404 : 400;
-      return res.status(status).json({ success: false, message: result.message });
+      const httpStatus = result.message === "Menu item not found" ? 404 : 400;
+      return res.status(httpStatus).json({ success: false, message: result.message });
     }
  
     return res.status(200).json({

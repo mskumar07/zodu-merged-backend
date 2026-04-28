@@ -71,8 +71,9 @@ router.put("/:zodu_id/:branch_id", async (req, res) => {
   try {
     const { zodu_id, branch_id } = req.params;
     const { errors, input } = await RequestValidator(schema.update_branch, req.body);
-
+console.log("edit",errors)
     if (errors) {
+
       return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
     }
 

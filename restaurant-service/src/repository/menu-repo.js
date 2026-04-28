@@ -211,6 +211,8 @@ exports.getMenuItems = async (client, { zodu_id, branch_id, search, category_id,
     `SELECT COUNT(*) FROM tbl_menu_items m ${where}`,
     values
   );
+
+  
   const total = parseInt(countResult.rows[0].count, 10);
  
   // Paginated rows with joined lookup data
@@ -221,6 +223,8 @@ exports.getMenuItems = async (client, { zodu_id, branch_id, search, category_id,
      LIMIT $${idx} OFFSET $${idx + 1}`,
     [...values, limit, offset]
   );
+
+  console.log("test",rows)
  
   return { rows, total };
 };

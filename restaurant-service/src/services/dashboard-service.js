@@ -36,10 +36,16 @@ function parseLimit(raw) {
 async function getStats(zodu_id, branch_id) {
   const raw = await repo.getStats(zodu_id, branch_id);
   return {
-    total_sales:     parseFloat(raw.total_sales),
-    total_invoices:  parseInt(raw.total_invoices),
-    todays_revenue:  parseFloat(raw.todays_revenue),
-    low_stock_items: parseInt(raw.low_stock_items),
+    total_sales:        parseFloat(raw.total_sales),
+    total_invoices:     parseInt(raw.total_invoices),
+    todays_revenue:     parseFloat(raw.todays_revenue),
+    total_due:          parseFloat(raw.total_due),
+    total_reminders:    parseInt(raw.total_reminders),
+    top_item_name:      raw.top_item_name || null,
+    top_item_sold:      raw.top_item_sold ? parseInt(raw.top_item_sold) : 0,
+    total_sold:         parseInt(raw.total_sold),
+    out_of_stock_count: parseInt(raw.out_of_stock_count),
+    total_alerts:       parseInt(raw.total_alerts),
   };
 }
 

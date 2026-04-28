@@ -12,11 +12,15 @@ const company_create = Joi.object({
   city: Joi.string().max(50).allow(null, ''),
   district: Joi.string().max(50).allow(null, ''),
   state: Joi.string().max(50).allow(null, ''),
-  building_no: Joi.string().max(100).allow(null, ''),
-  area_street_name: Joi.string().max(100).allow(null, ''),
+  address_line_1: Joi.string().max(100).allow(null, ''),
+  address_line_2: Joi.string().max(100).allow(null, ''),
+  bank_name: Joi.string().max(100).allow(null, ''),
+  bank_branch: Joi.string().max(100).allow(null, ''),
+  holder_name: Joi.string().max(100).allow(null, ''),
   account_number: Joi.string().max(30).allow(null, ''),
   account_type: Joi.string().allow(null, ''),
   ifsc_code: Joi.string().max(20).allow(null, ''),
+  can_use_for_branch: Joi.boolean().default(true),
 });
 
 const update_company = Joi.object({
@@ -29,39 +33,63 @@ const update_company = Joi.object({
   city: Joi.string().max(50).allow(null, ''),
   district: Joi.string().max(50).allow(null, ''),
   state: Joi.string().max(50).allow(null, ''),
-  building_no: Joi.string().max(100).allow(null, ''),
-  area_street_name: Joi.string().max(100).allow(null, ''),
-  account_number: Joi.string().pattern(/^[0-9]{6,30}$/).allow(null, ''),
+  address_line_1: Joi.string().max(100).allow(null, ''),
+  address_line_2: Joi.string().max(100).allow(null, ''),
+  bank_name: Joi.string().max(100).allow(null, ''),
+  bank_branch: Joi.string().max(100).allow(null, ''),
+  holder_name: Joi.string().max(100).allow(null, ''),
+  account_number: Joi.string().max(30).allow(null, ''),
   account_type: Joi.string().allow(null, ''),
-  ifsc_code: Joi.string().pattern(/^[A-Z]{4,5}0[A-Z0-9]{6}$/).allow(null, ''),
+  ifsc_code: Joi.string().max(20).allow(null, ''),
+  can_use_for_branch: Joi.boolean(),
 }).min(1);
 
 const branch_create = Joi.object({
   zodu_id: Joi.required(),
   branch_name: Joi.string().max(100).required(),
-  // qr_code_id: Joi.string().max(100),
-  branch_manager_or_admin: Joi.string().max(100),
+  branch_manager_or_admin: Joi.string().max(100).allow(null, ''),
   branch_mobile_no: Joi.string().pattern(/^[0-9]{10,15}$/).required(),
   branch_mail_id: Joi.string().email().max(100).required(),
   branch_city: Joi.string().max(50).required(),
   branch_pincode: Joi.string().pattern(/^[0-9]{5,10}$/).required(),
   branch_district: Joi.string().max(50).required(),
   branch_state: Joi.string().max(50).required(),
-  branch_image: Joi.string().uri().allow(null, ''), // Optional image URL
-  fssai: Joi.string().max(50),
+  branch_image: Joi.string().uri().allow(null, ''),
   opening_hours: Joi.array().items(
     Joi.object({
       day: Joi.string().required(),
       open: Joi.string().required(),
       close: Joi.string().required(),
     })
-  ).allow(null), // JSONB array
-  branch_floor_building_no: Joi.string().max(100).required(),
-  branch_area_street_name: Joi.string().max(100).required(),
-  branch_account_no: Joi.string().max(30).required(),
-  branch_ifsc: Joi.string().max(20).required(),
-  branch_account_type: Joi.string().max(20).required()
-});
+  ).allow(null),
+  // Option 1: Reuse company address/bank via IDs
+  address_id: Joi.string(),
+  bank_details_id: Joi.string(),
+  // Option 2: New address for branch
+  address_line_1: Joi.string().max(100),
+  address_line_2: Joi.string().max(100).allow(null, ''),
+  // Option 3: New bank details for branch
+  bank_name: Joi.string().max(100).allow(null, ''),
+  bank_branch: Joi.string().max(100).allow(null, ''),
+  holder_name: Joi.string().max(100).allow(null, ''),
+  account_number: Joi.string().max(30),
+  account_type: Joi.string().max(20),
+  ifsc_code: Joi.string().max(20),
+})
+  .custom((value, helpers) => {
+    if (!value.address_id && !value.address_line_1) {
+      return helpers.error('any.required');
+    }
+    return value;
+  }, 'Address validation: Either address_id OR address_line_1 required')
+  .custom((value, helpers) => {
+    const hasBankId = value.bank_details_id;
+    const hasBankFields = value.account_number && value.account_type && value.ifsc_code;
+    if (!hasBankId && !hasBankFields) {
+      return helpers.error('any.required');
+    }
+    return value;
+  }, 'Bank validation: Either bank_details_id OR (account_number + account_type + ifsc_code) required');
 
 const update_branch = Joi.object({
   branch_name: Joi.string().max(100),
@@ -73,7 +101,6 @@ const update_branch = Joi.object({
   branch_district: Joi.string().max(50),
   branch_state: Joi.string().max(50),
   branch_image: Joi.string().uri().allow(null, ''),
-  fssai: Joi.string().max(50).allow(null, ''),
   opening_hours: Joi.array().items(
     Joi.object({
       day: Joi.string().required(),
@@ -81,11 +108,21 @@ const update_branch = Joi.object({
       close: Joi.string().required(),
     })
   ).allow(null),
-  branch_floor_building_no: Joi.string().max(100),
-  branch_area_street_name: Joi.string().max(100),
-  branch_account_no: Joi.string().max(30),
-  branch_ifsc: Joi.string().max(20),
-  branch_account_type: Joi.string().max(20),
+  // Option 1: Switch to company address/bank via IDs
+  address_id: Joi.string(),
+  bank_details_id: Joi.string(),
+  // Option 2: Update branch address
+  address_line_1: Joi.string().max(100),
+  address_line_2: Joi.string().max(100).allow(null, ''),
+  // Option 3: Update branch bank details
+  bank_name: Joi.string().max(100).allow(null, ''),
+  bank_branch: Joi.string().max(100).allow(null, ''),
+  holder_name: Joi.string().max(100).allow(null, ''),
+  account_number: Joi.string().max(30),
+  account_type: Joi.string().max(20),
+  ifsc_code: Joi.string().max(20),
+  use_same_address_as_company: Joi.boolean(),
+  use_same_bank_as_company: Joi.boolean(),
 }).min(1);
 
 const product_create = Joi.object({

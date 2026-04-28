@@ -7,10 +7,61 @@ async function getStats(zodu_id, branch_id) {
       COUNT(*)                                                                    AS total_invoices,
       COALESCE(SUM(CASE WHEN sale_date = CURRENT_DATE THEN total_amount END), 0) AS todays_revenue,
       (
+        SELECT COALESCE(SUM(balance_amount), 0)
+        FROM tbl_sales
+        WHERE zodu_id = $1 AND branch_id = $2
+          AND payment_status IN ('unpaid', 'partially_paid')
+      ) + (
+        SELECT COALESCE(SUM(balance_amount), 0)
+        FROM tbl_purchase
+        WHERE zodu_id = $1 AND branch_id = $2
+          AND payment_status IN ('pending', 'partial')
+      )                                                                           AS total_due,
+      (
+        SELECT COUNT(*)
+        FROM tbl_sales
+        WHERE zodu_id = $1 AND branch_id = $2
+          AND payment_status IN ('unpaid', 'partially_paid')
+      ) + (
+        SELECT COUNT(*)
+        FROM tbl_purchase
+        WHERE zodu_id = $1 AND branch_id = $2
+          AND payment_status IN ('pending', 'partial')
+      )                                                                           AS total_reminders,
+      (
+        SELECT si.item_name
+        FROM tbl_sale_items si
+        JOIN tbl_sales s ON s.sale_uuid = si.sale_uuid
+        WHERE s.zodu_id = $1 AND s.branch_id = $2
+        GROUP BY si.item_name
+        ORDER BY SUM(si.quantity) DESC
+        LIMIT 1
+      )                                                                           AS top_item_name,
+      (
+        SELECT SUM(si.quantity)
+        FROM tbl_sale_items si
+        JOIN tbl_sales s ON s.sale_uuid = si.sale_uuid
+        WHERE s.zodu_id = $1 AND s.branch_id = $2
+        GROUP BY si.item_name
+        ORDER BY SUM(si.quantity) DESC
+        LIMIT 1
+      )                                                                           AS top_item_sold,
+      (
+        SELECT COALESCE(SUM(si.quantity), 0)
+        FROM tbl_sale_items si
+        JOIN tbl_sales s ON s.sale_uuid = si.sale_uuid
+        WHERE s.zodu_id = $1 AND s.branch_id = $2
+      )                                                                           AS total_sold,
+      (
+        SELECT COUNT(*) FROM tbl_inventory
+        WHERE zodu_id = $1 AND branch_id = $2
+          AND available_qty = 0
+      )                                                                           AS out_of_stock_count,
+      (
         SELECT COUNT(*) FROM tbl_inventory
         WHERE zodu_id = $1 AND branch_id = $2
           AND available_qty <= reorder_level
-      ) AS low_stock_items
+      )                                                                           AS total_alerts
     FROM tbl_sales
     WHERE zodu_id = $1 AND branch_id = $2`,
     [zodu_id, branch_id]
@@ -187,6 +238,7 @@ async function getInventoryAlerts(zodu_id, branch_id, limit, cursor) {
       i.item_uuid,
       i.item_id,
       i.item_name,
+      c.name AS category_name,
       i.available_qty,
       i.reorder_level,
       i.last_stock_update,
@@ -196,6 +248,10 @@ async function getInventoryAlerts(zodu_id, branch_id, limit, cursor) {
         ELSE                                               'low'
       END AS stock_status
     FROM tbl_inventory i
+    LEFT JOIN tbl_menu_items m
+      ON m.item_uuid = i.item_uuid AND m.zodu_id = $1 AND m.branch_id = $2
+    LEFT JOIN tbl_category c
+      ON c.id = m.category_id AND c.zodu_id = $1 AND c.branch_id = $2
     WHERE ${where}
     ORDER BY i.available_qty ASC, i.item_uuid ASC
     LIMIT $3`,

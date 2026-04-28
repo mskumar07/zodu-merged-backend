@@ -48,6 +48,17 @@ const adjustStockWithLedger = async (client, payload) => {
 
   const operator = payload.adjustment_type === "subtract" ? "-" : "+";
 
+  // Validate that subtract operation won't result in negative stock
+  if (payload.adjustment_type === "subtract") {
+    const newQty = current.available_qty - payload.adjustment_qty;
+    if (newQty < 0) {
+      throw new Error(
+        `Insufficient stock for item ${payload.item_name}. ` +
+        `Current: ${current.available_qty}, Attempting to subtract: ${payload.adjustment_qty}`
+      );
+    }
+  }
+
   const updated = await client.query(
     `UPDATE tbl_inventory
      SET available_qty = available_qty ${operator} $1,

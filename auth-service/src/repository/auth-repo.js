@@ -9,48 +9,33 @@ async function getNextZoduId() {
 
 async function findEmailExist({ email }) {
   return conn.query(
-    `SELECT
-       ac.id, ac.zodu_id, ac.restaurant_name,
-       ac.email, ac.phone_number, ac.password_hash,
-       u.user_id, u.user_type, u.is_active, u.is_deleted
-     FROM tbl_account_creation ac
-     JOIN tbl_user_companies uc ON uc.zodu_id = ac.zodu_id AND uc.is_primary = true
-     JOIN tbl_users u ON u.user_id = uc.user_id
-     WHERE ac.email = $1`,
+    `SELECT u.user_id, u.email, u.phone, u.password_hash, u.user_type, u.is_active, u.is_deleted,
+            uc.zodu_id, uc.is_primary
+     FROM tbl_users u
+     JOIN tbl_user_companies uc ON uc.user_id = u.user_id AND uc.is_primary = true
+     WHERE u.email = $1`,
     [email]
   );
 }
 
 async function findPhnExist({ phone_number }) {
   return conn.query(
-    `SELECT
-       ac.id, ac.zodu_id, ac.restaurant_name,
-       ac.email, ac.phone_number, ac.password_hash,
-       u.user_id, u.user_type, u.is_active, u.is_deleted
-     FROM tbl_account_creation ac
-     JOIN tbl_user_companies uc ON uc.zodu_id = ac.zodu_id AND uc.is_primary = true
-     JOIN tbl_users u ON u.user_id = uc.user_id
-     WHERE ac.phone_number = $1`,
+    `SELECT u.user_id, u.email, u.phone, u.password_hash, u.user_type, u.is_active, u.is_deleted,
+            uc.zodu_id, uc.is_primary
+     FROM tbl_users u
+     JOIN tbl_user_companies uc ON uc.user_id = u.user_id AND uc.is_primary = true
+     WHERE u.phone = $1`,
     [phone_number]
   );
 }
 
-async function AccountCreationQuery({ zodu_id, restaurant_name, phone_number, email, password_hash }) {
+async function AccountCreationQuery({ zodu_id, phone_number, email, password_hash }) {
   const client = await conn.connect();
   try {
     await client.query('BEGIN');
     const user_id = uuidv4();
 
-    // 1. tbl_account_creation
-    const accountResult = await client.query(
-      `INSERT INTO tbl_account_creation
-         (zodu_id, restaurant_name, email, phone_number, password_hash)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING *`,
-      [zodu_id, restaurant_name, email || null, phone_number || null, password_hash]
-    );
-
-    // 2. tbl_users — assign default branch B1 on signup
+    // 1. tbl_users
     await client.query(
       `INSERT INTO tbl_users
          (user_id, email, phone, password_hash, user_type, is_active)
@@ -102,7 +87,7 @@ async function AccountCreationQuery({ zodu_id, restaurant_name, phone_number, em
     );
 
     await client.query('COMMIT');
-    return { account: accountResult.rows[0], user_id, role_id };
+    return { user_id, role_id };
 
   } catch (err) {
     await client.query('ROLLBACK');
@@ -161,12 +146,17 @@ async function deleteAccountByZoduId(zodu_id) {
   const client = await conn.connect();
   try {
     await client.query('BEGIN');
-    await client.query('DELETE FROM tbl_user_companies   WHERE zodu_id = $1', [zodu_id]);
-    await client.query('DELETE FROM tbl_user_roles       WHERE zodu_id = $1', [zodu_id]);
-    await client.query('DELETE FROM tbl_access_control   WHERE zodu_id = $1', [zodu_id]);
-    await client.query('DELETE FROM tbl_roles            WHERE zodu_id = $1', [zodu_id]);
-    await client.query('DELETE FROM tbl_users WHERE user_id IN (SELECT user_id FROM tbl_user_companies WHERE zodu_id = $1)', [zodu_id]);
-    await client.query('DELETE FROM tbl_account_creation WHERE zodu_id = $1', [zodu_id]);
+    await client.query('DELETE FROM tbl_user_companies WHERE zodu_id = $1', [zodu_id]);
+    await client.query('DELETE FROM tbl_user_roles      WHERE zodu_id = $1', [zodu_id]);
+    await client.query('DELETE FROM tbl_access_control  WHERE zodu_id = $1', [zodu_id]);
+    await client.query('DELETE FROM tbl_roles           WHERE zodu_id = $1', [zodu_id]);
+    await client.query(
+      `DELETE FROM tbl_users
+       WHERE user_id IN (
+         SELECT user_id FROM tbl_user_companies WHERE zodu_id = $1
+       )`,
+      [zodu_id]
+    );
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK');
@@ -196,6 +186,57 @@ async function getUserCompanies({ user_id }) {
   return result.rows;
 }
 
+async function createDefaultRoleForCompany({ user_id, zodu_id }) {
+  const client = await conn.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Create a default "Admin" role for the new company
+    const roleResult = await client.query(
+      `INSERT INTO tbl_roles (zodu_id, role_name, description)
+       VALUES ($1, 'Admin', 'Full access — auto-created for new company')
+       RETURNING role_id`,
+      [zodu_id]
+    );
+    const role_id = roleResult.rows[0].role_id;
+
+    // Grant all modules to Admin role
+    const { rows: modules } = await client.query(
+      'SELECT module_id FROM tbl_modules'
+    );
+
+    if (modules.length > 0) {
+      const placeholders = modules.map((_, i) =>
+        `(NULL, $${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3}, true, true, true, true)`
+      ).join(', ');
+      const params = modules.flatMap(m => [role_id, zodu_id, m.module_id]);
+
+      await client.query(
+        `INSERT INTO tbl_access_control
+           (user_id, role_id, zodu_id, module_id,
+            can_read, can_create, can_edit, can_delete)
+         VALUES ${placeholders}`,
+        params
+      );
+    }
+
+    // Bind user to the Admin role for this company
+    await client.query(
+      `INSERT INTO tbl_user_roles (user_id, role_id, zodu_id)
+       VALUES ($1, $2, $3)`,
+      [user_id, role_id, zodu_id]
+    );
+
+    await client.query('COMMIT');
+    return role_id;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   AccountCreationQuery,
   findEmailExist,
@@ -208,4 +249,5 @@ module.exports = {
   updateLastLogin,
   addUserCompany,
   getUserCompanies,
+  createDefaultRoleForCompany,
 };

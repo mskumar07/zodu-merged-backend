@@ -69,8 +69,8 @@ const consumeEvents = async () => {
             city: payload.city,
             district: payload.district,
             state: payload.state,
-            building_no: payload.building_no,
-            area_street_name: payload.area_street_name,
+            address_line_1: payload.address_line_1 ?? payload.building_no,
+            address_line_2: payload.address_line_2 ?? payload.area_street_name,
             account_number: payload.account_number,
             account_type: payload.account_type,
             ifsc_code: payload.ifsc_code

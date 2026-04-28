@@ -14,6 +14,11 @@ const orderSortFields = ["order_date", "order_id", "total_amt", "no_of_items"];
 
 const round = (n) => Math.round(n * 100) / 100;
 
+const getAddressLine1 = (data) => data.address_line_1 ?? data.building_no ?? null;
+const getAddressLine2 = (data) => data.address_line_2 ?? null;
+const getBranchAddressLine1 = (data) => data.branch_address_line_1 ?? null;
+const getBranchAddressLine2 = (data) => data.branch_address_line_2 ?? null;
+
 function toBoolean(value) {
   if (typeof value === "string") {
     return value.toLowerCase() === "true";
@@ -36,90 +41,204 @@ function generateTransactionId() {
 
 
 
-// repository — FIXED: ON CONFLICT DO NOTHING returns no row, handle it explicitly
+// repository — normalised: tbl_business + tbl_address + tbl_bank_details
 exports.createCompany = async (companyData) => {
-  console.log(companyData)
-  const query = `
-    INSERT INTO tbl_company_registration
-      (
-        zodu_id, restaurant_name, owner_admin_name, mobile_no, mail_id,
-        gst_no, pincode, city, district, state, building_no,
-        area_street_name, account_number, account_type, ifsc_code
-      )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-    ON CONFLICT (zodu_id) DO UPDATE           -- FIXED: DO UPDATE so it always returns a row
-      SET restaurant_name = EXCLUDED.restaurant_name,
-          owner_admin_name = EXCLUDED.owner_admin_name,
-          mobile_no       = EXCLUDED.mobile_no,
-          mail_id         = EXCLUDED.mail_id,
-          gst_no          = EXCLUDED.gst_no,
-          pincode         = EXCLUDED.pincode,
-          city            = EXCLUDED.city,
-          district        = EXCLUDED.district,
-          state           = EXCLUDED.state,
-          building_no     = EXCLUDED.building_no,
-          area_street_name = EXCLUDED.area_street_name,
-          account_number  = EXCLUDED.account_number,
-          account_type    = EXCLUDED.account_type,
-          ifsc_code       = EXCLUDED.ifsc_code,
-          updated_at      = now()
-    RETURNING *
-  `;
+  console.log(companyData);
+  const client = await conn.connect();
+  try {
+    await client.query('BEGIN');
 
-  const values = [
-    companyData.zodu_id,
-    companyData.restaurant_name,
-    companyData.owner_admin_name || null,
-    companyData.mobile_no,
-    companyData.mail_id,
-    companyData.gst_no || null,
-    companyData.pincode || null,
-    companyData.city || null,
-    companyData.district || null,
-    companyData.state || null,
-    companyData.building_no || null,
-    companyData.area_street_name || null,
-    companyData.account_number || null,
-    companyData.account_type || null,
-    companyData.ifsc_code || null,
-  ];
+    // 1. Insert address
+    let address_id = null;
+    const addressLine1 = getAddressLine1(companyData);
+    const addressLine2 = getAddressLine2(companyData);
+    if (addressLine1 || addressLine2 || companyData.city ||
+        companyData.district || companyData.state || companyData.pincode) {
+      const addrRes = await client.query(
+        `INSERT INTO tbl_address (zodu_id, address_line_1, address_line_2, city, district, state, pincode)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id`,
+        [companyData.zodu_id, addressLine1, addressLine2,
+         companyData.city || null, companyData.district || null, companyData.state || null,
+         companyData.pincode || null]
+      );
+      address_id = addrRes.rows[0].id;
+    }
 
-  const { rows } = await conn.query(query, values);
+    // 2. Insert bank_details
+    let bank_details_id = null;
+    if (companyData.account_number) {
+      const bankRes = await client.query(
+        `INSERT INTO tbl_bank_details (zodu_id, bank_name, bank_branch, holder_name, account_number, account_type, ifsc_code)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id`,
+        [companyData.zodu_id, companyData.bank_name || null, companyData.bank_branch || null,
+         companyData.holder_name || null, companyData.account_number,
+         companyData.account_type || null, companyData.ifsc_code || null]
+      );
+      bank_details_id = bankRes.rows[0].id;
+    }
 
-  if (!rows[0]) {
-    throw new Error('Company insert returned no row');
+    // 3. Insert business
+    const companyRes = await client.query(
+      `INSERT INTO tbl_business
+         (zodu_id, business_name, owner_admin_name, mobile_no, mail_id, gst_no, address_id, bank_details_id, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
+       ON CONFLICT (zodu_id) DO UPDATE
+         SET business_name    = EXCLUDED.business_name,
+             owner_admin_name = EXCLUDED.owner_admin_name,
+             mobile_no        = EXCLUDED.mobile_no,
+             mail_id          = EXCLUDED.mail_id,
+             gst_no           = EXCLUDED.gst_no,
+             address_id       = COALESCE(EXCLUDED.address_id, tbl_business.address_id),
+             bank_details_id  = COALESCE(EXCLUDED.bank_details_id, tbl_business.bank_details_id),
+             updated_at       = now()
+       RETURNING *`,
+      [companyData.zodu_id, companyData.restaurant_name, companyData.owner_admin_name || null,
+       companyData.mobile_no, companyData.mail_id, companyData.gst_no || null,
+       address_id, bank_details_id]
+    );
+
+    if (!companyRes.rows[0]) throw new Error('Company insert returned no row');
+
+    await client.query('COMMIT');
+    return companyRes.rows[0];
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
   }
-
-  return rows[0];
 };
 
 exports.updateCompany = async (zodu_id, fields) => {
-  const keys = Object.keys(fields);
-  if (keys.length === 0) return null;
+  if (Object.keys(fields).length === 0) return null;
 
-  const values = Object.values(fields);
-  const setQuery = [
-    ...keys.map((k, i) => `${k}=$${i + 1}`),
-    `updated_at=now()`,
-  ].join(', ');
+  const client = await conn.connect();
+  try {
+    await client.query('BEGIN');
 
-  const res = await conn.query(
-    `UPDATE tbl_company_registration
-     SET ${setQuery}
-     WHERE zodu_id=$${keys.length + 1}
-     RETURNING *`,
-    [...values, zodu_id]
-  );
-  return res.rows[0];
-}
+    // Fetch current address_id and bank_details_id
+    const compRes = await client.query(
+      `SELECT address_id, bank_details_id FROM tbl_business WHERE zodu_id = $1`,
+      [zodu_id]
+    );
+    if (!compRes.rows[0]) throw new Error('Company not found');
+    const { address_id, bank_details_id } = compRes.rows[0];
+
+    const companyFields = {};
+    const addressFields = {};
+    const bankFields    = {};
+
+    const addressCols = ['address_line_1', 'address_line_2', 'city', 'district', 'state', 'pincode'];
+    const bankCols    = ['bank_name', 'bank_branch', 'holder_name', 'account_number', 'account_type', 'ifsc_code'];
+
+    for (const [key, value] of Object.entries(fields)) {
+      if (addressCols.includes(key))    addressFields[key] = value;
+      else if (bankCols.includes(key))  bankFields[key]    = value;
+      else                              companyFields[key]  = value;
+    }
+
+    // Remap restaurant_name → business_name
+    if ('restaurant_name' in companyFields) {
+      companyFields.business_name = companyFields.restaurant_name;
+      delete companyFields.restaurant_name;
+    }
+
+    // Update or insert address
+    if (Object.keys(addressFields).length > 0) {
+      // Map building_no → floor_building_no
+      const dbAddr = {};
+      for (const [k, v] of Object.entries(addressFields)) {
+        if (k === 'building_no') dbAddr.address_line_1 = v;
+        else if (k === 'area_street_name') dbAddr.address_line_2 = v;
+        else dbAddr[k] = v;
+      }
+      if (address_id) {
+        const addrKeys = Object.keys(dbAddr);
+        const addrVals = Object.values(dbAddr);
+        const addrSet  = addrKeys.map((k, i) => `${k}=$${i + 1}`).join(', ');
+        await client.query(
+          `UPDATE tbl_address SET ${addrSet}, updated_at=now() WHERE id=$${addrKeys.length + 1}`,
+          [...addrVals, address_id]
+        );
+      } else {
+        const addrRes = await client.query(
+          `INSERT INTO tbl_address (zodu_id, address_line_1, address_line_2, city, district, state, pincode)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+          [zodu_id, addressFields.address_line_1 ?? null,
+           addressFields.address_line_2 ?? null,
+           addressFields.city || null, addressFields.district || null,
+           addressFields.state || null, addressFields.pincode || null]
+        );
+        companyFields.address_id = addrRes.rows[0].id;
+      }
+    }
+
+    // Update or insert bank_details
+    if (Object.keys(bankFields).length > 0) {
+      if (bank_details_id) {
+        const bankKeys = Object.keys(bankFields);
+        const bankVals = Object.values(bankFields);
+        const bankSet  = bankKeys.map((k, i) => `${k}=$${i + 1}`).join(', ');
+        await client.query(
+          `UPDATE tbl_bank_details SET ${bankSet}, updated_at=now() WHERE id=$${bankKeys.length + 1}`,
+          [...bankVals, bank_details_id]
+        );
+      } else {
+        const bankRes = await client.query(
+          `INSERT INTO tbl_bank_details (zodu_id, bank_name, bank_branch, holder_name, account_number, account_type, ifsc_code)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+          [zodu_id, bankFields.bank_name || null, bankFields.bank_branch || null,
+           bankFields.holder_name || null, bankFields.account_number || null,
+           bankFields.account_type || null, bankFields.ifsc_code || null]
+        );
+        companyFields.bank_details_id = bankRes.rows[0].id;
+      }
+    }
+
+    // Update tbl_business
+    let updated;
+    if (Object.keys(companyFields).length > 0) {
+      const keys   = Object.keys(companyFields);
+      const values = Object.values(companyFields);
+      const setQ   = [...keys.map((k, i) => `${k}=$${i + 1}`), `updated_at=now()`].join(', ');
+      const res = await client.query(
+        `UPDATE tbl_business SET ${setQ} WHERE zodu_id=$${keys.length + 1} RETURNING *`,
+        [...values, zodu_id]
+      );
+      updated = res.rows[0];
+    } else {
+      const res = await client.query(`SELECT * FROM tbl_business WHERE zodu_id=$1`, [zodu_id]);
+      updated = res.rows[0];
+    }
+
+    await client.query('COMMIT');
+    return updated;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+};
 
 exports.getCompanyByZoduId = async (zodu_id) => {
   const res = await conn.query(
-    `SELECT * FROM tbl_company_registration WHERE zodu_id=$1`,
+    `SELECT c.*,
+            c.business_name AS restaurant_name,
+            a.address_line_1, a.address_line_2,
+            a.city, a.district, a.state, a.pincode,
+            b.bank_name, b.bank_branch, b.holder_name,
+            b.account_number, b.account_type, b.ifsc_code
+     FROM tbl_business c
+     LEFT JOIN tbl_address     a ON a.id = c.address_id
+     LEFT JOIN tbl_bank_details b ON b.id = c.bank_details_id
+     WHERE c.zodu_id = $1`,
     [zodu_id]
   );
   return res.rows[0];
-}
+};
 
 
 exports.isEventProcessed = async (eventId) => {
@@ -138,8 +257,8 @@ exports.markEventProcessed = async ({ eventId, topic, partition, offset }) => {
 
 exports.findMaxZoduId = async () => {
   return await conn.query(
-    'SELECT max(zodu_id) FROM tbl_company_registration');
-}
+    'SELECT max(zodu_id) FROM tbl_business');
+};
 
 // exports.get_category_data() {
 //   return await conn.query(
@@ -2328,20 +2447,19 @@ exports.get_menuItem_data = async (branch_id, page, limit, search) => {
 
 exports.findMaxBranchID = async (zodu_id) => {
   return await conn.query(
-    'SELECT max(branch_id) FROM tbl_resturant_branch where zodu_id = $1', [zodu_id]);
-}
+    'SELECT max(branch_id) FROM tbl_branch WHERE zodu_id = $1', [zodu_id]);
+};
 
 exports.createDefaultBranch = async ({ branch_id, zodu_id, qr_code_id, branch_name, branch_mobile_no, branch_mail_id }) => {
-  
-  console.log(branch_id, zodu_id, qr_code_id, branch_name, branch_mobile_no, branch_mail_id )
+  console.log(branch_id, zodu_id, qr_code_id, branch_name, branch_mobile_no, branch_mail_id);
   const { rows } = await conn.query(
-    `INSERT INTO tbl_resturant_branch
+    `INSERT INTO tbl_branch
        (branch_id, zodu_id, qr_code_id, branch_name, branch_mobile_no, branch_mail_id)
      VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING *`,
     [branch_id, zodu_id, qr_code_id, branch_name, branch_mobile_no, branch_mail_id]
   );
-  console.log(rows)
+  console.log(rows);
   return rows[0] || null;
 };
 
@@ -2352,51 +2470,62 @@ exports.FindExistingData = async (tbl_name, column_name, value) => {
 }
 
 exports.createBranch = async (branchData) => {
+  const client = await conn.connect();
   try {
-    const query = `
-      INSERT INTO tbl_resturant_branch (
-        branch_id, zodu_id, qr_code_id, branch_name, branch_manager_or_admin,
-        branch_mobile_no, branch_mail_id, branch_city, branch_pincode, branch_district,
-        branch_state, branch_image, branch_floor_building_no,
-        branch_area_street_name, branch_account_no, branch_ifsc, branch_account_type
-      ) VALUES (
-        $1, $2, $3, $4, $5,
-        $6, $7, $8, $9, $10,
-        $11, $12, $13, $14, $15,
-        $16, $17
-      )
-      RETURNING *;
-    `;
+    await client.query('BEGIN');
 
-    const values = [
-      branchData.branch_id,
-      branchData.zodu_id,
-      branchData.qr_code_id,
-      branchData.branch_name,
-      branchData.branch_manager_or_admin,
-      branchData.branch_mobile_no,
-      branchData.branch_mail_id,
-      branchData.branch_city,
-      branchData.branch_pincode,
-      branchData.branch_district,
-      branchData.branch_state,
-      branchData.branch_image,
-      branchData.branch_floor_building_no,
-      branchData.branch_area_street_name,
-      branchData.branch_account_no,
-      branchData.branch_ifsc,
-      branchData.branch_account_type,
-    ];
-
-    const { rows } = await conn.query(query, values);
-    if (rows.length === 0) {
-      throw new Error('No branch created');
+    // 1. Insert address
+    let address_id = null;
+    const branchAddressLine1 = getBranchAddressLine1(branchData);
+    const branchAddressLine2 = getBranchAddressLine2(branchData);
+    if (branchAddressLine1 || branchAddressLine2 || branchData.branch_city) {
+      const addrRes = await client.query(
+        `INSERT INTO tbl_address (zodu_id, address_line_1, address_line_2, city, district, state, pincode)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+        [branchData.zodu_id, branchAddressLine1,
+         branchAddressLine2, branchData.branch_city || null,
+         branchData.branch_district || null, branchData.branch_state || null,
+         branchData.branch_pincode || null]
+      );
+      address_id = addrRes.rows[0].id;
     }
+
+    // 2. Insert bank_details
+    let bank_details_id = null;
+    if (branchData.branch_account_no) {
+      const bankRes = await client.query(
+        `INSERT INTO tbl_bank_details (zodu_id, account_number, account_type, ifsc_code)
+         VALUES ($1, $2, $3, $4) RETURNING id`,
+        [branchData.zodu_id, branchData.branch_account_no,
+         branchData.branch_account_type || null, branchData.branch_ifsc || null]
+      );
+      bank_details_id = bankRes.rows[0].id;
+    }
+
+    // 3. Insert branch (branch_manager is the new column name for branch_manager_or_admin)
+    const { rows } = await client.query(
+      `INSERT INTO tbl_branch
+         (branch_id, zodu_id, qr_code_id, branch_name, branch_manager,
+          branch_mobile_no, branch_mail_id, branch_image, address_id, bank_details_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       RETURNING *`,
+      [branchData.branch_id, branchData.zodu_id, branchData.qr_code_id, branchData.branch_name,
+       branchData.branch_manager || branchData.branch_manager_or_admin || null,
+       branchData.branch_mobile_no || null, branchData.branch_mail_id || null,
+       branchData.branch_image || null, address_id, bank_details_id]
+    );
+
+    if (rows.length === 0) throw new Error('No branch created');
+
+    await client.query('COMMIT');
     return rows[0];
   } catch (err) {
+    await client.query('ROLLBACK');
     throw new Error('Unable to create branch: ' + err.message);
+  } finally {
+    client.release();
   }
-}
+};
 
 exports.createQRCode = async (qr_code) => {
   try {

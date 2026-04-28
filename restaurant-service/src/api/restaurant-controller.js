@@ -9,6 +9,7 @@ const conn = require("../database/connection");
 const Minio = require("minio");
 const multer = require("multer")
 const repository = require('../repository/restaurant-repo.js');
+const branchRepository = require('../repository/branch-repo.js');
 const XLSX = require("xlsx");
 const upload = multer({
   limits: { fileSize: 500 * 1024 * 1024 }, // 500MB
@@ -108,7 +109,6 @@ router.get("/get/company_details/:zudo_id", async (req, res) => {
 router.get("/get/my-companies", async (req, res) => {
   try {
     const authHeader = req.headers.authorization || '';
-    console.log(authHeader)
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
     if (!token) {
       return res.status(401).json({ error: 'Authorization token missing' });
@@ -126,44 +126,28 @@ router.get("/get/my-companies", async (req, res) => {
       return res.status(400).json({ error: 'Token missing zodu_id' });
     }
 
-    // Fetch company details
-    const companyResult = await conn.query(
-      `SELECT *
-         FROM tbl_company_registration
-        WHERE zodu_id = $1`,
-      [zodu_id]
-    );
+    const [company, branches] = await Promise.all([
+      repository.getCompanyByZoduId(zodu_id),
+      branchRepository.getBranches(zodu_id),
+    ]);
 
-    if (companyResult.rows.length === 0) {
+    if (!company) {
       return res.status(404).json({ error: 'Company not found' });
     }
 
-    const company = companyResult.rows[0];
-
-    // Fetch branches for this company
-    const branchResult = await conn.query(
-      `SELECT *
-         FROM tbl_resturant_branch
-        WHERE zodu_id = $1
-        ORDER BY branch_id ASC`,
-      [zodu_id]
-    );
+    // Fall back to company address fields when branch address fields are null
+    const mergedBranches = branches.map(branch => ({
+      ...branch,
+      address_line_1:   branch.address_line_1   ?? company.address_line_1   ?? null,
+      address_line_2:   branch.address_line_2   ?? company.address_line_2   ?? null,
+      city:             branch.city             ?? company.city             ?? null,
+      district:         branch.district         ?? company.district         ?? null,
+      state:            branch.state            ?? company.state            ?? null,
+      pincode:          branch.pincode          ?? company.pincode          ?? null,
+    }));
 
     return res.status(200).json({
-      data: [
-        {
-          zodu_id:         company.zodu_id,
-          restaurant_name: company.restaurant_name,
-          gst_no:          company.gst_no || null,
-          branches:        branchResult.rows.map((branch) => ({
-            ...branch,
-            city: branch.city ?? branch.branch_city ?? null,
-            district: branch.district ?? branch.branch_district ?? null,
-            state: branch.state ?? branch.branch_state ?? null,
-            area_street_name: branch.area_street_name ?? branch.branch_area_street_name ?? null,
-          })),
-        },
-      ],
+      data: [{ ...company, branches: mergedBranches }],
     });
   } catch (error) {
     console.error('[GET /get/my-companies]', error);
