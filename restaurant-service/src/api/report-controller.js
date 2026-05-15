@@ -194,7 +194,35 @@ router.get("/purchase/datewise", async (req, res) => {
   }
 });
 
+router.get("/purchase/summary", async (req, res) => {
+  const { zodu_id, branch_id, year } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"])) return;
+
+  try {
+    const data = await service.getPurchaseSummary(zodu_id, branch_id, year);
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error("[report] getPurchaseSummary:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ── EXPENSE REPORTS ──────────────────────────────────────────
+
+// GET /api/report/expense/summary?zodu_id=&branch_id=&year=
+// Summary cards: total monthly expense, total yearly expense, growth %, top month
+router.get("/expense/summary", async (req, res) => {
+  const { zodu_id, branch_id, year } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"])) return;
+
+  try {
+    const data = await service.getExpenseSummary(zodu_id, branch_id, year);
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error("[report] getExpenseSummary:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 // GET /api/report/expense/monthly-breakdown?zodu_id=&branch_id=&year=&page=&limit=
 // Monthly Expense Breakdown table with offset pagination

@@ -45,7 +45,38 @@ async function getSalesSummary(zodu_id, branch_id, year) {
         ELSE ROUND(((y.total_yearly_sales - l.total_last_year) / l.total_last_year) * 100, 1)
       END AS growth_vs_last_year,
       TRIM(t.top_month_name) AS top_performing_month
-    FROM yearly y, monthly m, last_year l, top_month t`,
+    FROM yearly y, monthly m, last_year l
+    LEFT JOIN top_month t ON true`,
+    [zodu_id, branch_id, year]
+  );
+  return rows[0] || null;
+}
+
+async function getPurchaseSummary(zodu_id, branch_id, year) {
+  const { rows } = await conn.query(
+    `SELECT
+      COUNT(*)::int                                AS total_yearly_purchase_count,
+      COALESCE(SUM(total_amount), 0)               AS total_yearly_purchase,
+      COALESCE(SUM(paid_amount), 0)                AS total_yearly_paid,
+      COALESCE(SUM(total_amount - paid_amount), 0) AS total_yearly_pending
+    FROM tbl_purchase
+    WHERE zodu_id = $1 AND branch_id = $2
+      AND EXTRACT(YEAR FROM purchase_date) = $3`,
+    [zodu_id, branch_id, year]
+  );
+  return rows[0] || null;
+}
+
+async function getExpenseSummary(zodu_id, branch_id, year) {
+  const { rows } = await conn.query(
+    `SELECT
+      COUNT(*)::int                                AS total_yearly_expense_count,
+      COALESCE(SUM(total_amount), 0)               AS total_yearly_expense,
+      COALESCE(SUM(paid_amount), 0)                AS total_yearly_paid,
+      COALESCE(SUM(total_amount - paid_amount), 0) AS total_yearly_pending
+    FROM tbl_expense
+    WHERE zodu_id = $1 AND branch_id = $2
+      AND EXTRACT(YEAR FROM expense_date) = $3`,
     [zodu_id, branch_id, year]
   );
   return rows[0] || null;
@@ -523,8 +554,10 @@ module.exports = {
   getDatewiseSaleSummary,
   getDatewiseSaleBreakdown,
   getPurchaseMonthlyBreakdown,
+  getPurchaseSummary,
   getPurchaseDatewiseSummary,
   getPurchaseDatewiseBreakdown,
+  getExpenseSummary,
   getExpenseMonthlyBreakdown,
   getExpenseDatewiseSummary,
   getExpenseDatewiseBreakdown,
