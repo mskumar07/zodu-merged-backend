@@ -4035,17 +4035,19 @@ exports.markPayment = async (data) => {
           paid_amount,
           transaction_type,
           transaction_id,
+          payment_date,
           status
        )
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
        RETURNING *`,
       [
         data.sale_id,
         data.zodu_id,
         data.branch_id,
         newPayment,
-        data.transaction_type ?? null,   // Cash / Card / UPI / Credit
+        data.transaction_type ?? null,
         data.transaction_id   ?? null,
+        data.payment_date     ?? null,
         newPaymentStatus === "fully_paid" ? "paid" : "partial",
       ]
     );

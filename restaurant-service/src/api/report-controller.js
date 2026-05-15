@@ -147,4 +147,98 @@ router.get("/sales/datewise", async (req, res) => {
   }
 });
 
+// ── PURCHASE REPORTS ─────────────────────────────────────────
+
+// GET /api/report/purchase/monthly-breakdown?zodu_id=&branch_id=&year=&page=&limit=
+// Monthly Purchase Breakdown table with offset pagination
+router.get("/purchase/monthly-breakdown", async (req, res) => {
+  const { zodu_id, branch_id, year, page = 1, limit = 12 } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"])) return;
+
+  try {
+    const result = await service.getPurchaseMonthlyBreakdown(zodu_id, branch_id, year, page, limit);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error("[report] getPurchaseMonthlyBreakdown:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/report/purchase/datewise/summary?zodu_id=&branch_id=&from_date=&to_date=
+// Summary cards: total_purchase, total_paid, total_pending for the date range
+router.get("/purchase/datewise/summary", async (req, res) => {
+  const { zodu_id, branch_id, from_date, to_date } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"])) return;
+
+  try {
+    const data = await service.getPurchaseDatewiseSummary(zodu_id, branch_id, from_date, to_date);
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error("[report] getPurchaseDatewiseSummary:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/report/purchase/datewise?zodu_id=&branch_id=&from_date=&to_date=&page=&limit=
+// Paginated day-by-day breakdown: orders, purchase, paid, pending per date
+router.get("/purchase/datewise", async (req, res) => {
+  const { zodu_id, branch_id, from_date, to_date, page = 1, limit = 10 } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"])) return;
+
+  try {
+    const result = await service.getPurchaseDatewiseBreakdown(zodu_id, branch_id, from_date, to_date, page, limit);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error("[report] getPurchaseDatewiseBreakdown:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── EXPENSE REPORTS ──────────────────────────────────────────
+
+// GET /api/report/expense/monthly-breakdown?zodu_id=&branch_id=&year=&page=&limit=
+// Monthly Expense Breakdown table with offset pagination
+router.get("/expense/monthly-breakdown", async (req, res) => {
+  const { zodu_id, branch_id, year, page = 1, limit = 12 } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"])) return;
+
+  try {
+    const result = await service.getExpenseMonthlyBreakdown(zodu_id, branch_id, year, page, limit);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error("[report] getExpenseMonthlyBreakdown:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/report/expense/datewise/summary?zodu_id=&branch_id=&from_date=&to_date=
+// Summary cards: total_entries, total_expense for the date range
+router.get("/expense/datewise/summary", async (req, res) => {
+  const { zodu_id, branch_id, from_date, to_date } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"])) return;
+
+  try {
+    const data = await service.getExpenseDatewiseSummary(zodu_id, branch_id, from_date, to_date);
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error("[report] getExpenseDatewiseSummary:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/report/expense/datewise?zodu_id=&branch_id=&from_date=&to_date=&page=&limit=
+// Paginated day-by-day breakdown: entries, total expense per date
+router.get("/expense/datewise", async (req, res) => {
+  const { zodu_id, branch_id, from_date, to_date, page = 1, limit = 10 } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"])) return;
+
+  try {
+    const result = await service.getExpenseDatewiseBreakdown(zodu_id, branch_id, from_date, to_date, page, limit);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error("[report] getExpenseDatewiseBreakdown:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 module.exports = router;

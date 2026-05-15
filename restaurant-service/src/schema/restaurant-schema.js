@@ -399,6 +399,7 @@ const mark_payment = Joi.object({
   paid_amount:      Joi.number().positive().required(),
   transaction_type: Joi.string().valid("Cash", "Card", "UPI", "Credit").required(),
   transaction_id:   Joi.string().optional().allow(null, ""),
+  payment_date:    Joi.date().iso().optional().allow(null, ""),
 });
 
 const purchase_order_create = Joi.object({

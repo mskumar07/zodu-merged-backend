@@ -621,6 +621,7 @@ router.post("/api/sales/:sale_id/payment", async (req, res) => {
       { abortEarly: false }
     );
     if (error) {
+      console.log(error)
       return res.status(400).json({ errors: error.details.map(d => d.message) });
     }
  
