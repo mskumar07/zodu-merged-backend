@@ -19,6 +19,7 @@ app.use('/api/purchase', require('./api/purchase-controller'));
 app.use('/api/vendor', require('./api/vendor-controller'));
 app.use('/api/sale-returns', require('./api/saleReturn-controller'));
 app.use('/api/report',      require('./api/report-controller'));
+app.use('/api/expense',     require('./api/expense-controller'));
 
 app.use(HandleErrorWithLogger);
 

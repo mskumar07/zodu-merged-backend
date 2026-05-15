@@ -148,8 +148,8 @@ async function getReminders(zodu_id, branch_id, limit, cursor) {
   if (cursor) {
     cursorClause = `AND (
       due_date > $4
-      OR (due_date = $4 AND ref_id > $5)
-      OR (due_date = $4 AND ref_id = $5 AND ref_type > $6)
+      OR (due_date = $4 AND ref_type > $6)
+      OR (due_date = $4 AND ref_type = $6 AND ref_id > $5)
     )`;
     values.push(cursor.due_date, cursor.ref_id, cursor.ref_type);
   }
@@ -170,7 +170,7 @@ async function getReminders(zodu_id, branch_id, limit, cursor) {
   FROM (
 
     SELECT
-      s.sale_id                               AS ref_id,
+      s.sale_id::varchar                      AS ref_id,
       s.sale_uuid                             AS ref_uuid,
       'SALE'                                  AS ref_type,
       TO_CHAR(s.sale_date, 'DD Mon YYYY')     AS txn_date,
@@ -190,18 +190,18 @@ async function getReminders(zodu_id, branch_id, limit, cursor) {
     UNION ALL
 
     SELECT
-      p.purchase_id                                       AS ref_id,
-      NULL::uuid                                          AS ref_uuid,
-      'PURCHASE'                                          AS ref_type,
-      TO_CHAR(p.purchase_date, 'DD Mon YYYY')             AS txn_date,
-      COALESCE(pp.payment_date, p.due_date)::date         AS due_date,
+      p.purchase_id::varchar                                                                AS ref_id,
+      NULL::uuid                                                                            AS ref_uuid,
+      'PURCHASE'                                                                            AS ref_type,
+      TO_CHAR(p.purchase_date, 'DD Mon YYYY')                                              AS txn_date,
+      COALESCE(MAX(pp.payment_date), p.due_date)::date                                     AS due_date,
       p.total_amount,
       p.paid_amount,
       p.balance_amount,
       p.payment_status,
-      pp.transaction_type,
-      NULL::varchar                                       AS party_name,
-      COALESCE(v.vendor_name, 'Unknown Vendor')           AS vendor_name
+      STRING_AGG(DISTINCT pp.transaction_type, ', ' ORDER BY pp.transaction_type)          AS transaction_type,
+      NULL::varchar                                                                         AS party_name,
+      COALESCE(v.vendor_name, 'Unknown Vendor')                                            AS vendor_name
     FROM tbl_purchase p
     LEFT JOIN tbl_purchase_payment pp
       ON pp.purchase_id = p.purchase_id
@@ -209,10 +209,32 @@ async function getReminders(zodu_id, branch_id, limit, cursor) {
     LEFT JOIN tbl_vendor v ON v.vendor_id = p.vendor_id AND v.zodu_id = $1 AND v.branch_id = $2
     WHERE p.zodu_id = $1 AND p.branch_id = $2
       AND p.payment_status IN ('pending', 'partial')
+    GROUP BY p.purchase_id, p.purchase_date, p.due_date, p.total_amount, p.paid_amount,
+             p.balance_amount, p.payment_status, v.vendor_name
+
+    UNION ALL
+
+    SELECT
+      e.expense_id                                   AS ref_id,
+      NULL::uuid                                     AS ref_uuid,
+      'EXPENSE'                                      AS ref_type,
+      TO_CHAR(e.expense_date, 'DD Mon YYYY')         AS txn_date,
+      e.due_date::date                               AS due_date,
+      e.total_amount,
+      e.paid_amount,
+      e.balance_amount,
+      e.payment_status,
+      NULL::varchar                                  AS transaction_type,
+      c.name                                         AS party_name,
+      NULL::varchar                                  AS vendor_name
+    FROM tbl_expense e
+    LEFT JOIN tbl_category c ON c.id = e.category_id AND c.zodu_id = $1 AND c.branch_id = $2
+    WHERE e.zodu_id = $1 AND e.branch_id = $2
+      AND e.payment_status IN ('pending', 'partial')
 
   ) combined
   WHERE 1=1 ${cursorClause}
-  ORDER BY due_date ASC NULLS LAST, ref_id ASC, ref_type ASC
+  ORDER BY due_date ASC NULLS LAST, ref_type ASC, ref_id ASC
   LIMIT $3`,
   values
 );

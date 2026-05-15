@@ -258,6 +258,136 @@ async function getDatewiseBreakdown(zodu_id, branch_id, from_date, to_date, page
   };
 }
 
+// ── Purchase Reports ──────────────────────────────────────────
+async function getPurchaseMonthlyBreakdown(zodu_id, branch_id, year, page, limit) {
+  const currentYear = new Date().getFullYear();
+  const targetYear  = parseInt(year) || currentYear;
+
+  const { page: pg, limit: lmt, offset } = getPagination({ page, limit });
+  const { rows, total } = await repo.getPurchaseMonthlyBreakdown(zodu_id, branch_id, targetYear, lmt, offset);
+
+  const data = rows.map((r) => ({
+    month_num:      r.month_num,
+    month_name:     r.month_name.trim(),
+    bill_count:     r.bill_count,
+    total_amount:   parseFloat(r.total_amount),
+    total_paid:     parseFloat(r.total_paid),
+    total_pending:  parseFloat(r.total_pending),
+  }));
+
+  return {
+    year: targetYear,
+    data,
+    pagination: getMeta({ page: pg, limit: lmt, total }),
+  };
+}
+
+async function getPurchaseDatewiseSummary(zodu_id, branch_id, from_date, to_date) {
+  const defaults = getDefaultDateRange();
+  const from     = from_date || defaults.from;
+  const to       = to_date   || defaults.to;
+
+  const raw = await repo.getPurchaseDatewiseSummary(zodu_id, branch_id, from, to);
+
+  return {
+    from_date:       from,
+    to_date:         to,
+    total_orders:    parseInt(raw?.total_orders   || 0),
+    total_purchase:  parseFloat(raw?.total_purchase || 0),
+    total_paid:      parseFloat(raw?.total_paid    || 0),
+    total_pending:   parseFloat(raw?.total_pending || 0),
+  };
+}
+
+async function getPurchaseDatewiseBreakdown(zodu_id, branch_id, from_date, to_date, page, limit) {
+  const defaults = getDefaultDateRange();
+  const from     = from_date || defaults.from;
+  const to       = to_date   || defaults.to;
+
+  const { page: pg, limit: lmt, offset } = getPagination({ page, limit });
+  const { rows, total } = await repo.getPurchaseDatewiseBreakdown(zodu_id, branch_id, from, to, lmt, offset);
+
+  const data = rows.map((r) => ({
+    date:            r.purchase_date,
+    total_orders:    r.total_orders,
+    total_purchase:  parseFloat(r.total_purchase),
+    total_paid:      parseFloat(r.total_paid),
+    total_pending:   parseFloat(r.total_pending),
+  }));
+
+  return {
+    from_date: from,
+    to_date:   to,
+    data,
+    pagination: getMeta({ page: pg, limit: lmt, total }),
+  };
+}
+
+// ── Expense Reports ───────────────────────────────────────────
+async function getExpenseMonthlyBreakdown(zodu_id, branch_id, year, page, limit) {
+  const currentYear = new Date().getFullYear();
+  const targetYear  = parseInt(year) || currentYear;
+
+  const { page: pg, limit: lmt, offset } = getPagination({ page, limit });
+  const { rows, total } = await repo.getExpenseMonthlyBreakdown(zodu_id, branch_id, targetYear, lmt, offset);
+
+  const data = rows.map((r) => ({
+    month_num:     r.month_num,
+    month_name:    r.month_name.trim(),
+    bill_count:    r.bill_count,
+    total_amount:  parseFloat(r.total_amount),
+    total_paid:    parseFloat(r.total_paid),
+    total_pending: parseFloat(r.total_pending),
+  }));
+
+  return {
+    year: targetYear,
+    data,
+    pagination: getMeta({ page: pg, limit: lmt, total }),
+  };
+}
+
+async function getExpenseDatewiseSummary(zodu_id, branch_id, from_date, to_date) {
+  const defaults = getDefaultDateRange();
+  const from     = from_date || defaults.from;
+  const to       = to_date   || defaults.to;
+
+  const raw = await repo.getExpenseDatewiseSummary(zodu_id, branch_id, from, to);
+
+  return {
+    from_date:     from,
+    to_date:       to,
+    total_entries: parseInt(raw?.total_entries  || 0),
+    total_expense: parseFloat(raw?.total_expense || 0),
+    total_paid:    parseFloat(raw?.total_paid    || 0),
+    total_pending: parseFloat(raw?.total_pending || 0),
+  };
+}
+
+async function getExpenseDatewiseBreakdown(zodu_id, branch_id, from_date, to_date, page, limit) {
+  const defaults = getDefaultDateRange();
+  const from     = from_date || defaults.from;
+  const to       = to_date   || defaults.to;
+
+  const { page: pg, limit: lmt, offset } = getPagination({ page, limit });
+  const { rows, total } = await repo.getExpenseDatewiseBreakdown(zodu_id, branch_id, from, to, lmt, offset);
+
+  const data = rows.map((r) => ({
+    date:          r.expense_date,
+    total_entries: r.total_entries,
+    total_expense: parseFloat(r.total_expense),
+    total_paid:    parseFloat(r.total_paid),
+    total_pending: parseFloat(r.total_pending),
+  }));
+
+  return {
+    from_date: from,
+    to_date:   to,
+    data,
+    pagination: getMeta({ page: pg, limit: lmt, total }),
+  };
+}
+
 module.exports = {
   getSalesSummary,
   getMonthlyBreakdown,
@@ -268,4 +398,10 @@ module.exports = {
   getSalesVelocity,
   getDatewiseSummary,
   getDatewiseBreakdown,
+  getPurchaseMonthlyBreakdown,
+  getPurchaseDatewiseSummary,
+  getPurchaseDatewiseBreakdown,
+  getExpenseMonthlyBreakdown,
+  getExpenseDatewiseSummary,
+  getExpenseDatewiseBreakdown,
 };

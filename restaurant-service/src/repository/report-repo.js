@@ -360,6 +360,158 @@ async function getDatewiseSaleBreakdown(zodu_id, branch_id, from_date, to_date, 
   return { rows, total: parseInt(countResult.rows[0]?.total || 0) };
 }
 
+// ── Purchase Reports ──────────────────────────────────────────
+async function getPurchaseMonthlyBreakdown(zodu_id, branch_id, year, limit, offset) {
+  const countResult = await conn.query(
+    `SELECT COUNT(*) AS total
+     FROM (
+       SELECT EXTRACT(MONTH FROM purchase_date)
+       FROM tbl_purchase
+       WHERE zodu_id = $1 AND branch_id = $2
+         AND EXTRACT(YEAR FROM purchase_date) = $3
+       GROUP BY EXTRACT(MONTH FROM purchase_date)
+     ) months`,
+    [zodu_id, branch_id, year]
+  );
+
+  const { rows } = await conn.query(
+    `SELECT
+      EXTRACT(MONTH FROM purchase_date)::int                                   AS month_num,
+      TO_CHAR(TO_DATE(EXTRACT(MONTH FROM purchase_date)::text, 'MM'), 'Month') AS month_name,
+      COUNT(*)::int                                                             AS bill_count,
+      COALESCE(SUM(total_amount), 0)                                           AS total_amount,
+      COALESCE(SUM(paid_amount),  0)                                           AS total_paid,
+      COALESCE(SUM(total_amount - paid_amount), 0)                             AS total_pending
+    FROM tbl_purchase
+    WHERE zodu_id = $1 AND branch_id = $2
+      AND EXTRACT(YEAR FROM purchase_date) = $3
+    GROUP BY EXTRACT(MONTH FROM purchase_date)
+    ORDER BY month_num ASC
+    LIMIT $4 OFFSET $5`,
+    [zodu_id, branch_id, year, limit, offset]
+  );
+  return { rows, total: parseInt(countResult.rows[0]?.total || 0) };
+}
+
+async function getPurchaseDatewiseSummary(zodu_id, branch_id, from_date, to_date) {
+  const { rows } = await conn.query(
+    `SELECT
+       COUNT(DISTINCT purchase_id)                        AS total_orders,
+       COALESCE(SUM(total_amount), 0)                    AS total_purchase,
+       COALESCE(SUM(paid_amount),  0)                    AS total_paid,
+       COALESCE(SUM(total_amount - paid_amount), 0)      AS total_pending
+     FROM tbl_purchase
+     WHERE zodu_id = $1 AND branch_id = $2
+       AND purchase_date BETWEEN $3 AND $4`,
+    [zodu_id, branch_id, from_date, to_date]
+  );
+  return rows[0] || null;
+}
+
+async function getPurchaseDatewiseBreakdown(zodu_id, branch_id, from_date, to_date, limit, offset) {
+  const countResult = await conn.query(
+    `SELECT COUNT(DISTINCT purchase_date) AS total
+     FROM tbl_purchase
+     WHERE zodu_id = $1 AND branch_id = $2
+       AND purchase_date BETWEEN $3 AND $4`,
+    [zodu_id, branch_id, from_date, to_date]
+  );
+
+  const { rows } = await conn.query(
+    `SELECT
+       purchase_date,
+       COUNT(DISTINCT purchase_id)::int                  AS total_orders,
+       COALESCE(SUM(total_amount), 0)                   AS total_purchase,
+       COALESCE(SUM(paid_amount),  0)                   AS total_paid,
+       COALESCE(SUM(total_amount - paid_amount), 0)     AS total_pending
+     FROM tbl_purchase
+     WHERE zodu_id = $1 AND branch_id = $2
+       AND purchase_date BETWEEN $3 AND $4
+     GROUP BY purchase_date
+     ORDER BY purchase_date DESC
+     LIMIT $5 OFFSET $6`,
+    [zodu_id, branch_id, from_date, to_date, limit, offset]
+  );
+
+  return { rows, total: parseInt(countResult.rows[0]?.total || 0) };
+}
+
+// ── Expense Reports ───────────────────────────────────────────
+async function getExpenseMonthlyBreakdown(zodu_id, branch_id, year, limit, offset) {
+  const countResult = await conn.query(
+    `SELECT COUNT(*) AS total
+     FROM (
+       SELECT EXTRACT(MONTH FROM expense_date)
+       FROM tbl_expense
+       WHERE zodu_id = $1 AND branch_id = $2
+         AND EXTRACT(YEAR FROM expense_date) = $3
+       GROUP BY EXTRACT(MONTH FROM expense_date)
+     ) months`,
+    [zodu_id, branch_id, year]
+  );
+
+  const { rows } = await conn.query(
+    `SELECT
+      EXTRACT(MONTH FROM expense_date)::int                                   AS month_num,
+      TO_CHAR(TO_DATE(EXTRACT(MONTH FROM expense_date)::text, 'MM'), 'Month') AS month_name,
+      COUNT(*)::int                                                            AS bill_count,
+      COALESCE(SUM(total_amount), 0)                                          AS total_amount,
+      COALESCE(SUM(paid_amount), 0)                                           AS total_paid,
+      COALESCE(SUM(total_amount - paid_amount), 0)                            AS total_pending
+    FROM tbl_expense
+    WHERE zodu_id = $1 AND branch_id = $2
+      AND EXTRACT(YEAR FROM expense_date) = $3
+    GROUP BY EXTRACT(MONTH FROM expense_date)
+    ORDER BY month_num ASC
+    LIMIT $4 OFFSET $5`,
+    [zodu_id, branch_id, year, limit, offset]
+  );
+  return { rows, total: parseInt(countResult.rows[0]?.total || 0) };
+}
+
+async function getExpenseDatewiseSummary(zodu_id, branch_id, from_date, to_date) {
+  const { rows } = await conn.query(
+    `SELECT
+       COUNT(DISTINCT id)                               AS total_entries,
+       COALESCE(SUM(total_amount), 0)                  AS total_expense,
+       COALESCE(SUM(paid_amount), 0)                   AS total_paid,
+       COALESCE(SUM(total_amount - paid_amount), 0)    AS total_pending
+     FROM tbl_expense
+     WHERE zodu_id = $1 AND branch_id = $2
+       AND expense_date BETWEEN $3 AND $4`,
+    [zodu_id, branch_id, from_date, to_date]
+  );
+  return rows[0] || null;
+}
+
+async function getExpenseDatewiseBreakdown(zodu_id, branch_id, from_date, to_date, limit, offset) {
+  const countResult = await conn.query(
+    `SELECT COUNT(DISTINCT expense_date) AS total
+     FROM tbl_expense
+     WHERE zodu_id = $1 AND branch_id = $2
+       AND expense_date BETWEEN $3 AND $4`,
+    [zodu_id, branch_id, from_date, to_date]
+  );
+
+  const { rows } = await conn.query(
+    `SELECT
+       expense_date,
+       COUNT(DISTINCT id)::int                       AS total_entries,
+       COALESCE(SUM(total_amount), 0)               AS total_expense,
+       COALESCE(SUM(paid_amount), 0)                AS total_paid,
+       COALESCE(SUM(total_amount - paid_amount), 0) AS total_pending
+     FROM tbl_expense
+     WHERE zodu_id = $1 AND branch_id = $2
+       AND expense_date BETWEEN $3 AND $4
+     GROUP BY expense_date
+     ORDER BY expense_date DESC
+     LIMIT $5 OFFSET $6`,
+    [zodu_id, branch_id, from_date, to_date, limit, offset]
+  );
+
+  return { rows, total: parseInt(countResult.rows[0]?.total || 0) };
+}
+
 module.exports = {
   getSalesSummary,
   getMonthlyBreakdown,
@@ -370,4 +522,10 @@ module.exports = {
   getSalesVelocity,
   getDatewiseSaleSummary,
   getDatewiseSaleBreakdown,
+  getPurchaseMonthlyBreakdown,
+  getPurchaseDatewiseSummary,
+  getPurchaseDatewiseBreakdown,
+  getExpenseMonthlyBreakdown,
+  getExpenseDatewiseSummary,
+  getExpenseDatewiseBreakdown,
 };
