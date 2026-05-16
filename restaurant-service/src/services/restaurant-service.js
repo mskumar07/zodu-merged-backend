@@ -54,7 +54,7 @@ async function createCompanyService(companyData) {
       const branchRepo = require('../repository/branch-repo');
 
       const branch_id = 'B1';
-      const createQr = await repository.createQRCode(branch_id);
+      // const createQr = await repository.createQRCode(branch_id);
 
       await branchRepo.createBranch({
         branch_id,
@@ -64,7 +64,7 @@ async function createCompanyService(companyData) {
         branch_mail_id:   companyData.mail_id      || null,
         address_id:       company.address_id       || null,
         bank_details_id:  company.bank_details_id  || null,
-        qr_code_id:       createQr.id,
+        // qr_code_id:       createQr.id,
       });
     }
 
