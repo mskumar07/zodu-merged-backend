@@ -25,6 +25,31 @@ async function getSalesSummary(zodu_id, branch_id, year) {
   };
 }
 
+
+async function getPurchaseSummary(zodu_id, branch_id, year) {
+  const currentYear = new Date().getFullYear();
+  const targetYear  = parseInt(year) || currentYear;
+
+  const raw = await repo.getPurchaseSummary(zodu_id, branch_id, targetYear);
+  if (!raw) {
+    return {
+      year:                         targetYear,
+      total_yearly_purchase_count:  0,
+      total_yearly_purchase:        0,
+      total_yearly_paid:            0,
+      total_yearly_pending:         0,
+    };
+  }
+
+  return {
+    year:                         targetYear,
+    total_yearly_purchase_count:  raw.total_yearly_purchase_count,
+    total_yearly_purchase:        parseFloat(raw.total_yearly_purchase),
+    total_yearly_paid:            parseFloat(raw.total_yearly_paid),
+    total_yearly_pending:         parseFloat(raw.total_yearly_pending),
+  };
+}
+
 async function getMonthlyBreakdown(zodu_id, branch_id, year, page, limit) {
   const currentYear = new Date().getFullYear();
   const targetYear  = parseInt(year) || currentYear;
@@ -324,6 +349,30 @@ async function getPurchaseDatewiseBreakdown(zodu_id, branch_id, from_date, to_da
 }
 
 // ── Expense Reports ───────────────────────────────────────────
+async function getExpenseSummary(zodu_id, branch_id, year) {
+  const currentYear = new Date().getFullYear();
+  const targetYear  = parseInt(year) || currentYear;
+
+  const raw = await repo.getExpenseSummary(zodu_id, branch_id, targetYear);
+  if (!raw) {
+    return {
+      year:                        targetYear,
+      total_yearly_expense_count:  0,
+      total_yearly_expense:        0,
+      total_yearly_paid:           0,
+      total_yearly_pending:        0,
+    };
+  }
+
+  return {
+    year:                        targetYear,
+    total_yearly_expense_count:  raw.total_yearly_expense_count,
+    total_yearly_expense:        parseFloat(raw.total_yearly_expense),
+    total_yearly_paid:           parseFloat(raw.total_yearly_paid),
+    total_yearly_pending:        parseFloat(raw.total_yearly_pending),
+  };
+}
+
 async function getExpenseMonthlyBreakdown(zodu_id, branch_id, year, page, limit) {
   const currentYear = new Date().getFullYear();
   const targetYear  = parseInt(year) || currentYear;
@@ -398,9 +447,11 @@ module.exports = {
   getSalesVelocity,
   getDatewiseSummary,
   getDatewiseBreakdown,
+  getPurchaseSummary,
   getPurchaseMonthlyBreakdown,
   getPurchaseDatewiseSummary,
   getPurchaseDatewiseBreakdown,
+  getExpenseSummary,
   getExpenseMonthlyBreakdown,
   getExpenseDatewiseSummary,
   getExpenseDatewiseBreakdown,
