@@ -119,13 +119,14 @@ function calculateOrderTotals(
 
   return {
     total_items: items.length,
-    subtotal: round(subtotal),
-    discount_amount: round(discount_amount),
-    total_tax: round(total_tax),
+    subtotal: subtotal,
+    discount_amount: discount_amount,
+    total_tax: total_tax,
 
-    total_amount: round(total_amount), // before roundoff
+    total_amount: total_amount, // before roundoff
     roundoff,
-    final_amount: rounded_total       // payable
+    final_amount: total_amount
+           // payable
   };
 }
 
