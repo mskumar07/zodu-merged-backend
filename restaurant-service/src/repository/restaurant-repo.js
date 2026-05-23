@@ -3425,6 +3425,58 @@ exports.getSalesHistory = async (filters) => {
 //  REPOSITORY  —  sale.repository.js  (UPDATED getSaleById)
 // ═══════════════════════════════════════════════════════════════
  
+exports.getSalesHistorySummary = async (filters) => {
+  const {
+    zodu_id,
+    branch_id,
+    from_date,
+    to_date,
+    payment_status,
+    search,
+    customer_search,
+  } = filters;
+
+  const searchTerm = search || customer_search;
+
+  const conditions = ["s.zodu_id = $1", "s.branch_id = $2"];
+  const values     = [zodu_id, branch_id];
+  let   idx        = 3;
+
+  if (from_date)      { conditions.push(`s.sale_date >= $${idx++}`); values.push(from_date); }
+  if (to_date)        { conditions.push(`s.sale_date <= $${idx++}`); values.push(to_date); }
+  if (payment_status) { conditions.push(`s.payment_status = $${idx++}`); values.push(payment_status); }
+
+  if (searchTerm) {
+    conditions.push(`(
+      s.sale_id            ILIKE $${idx}
+      OR c.cust_name       ILIKE $${idx}
+      OR c.cpy_name        ILIKE $${idx}
+      OR c.mobile_no::text ILIKE $${idx}
+    )`);
+    values.push(`%${searchTerm}%`);
+    idx++;
+  }
+
+  const where = conditions.join(" AND ");
+
+  const { rows } = await conn.query(
+    `SELECT
+      COUNT(*)   FILTER (WHERE s.sale_type != 'Q') AS total_transactions,
+      COALESCE(SUM(s.total_amount) FILTER (WHERE s.sale_type != 'Q'), 0) AS net_revenue,
+      COUNT(*)   FILTER (WHERE s.sale_type = 'Q')  AS total_quotations
+    FROM tbl_sales s
+    LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid
+    WHERE ${where}`,
+    values
+  );
+
+  return {
+    total_transactions: parseInt(rows[0].total_transactions, 10),
+    net_revenue:        parseFloat(rows[0].net_revenue),
+    total_quotations:   parseInt(rows[0].total_quotations, 10),
+  };
+};
+
 exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
   
   console.log(sale_id,zodu_id,branch_id)

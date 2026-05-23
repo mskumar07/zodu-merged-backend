@@ -390,9 +390,18 @@ async function getStockHistoryService({ item_uuid, zodu_id, branch_id }) {
   };
 }
 
+async function checkItemIdExists({ item_id, zodu_id, branch_id }) {
+  const row = await repository.checkItemIdExists(item_id, zodu_id, branch_id);
+  if (row) {
+    return { success: true, exists: true, data: row };
+  }
+  return { success: true, exists: false };
+}
+
 module.exports = { createMenuItem, editMenuItem, getMenuItems, deleteMenuItem, hardDeleteMenuItem, getMenuItemById, getInventorySummary,
   getInventoryList,
   getInventoryDetail,
   adjustStock,
-  getStockHistoryService
+  getStockHistoryService,
+  checkItemIdExists,
 };

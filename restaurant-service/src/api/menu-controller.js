@@ -86,31 +86,34 @@ router.get("/menu_items", async (req, res) => {
       zodu_id,
       branch_id,
       search,
-      category_id,
       item_type,
       status,
       page  = "1",
       limit = "20",
     } = req.query;
- 
+
     if (!zodu_id || !branch_id) {
       return res.status(400).json({
         success: false,
         error: "zodu_id and branch_id are required query parameters",
       });
     }
- 
+
+    const rawCat = req.query['category_id[]'];
+    const category_ids = rawCat
+      ? (Array.isArray(rawCat) ? rawCat : [rawCat]).map(Number).filter((n) => !isNaN(n) && n > 0)
+      : null;
+
     const parsedPage  = Math.max(1, parseInt(page,  10) || 1);
     const parsedLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
-    console.log(zodu_id,branch_id,page,limit)
- 
+
     const result = await service.getMenuItems({
       zodu_id,
       branch_id,
-      search:      search      || null,
-      category_id: category_id ? Number(category_id) : null,
-      item_type:   item_type   || null,
-      status:      status      || null,
+      search:      search    || null,
+      category_ids,
+      item_type:   item_type || null,
+      status:      status    || null,
       page:        parsedPage,
       limit:       parsedLimit,
     });
@@ -244,19 +247,18 @@ router.get('/inventory/list', async (req, res) => {
       zodu_id,
       branch_id,
       search,
-      category_id,
       stock_status,
       page  = '1',
       limit = '20',
     } = req.query;
- 
+
     if (!zodu_id || !branch_id) {
       return res.status(400).json({
         success: false,
         error: 'zodu_id and branch_id are required',
       });
     }
- 
+
     const VALID_STATUSES = ['in_stock', 'low_stock', 'out_of_stock'];
     if (stock_status && !VALID_STATUSES.includes(stock_status)) {
       return res.status(400).json({
@@ -264,12 +266,17 @@ router.get('/inventory/list', async (req, res) => {
         error: `stock_status must be one of: ${VALID_STATUSES.join(', ')}`,
       });
     }
- 
+
+    const rawCat = req.query['category_id[]'];
+    const category_ids = rawCat
+      ? (Array.isArray(rawCat) ? rawCat : [rawCat]).map(Number).filter((n) => !isNaN(n) && n > 0)
+      : null;
+
     const result = await service.getInventoryList({
       zodu_id,
       branch_id,
       search:       search       || null,
-      category_id:  category_id  ? Number(category_id) : null,
+      category_ids,
       stock_status: stock_status || null,
       page:         Math.max(1, parseInt(page,  10) || 1),
       limit:        Math.min(100, parseInt(limit, 10) || 20),
@@ -361,6 +368,35 @@ router.post('/inventory/adjust', async (req, res) => {
     });
   } catch (error) {
     console.error('[inventory] adjust error:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+//  GET /restaurant/api/check/item_id
+//  Check if item_id already exists for a given zodu_id + branch_id
+//  Query params: zodu_id, branch_id, item_id
+// ─────────────────────────────────────────────────────────────
+router.get('/check/item_id', async (req, res) => {
+  try {
+    const { zodu_id, branch_id, item_id } = req.query;
+
+    if (!zodu_id || !branch_id || !item_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'zodu_id, branch_id, and item_id are required',
+      });
+    }
+
+    const result = await service.checkItemIdExists({ item_id, zodu_id, branch_id });
+
+    return res.status(200).json({
+      success: true,
+      exists: result.exists,
+      ...(result.exists && { data: result.data }),
+    });
+  } catch (error) {
+    console.error('[menu] checkItemId error:', error);
     return res.status(500).json({ success: false, error: error.message });
   }
 });

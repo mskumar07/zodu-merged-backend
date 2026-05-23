@@ -75,6 +75,7 @@ exports.createExpense = async (data) => {
     return { success: true, data: expense };
   } catch (err) {
     await client.query("ROLLBACK");
+    console.log("Error creating expense:", err);
     return { success: false, message: err.message };
   } finally {
     client.release();
@@ -83,8 +84,8 @@ exports.createExpense = async (data) => {
 
 exports.getExpenses = async (params = {}) => {
   try {
-    const data = await repo.getExpenses(params);
-    return { success: true, data };
+    const { data, currentPage, totalPages, totalRecords, limit } = await repo.getExpenses(params);
+    return { success: true, data, currentPage, totalPages, totalRecords, limit };
   } catch (err) {
     return { success: false, message: err.message };
   }
@@ -158,7 +159,7 @@ exports.updateExpense = async (expense_id, data) => {
       await repo.createExpensePayment(client, {
         expense_id,
         zodu_id:          old.zodu_id,
-        branch_id:        old.branch_id,
+        branch_id:        old.branch_id,  
         payment_date:     new Date(),
         paid_amount:      paidDiff,
         transaction_type: data.transaction_type || "cash",

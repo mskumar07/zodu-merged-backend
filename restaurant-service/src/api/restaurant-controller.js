@@ -563,6 +563,21 @@ router.get("/api/sales/history", async (req, res) => {
   }
 });
  
+router.get("/api/sales/history/summary", async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(schema.sales_history_summary_query, req.query);
+    if (errors) return res.status(400).json({ errors });
+
+    const data = await service.getSalesHistorySummary(input);
+    if (!data.success) return res.status(400).json({ message: data.message });
+
+    return res.status(200).json(data);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 // GET /api/sales/:sale_id?zodu_id=&branch_id=
 router.get("/api/sales/:sale_id", async (req, res) => {
   try {
