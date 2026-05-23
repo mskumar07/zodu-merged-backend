@@ -9,7 +9,7 @@ async function getStats(zodu_id, branch_id) {
       (
         SELECT COALESCE(SUM(balance_amount), 0)
         FROM tbl_sales
-        WHERE zodu_id = $1 AND branch_id = $2
+        WHERE zodu_id = $1 AND branch_id = $2 AND sale_type != 'Q'
           AND payment_status IN ('unpaid', 'partially_paid')
       ) + (
         SELECT COALESCE(SUM(balance_amount), 0)
@@ -20,7 +20,7 @@ async function getStats(zodu_id, branch_id) {
       (
         SELECT COUNT(*)
         FROM tbl_sales
-        WHERE zodu_id = $1 AND branch_id = $2
+        WHERE zodu_id = $1 AND branch_id = $2 AND sale_type != 'Q'
           AND payment_status IN ('unpaid', 'partially_paid')
       ) + (
         SELECT COUNT(*)
@@ -63,7 +63,7 @@ async function getStats(zodu_id, branch_id) {
           AND available_qty <= reorder_level
       )                                                                           AS total_alerts
     FROM tbl_sales
-    WHERE zodu_id = $1 AND branch_id = $2`,
+    WHERE zodu_id = $1 AND branch_id = $2 AND sale_type != 'Q'`,
     [zodu_id, branch_id]
   );
   return rows[0];
@@ -71,7 +71,7 @@ async function getStats(zodu_id, branch_id) {
 
 async function getSales(zodu_id, branch_id, limit, cursor) {
   const values = [zodu_id, branch_id, limit];
-  let where = "s.zodu_id = $1 AND s.branch_id = $2";
+  let where = "s.zodu_id = $1 AND s.branch_id = $2 AND s.sale_type != 'Q'";
 
   if (cursor) {
     where += ` AND (
@@ -184,7 +184,7 @@ async function getReminders(zodu_id, branch_id, limit, cursor) {
       NULL::varchar                           AS vendor_name
     FROM tbl_sales s
     LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid
-    WHERE s.zodu_id = $1 AND s.branch_id = $2
+    WHERE s.zodu_id = $1 AND s.branch_id = $2 AND s.sale_type != 'Q'
       AND s.payment_status IN ('unpaid', 'partially_paid')
 
     UNION ALL

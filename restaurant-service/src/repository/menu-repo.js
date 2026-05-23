@@ -176,21 +176,20 @@ exports.getMenuItemByUuid = async (client, item_uuid) => {
  * Paginated list with optional search + filters.
  * Returns { rows, total } — router builds the pagination envelope.
  */
-exports.getMenuItems = async (client, { zodu_id, branch_id, search, category_id, item_type, status, page, limit }) => {
+exports.getMenuItems = async (client, { zodu_id, branch_id, search, category_ids, item_type, status, page, limit }) => {
   const conditions = ["m.zodu_id = $1", "m.branch_id = $2"];
   const values     = [zodu_id, branch_id];
   let   idx        = 3;
 
- 
   if (search) {
     conditions.push(`(m.item_name ILIKE $${idx} OR m.item_id::text ILIKE $${idx} OR m.barcode ILIKE $${idx})`);
     values.push(`%${search}%`);
     idx++;
   }
- 
-  if (category_id != null) {
-    conditions.push(`m.category_id = $${idx++}`);
-    values.push(category_id);
+
+  if (category_ids && category_ids.length > 0) {
+    conditions.push(`m.category_id = ANY($${idx++})`);
+    values.push(category_ids);
   }
  
   if (item_type) {
@@ -366,12 +365,13 @@ exports.getInventorySummary = async (client, { zodu_id, branch_id }) => {
 // ─────────────────────────────────────────────────────────────
 exports.getInventoryList = async (
   client,
-  { zodu_id, branch_id, search, category_id, stock_status, page, limit }
+  { zodu_id, branch_id, search, category_ids, stock_status, page, limit }
 ) => {
+  console.log("repo----", { zodu_id, branch_id, search, category_ids, stock_status, page, limit })
   const conditions = ['i.zodu_id = $1', 'i.branch_id = $2'];
   const values     = [zodu_id, branch_id];
   let   idx        = 3;
- 
+
   if (search) {
     conditions.push(
       `(m.item_name ILIKE $${idx} OR i.item_id ILIKE $${idx} OR m.barcode ILIKE $${idx})`
@@ -379,10 +379,10 @@ exports.getInventoryList = async (
     values.push(`%${search}%`);
     idx++;
   }
- 
-  if (category_id != null) {
-    conditions.push(`m.category_id = $${idx++}`);
-    values.push(category_id);
+
+  if (category_ids && category_ids.length > 0) {
+    conditions.push(`m.category_id = ANY($${idx++})`);
+    values.push(category_ids);
   }
  
   // stock_status filter uses the same CASE expression
@@ -535,6 +535,22 @@ exports.createStockLedger = async (client, data) => {
 };
 
 
+
+// ─────────────────────────────────────────────────────────────
+//  checkItemIdExists
+//  Returns the matching row if item_id exists for zodu_id + branch_id,
+//  otherwise returns null.
+// ─────────────────────────────────────────────────────────────
+exports.checkItemIdExists = async (item_id, zodu_id, branch_id) => {
+  const { rows } = await conn.query(
+    `SELECT item_uuid, item_id, item_name, status
+     FROM tbl_menu_items
+     WHERE item_id = $1 AND zodu_id = $2 AND branch_id = $3
+     LIMIT 1`,
+    [item_id, zodu_id, branch_id]
+  );
+  return rows[0] ?? null;
+};
 
 exports.getStockHistoryRepo = async ({ item_uuid, zodu_id, branch_id }) => {
   // ✅ 1. Get Item + Inventory Details (Always)

@@ -637,6 +637,15 @@ const sales_history_query = Joi.object({
   limit:           Joi.number().integer().min(1).max(100).optional().default(20),
 });
  
+const sales_history_summary_query = Joi.object({
+  zodu_id:        Joi.string().required(),
+  branch_id:      Joi.string().required(),
+  from_date:      Joi.string().isoDate().optional(),
+  to_date:        Joi.string().isoDate().optional(),
+  payment_status: Joi.string().valid("fully_paid", "partially_paid", "unpaid").optional(),
+  search:         Joi.string().optional(),
+});
+
 const sale_by_id_params = Joi.object({
   sale_id:   Joi.string().required(),
   zodu_id:   Joi.string().required(),
@@ -755,6 +764,7 @@ module.exports = {
   expense_item,
   edit_vendor_create,
   sales_history_query,
+  sales_history_summary_query,
   sale_by_id_params,
   get_customers,
   get_customer_by_id,

@@ -1881,6 +1881,16 @@ async function getSalesHistory(filters) {
     return { success: false, message: err.message };
   }
 }
+
+async function getSalesHistorySummary(filters) {
+  try {
+    const data = await repository.getSalesHistorySummary(filters);
+    return { success: true, ...data };
+  } catch (err) {
+    console.error("getSalesHistorySummary Error:", err);
+    return { success: false, message: err.message };
+  }
+}
  
 async function getSaleById(sale_id, zodu_id, branch_id) {
   try {
@@ -2806,6 +2816,7 @@ module.exports = {
   getReportCategory,
   getExpenseReportServices,
   getSalesHistory,
+  getSalesHistorySummary,
   getSaleById,
   deleteSale,
   markSalePayment,

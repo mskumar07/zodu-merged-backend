@@ -233,6 +233,7 @@ exports.updatePurchase = async (client, purchase_id, data) => {
          purchase_date    = $2,
          total_amount     = $3::numeric,
          paid_amount      = $4::numeric,
+         due_date         = $8,
          payment_status   = CASE
                               WHEN $4::numeric >= $3::numeric THEN 'paid'
                               WHEN $4::numeric = 0            THEN 'pending'
@@ -250,6 +251,7 @@ exports.updatePurchase = async (client, purchase_id, data) => {
       data.notes || null,
       data.attachment_url ? JSON.stringify(data.attachment_url) : null,
       String(purchase_id), // ✅ FORCE STRING
+      data.due_date || null,
     ]
   );
 };

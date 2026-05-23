@@ -9,6 +9,7 @@ async function getSalesSummary(zodu_id, branch_id, year) {
       FROM tbl_sales
       WHERE zodu_id = $1 AND branch_id = $2
         AND EXTRACT(YEAR FROM sale_date) = $3
+        AND sale_type != 'Q'
     ),
     monthly AS (
       SELECT
@@ -17,6 +18,7 @@ async function getSalesSummary(zodu_id, branch_id, year) {
       WHERE zodu_id = $1 AND branch_id = $2
         AND EXTRACT(YEAR FROM sale_date)  = $3
         AND EXTRACT(MONTH FROM sale_date) = EXTRACT(MONTH FROM CURRENT_DATE)
+        AND sale_type != 'Q'
     ),
     last_year AS (
       SELECT
@@ -24,6 +26,7 @@ async function getSalesSummary(zodu_id, branch_id, year) {
       FROM tbl_sales
       WHERE zodu_id = $1 AND branch_id = $2
         AND EXTRACT(YEAR FROM sale_date) = $3 - 1
+        AND sale_type != 'Q'
     ),
     top_month AS (
       SELECT
@@ -31,7 +34,7 @@ async function getSalesSummary(zodu_id, branch_id, year) {
         SUM(total_amount) AS month_total
       FROM tbl_sales
       WHERE zodu_id = $1 AND branch_id = $2
-        AND EXTRACT(YEAR FROM sale_date) = $3
+        AND EXTRACT(YEAR FROM sale_date) = $3 AND sale_type != 'Q'
       GROUP BY EXTRACT(MONTH FROM sale_date)
       ORDER BY month_total DESC
       LIMIT 1
@@ -90,7 +93,7 @@ async function getMonthlyBreakdown(zodu_id, branch_id, year, limit, offset) {
        SELECT EXTRACT(MONTH FROM sale_date)
        FROM tbl_sales
        WHERE zodu_id = $1 AND branch_id = $2
-         AND EXTRACT(YEAR FROM sale_date) = $3
+         AND EXTRACT(YEAR FROM sale_date) = $3 AND sale_type != 'Q'
        GROUP BY EXTRACT(MONTH FROM sale_date)
      ) months`,
     [zodu_id, branch_id, year]
@@ -106,7 +109,7 @@ async function getMonthlyBreakdown(zodu_id, branch_id, year, limit, offset) {
       COALESCE(SUM(total_amount), 0)                                        AS net_sales
     FROM tbl_sales
     WHERE zodu_id = $1 AND branch_id = $2
-      AND EXTRACT(YEAR FROM sale_date) = $3
+      AND EXTRACT(YEAR FROM sale_date) = $3 AND sale_type != 'Q'
     GROUP BY EXTRACT(MONTH FROM sale_date)
     ORDER BY month_num ASC
     LIMIT $4 OFFSET $5`,
@@ -352,7 +355,7 @@ async function getDatewiseSaleSummary(zodu_id, branch_id, from_date, to_date) {
      LEFT JOIN tbl_menu_items m
        ON m.item_id = si.item_id AND m.zodu_id = $1 AND m.branch_id = $2
      WHERE s.zodu_id = $1 AND s.branch_id = $2
-       AND s.sale_date BETWEEN $3 AND $4`,
+       AND s.sale_date BETWEEN $3 AND $4 AND s.sale_type != 'Q'`,
     [zodu_id, branch_id, from_date, to_date]
   );
   return rows[0] || null;
@@ -381,7 +384,7 @@ async function getDatewiseSaleBreakdown(zodu_id, branch_id, from_date, to_date, 
      LEFT JOIN tbl_menu_items m
        ON m.item_id = si.item_id AND m.zodu_id = $1 AND m.branch_id = $2
      WHERE s.zodu_id = $1 AND s.branch_id = $2
-       AND s.sale_date BETWEEN $3 AND $4
+       AND s.sale_date BETWEEN $3 AND $4 AND s.sale_type != 'Q'
      GROUP BY s.sale_date
      ORDER BY s.sale_date DESC
      LIMIT $5 OFFSET $6`,

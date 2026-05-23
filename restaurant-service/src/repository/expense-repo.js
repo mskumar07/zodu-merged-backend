@@ -108,7 +108,7 @@ exports.createExpenseLineItems = async (client, items, expense_id) => {
   }
 };
 
-exports.getExpenses = async ({ zodu_id, branch_id, category_id, vendor_id, payment_status, search } = {}) => {
+exports.getExpenses = async ({ zodu_id, branch_id, category_id, vendor_id, payment_status, search, page, limit } = {}) => {
   const conditions = [];
   const values = [];
   let idx = 1;
@@ -126,6 +126,17 @@ exports.getExpenses = async ({ zodu_id, branch_id, category_id, vendor_id, payme
 
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
+  const { rows: countRows } = await conn.query(
+    `SELECT COUNT(*) FROM tbl_expense e ${where}`,
+    values
+  );
+  const totalRecords = parseInt(countRows[0].count, 10);
+
+  const pageNum   = Math.max(1, parseInt(page, 10)  || 1);
+  const limitNum  = Math.max(1, parseInt(limit, 10) || 10);
+  const offset    = (pageNum - 1) * limitNum;
+  const totalPages = Math.ceil(totalRecords / limitNum);
+
   const { rows } = await conn.query(
     `SELECT
        e.*,
@@ -138,10 +149,12 @@ exports.getExpenses = async ({ zodu_id, branch_id, category_id, vendor_id, payme
      LEFT JOIN tbl_category c ON c.id = e.category_id
      LEFT JOIN tbl_vendor v ON v.vendor_id = e.vendor_id AND v.zodu_id = e.zodu_id AND v.branch_id = e.branch_id
      ${where}
-     ORDER BY e.expense_date DESC, e.created_at DESC NULLS LAST`,
-    values
+     ORDER BY e.expense_date DESC, e.created_at DESC NULLS LAST
+     LIMIT $${idx} OFFSET $${idx + 1}`,
+    [...values, limitNum, offset]
   );
-  return rows;
+
+  return { data: rows, currentPage: pageNum, totalPages, totalRecords, limit: limitNum };
 };
 
 exports.getExpenseById = async (id, { branch_id, zodu_id } = {}) => {
@@ -154,11 +167,23 @@ exports.getExpenseById = async (id, { branch_id, zodu_id } = {}) => {
   const { rows: expenseRows } = await conn.query(
     `SELECT
        e.*,
+       v.vendor_name,
+       v.company_name,
+       v.gst,
+       v.vendor_phone,
+       v.vendor_email,
+       v.vendor_address_1,
+        v.vendor_address_2,
+        v.city As vendor_city,
+        v.state As vendor_state,
+        v.pincode As vendor_pincode,
+        v.vendor_type,
        c.name AS category_name,
        TO_CHAR(e.expense_date, 'DD Mon YYYY') AS expense_date_formatted,
        TO_CHAR(e.due_date,     'DD Mon YYYY') AS due_date_formatted
      FROM tbl_expense e
      LEFT JOIN tbl_category c ON c.id = e.category_id
+    LEFT JOIN tbl_vendor v ON v.vendor_id = e.vendor_id AND v.zodu_id = e.zodu_id AND v.branch_id = e.branch_id
      WHERE ${conditions.join(" AND ")}`,
     values
   );
@@ -209,6 +234,30 @@ exports.deleteExpenseLineItems = async (client, expense_id) => {
   await client.query(`DELETE FROM tbl_expense_items WHERE expense_id = $1`, [expense_id]);
 };
 
+exports.UpdateExpensePayment = async (expense_id, data) => {
+  const client = await conn.connect();
+  try {
+    await client.query("BEGIN");
+
+    const updated = await client.query(
+      `UPDATE tbl_expense_payment
+       SET paid_amount = $1,
+           transaction_type = $2
+       WHERE expense_id = $3
+       RETURNING *`,
+      [data.paid_amount, expense_id]
+    );
+
+    await client.query("COMMIT");
+    return { success: true, data: updated.rows[0] };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    return { success: false, message: err.message };
+  } finally {
+    client.release();
+  }
+};
+
 exports.updateExpense = async (client, expense_id, data) => {
   const totalAmount = Number(data.total_amount) || 0;
   const paidAmount  = Number(data.paid_amount)  || 0;
@@ -220,6 +269,7 @@ exports.updateExpense = async (client, expense_id, data) => {
          vendor_id      = $3,
          total_amount   = $4::numeric,
          paid_amount    = $5::numeric,
+         due_date      = $9,
          payment_status = CASE
                             WHEN $5::numeric >= $4::numeric THEN 'paid'
                             WHEN $5::numeric = 0            THEN 'pending'
@@ -238,6 +288,7 @@ exports.updateExpense = async (client, expense_id, data) => {
       data.notes          || null,
       data.attachment_url ? JSON.stringify(data.attachment_url) : null,
       String(expense_id),
+      data.due_date       || null,
     ]
   );
 };
