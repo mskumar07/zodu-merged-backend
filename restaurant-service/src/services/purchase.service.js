@@ -173,6 +173,7 @@ exports.getPurchaseSummary = async ({ zodu_id, branch_id }) => {
          COUNT(*)::text                                          AS total_purchase_count,
          COALESCE(SUM(paid_amount),    0)::text                 AS total_paid_amount,
          COALESCE(SUM(balance_amount), 0)::text                 AS total_unpaid_amount,
+         COALESCE(SUM(total_amount), 0)::text                 AS total_amount,
          COALESCE(SUM(
            CASE
              WHEN DATE_TRUNC('month', purchase_date) = DATE_TRUNC('month', CURRENT_DATE)

@@ -2,68 +2,90 @@ const conn = require("../database/connection");
 
 async function getStats(zodu_id, branch_id) {
   const { rows } = await conn.query(
-    `SELECT
-      COALESCE(SUM(total_amount), 0)                                              AS total_sales,
-      COUNT(*)                                                                    AS total_invoices,
-      COALESCE(SUM(CASE WHEN sale_date = CURRENT_DATE THEN total_amount END), 0) AS todays_revenue,
-      (
-        SELECT COALESCE(SUM(balance_amount), 0)
+    `WITH
+      -- Single scan of tbl_sales: covers total_sales, total_invoices, todays_revenue,
+      -- total_due (sales side), total_reminders (sales side), total_due_to_receivable_amount
+      sales_agg AS (
+        SELECT
+          COALESCE(SUM(total_amount), 0)                                                AS total_sales,
+          COUNT(*)                                                                      AS total_invoices,
+          COALESCE(SUM(CASE WHEN sale_date = CURRENT_DATE THEN total_amount END), 0)   AS todays_revenue,
+          COALESCE(SUM(CASE WHEN payment_status IN ('unpaid','partially_paid')
+                            THEN balance_amount END), 0)                               AS sales_due_balance,
+          COUNT(CASE WHEN payment_status IN ('unpaid','partially_paid') THEN 1 END)    AS sales_due_count,
+          COALESCE(SUM(balance_amount), 0)                                             AS total_due_to_receivable_amount
         FROM tbl_sales
         WHERE zodu_id = $1 AND branch_id = $2 AND sale_type != 'Q'
-          AND payment_status IN ('unpaid', 'partially_paid')
-      ) + (
-        SELECT COALESCE(SUM(balance_amount), 0)
+      ),
+
+      -- Single scan of tbl_purchase: covers total_due (purchase side),
+      -- total_reminders (purchase side), total_due_to_payable_amount (purchase side)
+      purchase_agg AS (
+        SELECT
+          COALESCE(SUM(CASE WHEN payment_status IN ('pending','partial')
+                            THEN balance_amount END), 0)                               AS purchase_due_balance,
+          COUNT(CASE WHEN payment_status IN ('pending','partial') THEN 1 END)          AS purchase_due_count,
+          COALESCE(SUM(balance_amount), 0)                                             AS purchase_payable_balance
         FROM tbl_purchase
         WHERE zodu_id = $1 AND branch_id = $2
-          AND payment_status IN ('pending', 'partial')
-      )                                                                           AS total_due,
-      (
-        SELECT COUNT(*)
-        FROM tbl_sales
-        WHERE zodu_id = $1 AND branch_id = $2 AND sale_type != 'Q'
-          AND payment_status IN ('unpaid', 'partially_paid')
-      ) + (
-        SELECT COUNT(*)
-        FROM tbl_purchase
-        WHERE zodu_id = $1 AND branch_id = $2
-          AND payment_status IN ('pending', 'partial')
-      )                                                                           AS total_reminders,
-      (
-        SELECT si.item_name
+      ),
+
+      -- Single scan of tbl_sale_items: covers top_item_name, top_item_sold, total_sold
+      sale_items_agg AS (
+        SELECT
+          si.item_name,
+          SUM(si.quantity) AS qty
         FROM tbl_sale_items si
         JOIN tbl_sales s ON s.sale_uuid = si.sale_uuid
         WHERE s.zodu_id = $1 AND s.branch_id = $2
         GROUP BY si.item_name
-        ORDER BY SUM(si.quantity) DESC
+      ),
+      top_item AS (
+        SELECT item_name AS top_item_name, qty AS top_item_sold
+        FROM sale_items_agg
+        ORDER BY qty DESC
         LIMIT 1
-      )                                                                           AS top_item_name,
-      (
-        SELECT SUM(si.quantity)
-        FROM tbl_sale_items si
-        JOIN tbl_sales s ON s.sale_uuid = si.sale_uuid
-        WHERE s.zodu_id = $1 AND s.branch_id = $2
-        GROUP BY si.item_name
-        ORDER BY SUM(si.quantity) DESC
-        LIMIT 1
-      )                                                                           AS top_item_sold,
-      (
-        SELECT COALESCE(SUM(si.quantity), 0)
-        FROM tbl_sale_items si
-        JOIN tbl_sales s ON s.sale_uuid = si.sale_uuid
-        WHERE s.zodu_id = $1 AND s.branch_id = $2
-      )                                                                           AS total_sold,
-      (
-        SELECT COUNT(*) FROM tbl_inventory
+      ),
+      items_total AS (
+        SELECT COALESCE(SUM(qty), 0) AS total_sold
+        FROM sale_items_agg
+      ),
+
+      -- Single scan of tbl_inventory: covers out_of_stock_count and total_alerts
+      inventory_agg AS (
+        SELECT
+          COUNT(CASE WHEN available_qty = 0 THEN 1 END)              AS out_of_stock_count,
+          COUNT(CASE WHEN available_qty <= reorder_level THEN 1 END) AS total_alerts
+        FROM tbl_inventory
         WHERE zodu_id = $1 AND branch_id = $2
-          AND available_qty = 0
-      )                                                                           AS out_of_stock_count,
-      (
-        SELECT COUNT(*) FROM tbl_inventory
+      ),
+
+      -- Single scan of tbl_expense: covers total_due_to_payable_amount (expense side)
+      expense_agg AS (
+        SELECT COALESCE(SUM(balance_amount), 0) AS expense_payable_balance
+        FROM tbl_expense
         WHERE zodu_id = $1 AND branch_id = $2
-          AND available_qty <= reorder_level
-      )                                                                           AS total_alerts
-    FROM tbl_sales
-    WHERE zodu_id = $1 AND branch_id = $2 AND sale_type != 'Q'`,
+      )
+
+    SELECT
+      sa.total_sales,
+      sa.total_invoices,
+      sa.todays_revenue,
+      sa.sales_due_balance + pa.purchase_due_balance                         AS total_due,
+      sa.sales_due_count   + pa.purchase_due_count                           AS total_reminders,
+      ti.top_item_name,
+      ti.top_item_sold,
+      it.total_sold,
+      ia.out_of_stock_count,
+      ia.total_alerts,
+      sa.total_due_to_receivable_amount,
+      ea.expense_payable_balance + pa.purchase_payable_balance               AS total_due_to_payable_amount
+    FROM       sales_agg    sa
+    CROSS JOIN purchase_agg pa
+    CROSS JOIN top_item      ti
+    CROSS JOIN items_total   it
+    CROSS JOIN inventory_agg ia
+    CROSS JOIN expense_agg   ea`,
     [zodu_id, branch_id]
   );
   return rows[0];
