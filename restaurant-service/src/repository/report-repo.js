@@ -343,19 +343,25 @@ async function getSalesVelocity(zodu_id, branch_id, from_date, to_date) {
 // ── Datewise Sale Report ──────────────────────────────────────
 async function getDatewiseSaleSummary(zodu_id, branch_id, from_date, to_date) {
   const { rows } = await conn.query(
-    `SELECT
-       COUNT(DISTINCT s.sale_uuid)                                         AS total_orders,
-       COALESCE(SUM(s.total_amount), 0)                                   AS total_sales,
-       COALESCE(SUM(s.total_tax), 0)                                      AS total_tax,
-       COALESCE(SUM(
-         si.quantity * (si.price - COALESCE(m.purchase_price, 0))
-       ), 0)                                                               AS total_profit
+    `WITH profit_per_sale AS (
+       SELECT
+         si.sale_uuid,
+         SUM(si.quantity * (si.price - COALESCE(m.purchase_price, 0))) AS sale_profit
+       FROM tbl_sale_items si
+       LEFT JOIN tbl_menu_items m
+         ON m.item_id = si.item_id AND m.zodu_id = $1 AND m.branch_id = $2
+       GROUP BY si.sale_uuid
+     )
+     SELECT
+       COUNT(DISTINCT s.sale_uuid)          AS total_orders,
+       COALESCE(SUM(s.total_amount), 0)     AS total_sales,
+       COALESCE(SUM(s.total_tax), 0)        AS total_tax,
+       COALESCE(SUM(p.sale_profit), 0)      AS total_profit
      FROM tbl_sales s
-     JOIN tbl_sale_items si ON si.sale_uuid = s.sale_uuid
-     LEFT JOIN tbl_menu_items m
-       ON m.item_id = si.item_id AND m.zodu_id = $1 AND m.branch_id = $2
+     LEFT JOIN profit_per_sale p ON p.sale_uuid = s.sale_uuid
      WHERE s.zodu_id = $1 AND s.branch_id = $2
-       AND s.sale_date BETWEEN $3 AND $4 AND s.sale_type != 'Q'`,
+       AND s.sale_date BETWEEN $3 AND $4
+       AND s.sale_type != 'Q'`,
     [zodu_id, branch_id, from_date, to_date]
   );
   return rows[0] || null;
@@ -366,25 +372,32 @@ async function getDatewiseSaleBreakdown(zodu_id, branch_id, from_date, to_date, 
     `SELECT COUNT(DISTINCT sale_date) AS total
      FROM tbl_sales
      WHERE zodu_id = $1 AND branch_id = $2
-       AND sale_date BETWEEN $3 AND $4`,
+       AND sale_date BETWEEN $3 AND $4
+       AND sale_type != 'Q'`,
     [zodu_id, branch_id, from_date, to_date]
   );
 
   const { rows } = await conn.query(
-    `SELECT
+    `WITH profit_per_sale AS (
+       SELECT
+         si.sale_uuid,
+         SUM(si.quantity * (si.price - COALESCE(m.purchase_price, 0))) AS sale_profit
+       FROM tbl_sale_items si
+       LEFT JOIN tbl_menu_items m
+         ON m.item_id = si.item_id AND m.zodu_id = $1 AND m.branch_id = $2
+       GROUP BY si.sale_uuid
+     )
+     SELECT
        s.sale_date,
-       COUNT(DISTINCT s.sale_uuid)::int                                   AS total_orders,
-       COALESCE(SUM(s.total_amount), 0)                                   AS total_sales,
-       COALESCE(SUM(s.total_tax), 0)                                      AS total_tax,
-       COALESCE(SUM(
-         si.quantity * (si.price - COALESCE(m.purchase_price, 0))
-       ), 0)                                                               AS total_profit
+       COUNT(DISTINCT s.sale_uuid)::int     AS total_orders,
+       COALESCE(SUM(s.total_amount), 0)     AS total_sales,
+       COALESCE(SUM(s.total_tax), 0)        AS total_tax,
+       COALESCE(SUM(p.sale_profit), 0)      AS total_profit
      FROM tbl_sales s
-     JOIN tbl_sale_items si ON si.sale_uuid = s.sale_uuid
-     LEFT JOIN tbl_menu_items m
-       ON m.item_id = si.item_id AND m.zodu_id = $1 AND m.branch_id = $2
+     LEFT JOIN profit_per_sale p ON p.sale_uuid = s.sale_uuid
      WHERE s.zodu_id = $1 AND s.branch_id = $2
-       AND s.sale_date BETWEEN $3 AND $4 AND s.sale_type != 'Q'
+       AND s.sale_date BETWEEN $3 AND $4
+       AND s.sale_type != 'Q'
      GROUP BY s.sale_date
      ORDER BY s.sale_date DESC
      LIMIT $5 OFFSET $6`,
@@ -546,6 +559,161 @@ async function getExpenseDatewiseBreakdown(zodu_id, branch_id, from_date, to_dat
   return { rows, total: parseInt(countResult.rows[0]?.total || 0) };
 }
 
+// ── Profit Calculation (monthly breakdown for a given year) ──
+async function getProfitByYear(zodu_id, branch_id, year) {
+  const { rows } = await conn.query(
+    `WITH months AS (
+       SELECT generate_series(1, 12) AS month_num
+     ),
+     sales_data AS (
+       SELECT
+         EXTRACT(MONTH FROM sale_date)::int AS month_num,
+         COALESCE(SUM(total_amount), 0)     AS total_sales
+       FROM tbl_sales
+       WHERE zodu_id = $1 AND branch_id = $2
+         AND EXTRACT(YEAR FROM sale_date) = $3::int
+         AND sale_type != 'Q'
+       GROUP BY EXTRACT(MONTH FROM sale_date)
+     ),
+     purchase_data AS (
+       SELECT
+         EXTRACT(MONTH FROM purchase_date)::int AS month_num,
+         COALESCE(SUM(total_amount), 0)          AS total_purchase
+       FROM tbl_purchase
+       WHERE zodu_id = $1 AND branch_id = $2
+         AND EXTRACT(YEAR FROM purchase_date) = $3::int
+       GROUP BY EXTRACT(MONTH FROM purchase_date)
+     ),
+     expense_data AS (
+       SELECT
+         EXTRACT(MONTH FROM expense_date)::int AS month_num,
+         COALESCE(SUM(total_amount), 0)         AS total_expense
+       FROM tbl_expense
+       WHERE zodu_id = $1 AND branch_id = $2
+         AND EXTRACT(YEAR FROM expense_date) = $3::int
+       GROUP BY EXTRACT(MONTH FROM expense_date)
+     )
+     SELECT
+       m.month_num,
+       TO_CHAR(TO_DATE(m.month_num::text, 'MM'), 'Month') AS month_name,
+       COALESCE(s.total_sales,    0) AS total_sales,
+       COALESCE(p.total_purchase, 0) AS total_purchase,
+       COALESCE(e.total_expense,  0) AS total_expense,
+       COALESCE(s.total_sales, 0)
+         - COALESCE(p.total_purchase, 0)
+         - COALESCE(e.total_expense,  0)              AS profit
+     FROM months m
+     LEFT JOIN sales_data    s ON s.month_num = m.month_num
+     LEFT JOIN purchase_data p ON p.month_num = m.month_num
+     LEFT JOIN expense_data  e ON e.month_num = m.month_num
+     ORDER BY m.month_num ASC`,
+    [zodu_id, branch_id, year]
+  );
+  return rows;
+}
+
+// ── Active Years for Profit Dropdown ──────────────────────────
+async function getProfitActiveYears(zodu_id, branch_id) {
+  const { rows } = await conn.query(
+    `SELECT DISTINCT year
+     FROM (
+       SELECT EXTRACT(YEAR FROM sale_date)::int     AS year FROM tbl_sales    WHERE zodu_id = $1 AND branch_id = $2 AND sale_type != 'Q'
+       UNION
+       SELECT EXTRACT(YEAR FROM purchase_date)::int AS year FROM tbl_purchase WHERE zodu_id = $1 AND branch_id = $2
+       UNION
+       SELECT EXTRACT(YEAR FROM expense_date)::int  AS year FROM tbl_expense  WHERE zodu_id = $1 AND branch_id = $2
+     ) all_years
+     ORDER BY year DESC`,
+    [zodu_id, branch_id]
+  );
+  return rows.map((r) => r.year);
+}
+
+// ── Profit Year-wise Summary (paginated) ──────────────────────
+async function getProfitYearwise(zodu_id, branch_id, limit, offset) {
+  const [{ rows }, { rows: countRows }, { rows: summaryRows }] = await Promise.all([
+
+    // data rows — one row per year
+    conn.query(
+      `SELECT
+         y.year,
+         COALESCE(s.total_sales,    0) AS total_sales,
+         COALESCE(p.total_purchase, 0) AS total_purchase,
+         COALESCE(e.total_expense,  0) AS total_expense,
+         COALESCE(s.total_sales,    0)
+           - COALESCE(p.total_purchase, 0)
+           - COALESCE(e.total_expense,  0) AS profit
+       FROM (
+         SELECT EXTRACT(YEAR FROM sale_date)::int     AS year FROM tbl_sales    WHERE zodu_id = $1 AND branch_id = $2 AND sale_type != 'Q'
+         UNION
+         SELECT EXTRACT(YEAR FROM purchase_date)::int AS year FROM tbl_purchase WHERE zodu_id = $1 AND branch_id = $2
+         UNION
+         SELECT EXTRACT(YEAR FROM expense_date)::int  AS year FROM tbl_expense  WHERE zodu_id = $1 AND branch_id = $2
+       ) y
+       LEFT JOIN (
+         SELECT EXTRACT(YEAR FROM sale_date)::int AS year,
+                SUM(total_amount)                 AS total_sales
+         FROM   tbl_sales
+         WHERE  zodu_id = $1 AND branch_id = $2 AND sale_type != 'Q'
+         GROUP  BY EXTRACT(YEAR FROM sale_date)
+       ) s ON s.year = y.year
+       LEFT JOIN (
+         SELECT EXTRACT(YEAR FROM purchase_date)::int AS year,
+                SUM(total_amount)                      AS total_purchase
+         FROM   tbl_purchase
+         WHERE  zodu_id = $1 AND branch_id = $2
+         GROUP  BY EXTRACT(YEAR FROM purchase_date)
+       ) p ON p.year = y.year
+       LEFT JOIN (
+         SELECT EXTRACT(YEAR FROM expense_date)::int AS year,
+                SUM(total_amount)                     AS total_expense
+         FROM   tbl_expense
+         WHERE  zodu_id = $1 AND branch_id = $2
+         GROUP  BY EXTRACT(YEAR FROM expense_date)
+       ) e ON e.year = y.year
+       ORDER  BY y.year DESC
+       LIMIT  $3 OFFSET $4`,
+      [zodu_id, branch_id, limit, offset]
+    ),
+
+    // total distinct year count for pagination meta
+    conn.query(
+      `SELECT COUNT(DISTINCT year)::int AS total
+       FROM (
+         SELECT EXTRACT(YEAR FROM sale_date)::int     AS year FROM tbl_sales    WHERE zodu_id = $1 AND branch_id = $2 AND sale_type != 'Q'
+         UNION
+         SELECT EXTRACT(YEAR FROM purchase_date)::int AS year FROM tbl_purchase WHERE zodu_id = $1 AND branch_id = $2
+         UNION
+         SELECT EXTRACT(YEAR FROM expense_date)::int  AS year FROM tbl_expense  WHERE zodu_id = $1 AND branch_id = $2
+       ) all_years`,
+      [zodu_id, branch_id]
+    ),
+
+    // overall summary — all years combined
+    conn.query(
+      `SELECT
+         COALESCE(SUM(s.total_amount), 0) AS total_sales,
+         COALESCE(SUM(p.total_amount), 0) AS total_purchase,
+         COALESCE(SUM(e.total_amount), 0) AS total_expense
+       FROM
+         (SELECT SUM(total_amount) AS total_amount FROM tbl_sales    WHERE zodu_id = $1 AND branch_id = $2 AND sale_type != 'Q') s,
+         (SELECT SUM(total_amount) AS total_amount FROM tbl_purchase WHERE zodu_id = $1 AND branch_id = $2) p,
+         (SELECT SUM(total_amount) AS total_amount FROM tbl_expense  WHERE zodu_id = $1 AND branch_id = $2) e`,
+      [zodu_id, branch_id]
+    ),
+  ]);
+
+  const s = summaryRows[0];
+  const overall_summary = {
+    total_sales:    parseFloat(s.total_sales    || 0),
+    total_purchase: parseFloat(s.total_purchase || 0),
+    total_expense:  parseFloat(s.total_expense  || 0),
+    profit:         parseFloat(s.total_sales || 0) - parseFloat(s.total_purchase || 0) - parseFloat(s.total_expense || 0),
+  };
+
+  return { rows, total: parseInt(countRows[0]?.total || 0), overall_summary };
+}
+
 module.exports = {
   getSalesSummary,
   getMonthlyBreakdown,
@@ -564,4 +732,7 @@ module.exports = {
   getExpenseMonthlyBreakdown,
   getExpenseDatewiseSummary,
   getExpenseDatewiseBreakdown,
+  getProfitByYear,
+  getProfitActiveYears,
+  getProfitYearwise,
 };

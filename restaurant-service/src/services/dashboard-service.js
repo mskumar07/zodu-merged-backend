@@ -45,7 +45,9 @@ async function getStats(zodu_id, branch_id) {
     top_item_sold:      raw.top_item_sold ? parseInt(raw.top_item_sold) : 0,
     total_sold:         parseInt(raw.total_sold),
     out_of_stock_count: parseInt(raw.out_of_stock_count),
-    total_alerts:       parseInt(raw.total_alerts),
+    total_alerts: parseInt(raw.total_alerts),
+    total_due_to_payable_amount: parseFloat(raw.total_due_to_payable_amount),
+    total_due_to_receivable_amount : parseFloat(raw.total_due_to_receivable_amount),
   };
 }
 

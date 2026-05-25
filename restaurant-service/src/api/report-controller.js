@@ -269,4 +269,54 @@ router.get("/expense/datewise", async (req, res) => {
   }
 });
 
+// ── PROFIT REPORT ────────────────────────────────────────────
+
+// GET /api/report/profit/yearwise?zodu_id=&branch_id=&page=&limit=
+// Year-wise profit summary table with pagination
+// Each row = one year's total sales, purchase, expense, profit
+router.get("/profit/yearwise", async (req, res) => {
+  const { zodu_id, branch_id, page = 1, limit = 10 } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"])) return;
+
+  try {
+    const result = await service.getProfitYearwise(zodu_id, branch_id, page, limit);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error("[report] getProfitYearwise:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/report/profit/active-years?zodu_id=&branch_id=
+// Returns only years that have at least one sales/purchase/expense record
+// Call once on page load to populate the year dropdown
+router.get("/profit/active-years", async (req, res) => {
+  const { zodu_id, branch_id } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"])) return;
+
+  try {
+    const data = await service.getProfitActiveYears(zodu_id, branch_id);
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error("[report] getProfitActiveYears:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/report/profit?zodu_id=&branch_id=&year=
+// Monthly profit breakdown + yearly summary
+// Profit = Sales total_amount - Purchase total_amount - Expense total_amount
+router.get("/profit", async (req, res) => {
+  const { zodu_id, branch_id, year } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"])) return;
+
+  try {
+    const data = await service.getProfitByYear(zodu_id, branch_id, year);
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error("[report] getProfitByYear:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 module.exports = router;

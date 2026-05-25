@@ -437,6 +437,72 @@ async function getExpenseDatewiseBreakdown(zodu_id, branch_id, from_date, to_dat
   };
 }
 
+// ── Profit Calculation ────────────────────────────────────────
+async function getProfitByYear(zodu_id, branch_id, year) {
+  const currentYear = new Date().getFullYear();
+  const targetYear  = parseInt(year) || currentYear;
+
+  const rows = await repo.getProfitByYear(zodu_id, branch_id, targetYear);
+
+  // Build monthly breakdown
+  const monthly_data = rows.map((r) => ({
+    month_num:      r.month_num,
+    month_name:     r.month_name.trim(),
+    total_sales:    parseFloat(r.total_sales),
+    total_purchase: parseFloat(r.total_purchase),
+    total_expense:  parseFloat(r.total_expense),
+    profit:         parseFloat(r.profit),
+  }));
+
+  // Yearly totals (sum across all 12 months)
+  const yearly_sales    = monthly_data.reduce((s, r) => s + r.total_sales,    0);
+  const yearly_purchase = monthly_data.reduce((s, r) => s + r.total_purchase, 0);
+  const yearly_expense  = monthly_data.reduce((s, r) => s + r.total_expense,  0);
+  const yearly_profit   = yearly_sales - yearly_purchase - yearly_expense;
+
+  return {
+    year: targetYear,
+    yearly_summary: {
+      total_sales:    parseFloat(yearly_sales.toFixed(2)),
+      total_purchase: parseFloat(yearly_purchase.toFixed(2)),
+      total_expense:  parseFloat(yearly_expense.toFixed(2)),
+      profit:         parseFloat(yearly_profit.toFixed(2)),
+    },
+    monthly_data,
+  };
+}
+
+// ── Profit Year-wise Summary (paginated) ──────────────────────
+async function getProfitYearwise(zodu_id, branch_id, page, limit) {
+  const { page: pg, limit: lmt, offset } = getPagination({ page, limit });
+  const { rows, total, overall_summary } = await repo.getProfitYearwise(zodu_id, branch_id, lmt, offset);
+
+  const data = rows.map((r) => ({
+    year:           r.year,
+    total_sales:    parseFloat(r.total_sales),
+    total_purchase: parseFloat(r.total_purchase),
+    total_expense:  parseFloat(r.total_expense),
+    profit:         parseFloat(r.profit),
+  }));
+
+  return {
+    overall_summary: {
+      total_sales:    parseFloat(overall_summary.total_sales.toFixed(2)),
+      total_purchase: parseFloat(overall_summary.total_purchase.toFixed(2)),
+      total_expense:  parseFloat(overall_summary.total_expense.toFixed(2)),
+      profit:         parseFloat(overall_summary.profit.toFixed(2)),
+    },
+    data,
+    pagination: getMeta({ page: pg, limit: lmt, total }),
+  };
+}
+
+// ── Active Years for Profit Dropdown ─────────────────────────
+async function getProfitActiveYears(zodu_id, branch_id) {
+  const years = await repo.getProfitActiveYears(zodu_id, branch_id);
+  return { active_years: years };
+}
+
 module.exports = {
   getSalesSummary,
   getMonthlyBreakdown,
@@ -455,4 +521,7 @@ module.exports = {
   getExpenseMonthlyBreakdown,
   getExpenseDatewiseSummary,
   getExpenseDatewiseBreakdown,
+  getProfitByYear,
+  getProfitYearwise,
+  getProfitActiveYears,
 };
