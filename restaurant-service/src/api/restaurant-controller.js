@@ -1241,12 +1241,55 @@ router.put("/api/update/inventory", async (req, res) => {
 })
 
 router.get("/get/category/:type/:branch_id/:zodu_id", async (req, res) => {
-
   try {
     const { type, branch_id, zodu_id } = req.params;
-    const getCategoryData = await service.getCategoryData(type, branch_id, zodu_id);
+    const page  = parseInt(req.query.page  ?? 1,  10) || 1;
+    const limit = parseInt(req.query.limit ?? 10, 10) || 10;
+
+    const getCategoryData = await service.getCategoryData(type, branch_id, zodu_id, page, limit);
     if (!getCategoryData.success) return res.status(400).json({ message: getCategoryData.message });
-    return res.status(201).json({ message: "Data Get Successfully", Data: getCategoryData.data });
+
+    return res.status(200).json({
+      message: "Data Get Successfully",
+      pagination: {
+        current_page: page,
+        total_pages:  getCategoryData.total_pages,
+        total_count:  getCategoryData.total_count,
+        limit,
+      },
+      Data: getCategoryData.data,
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.get("/get/category/:zodu_id/:branch_id", async (req, res) => {
+  try {
+    const { branch_id, zodu_id } = req.params;
+    const page  = parseInt(req.query.page  ?? 1,  10) || 1;
+    const limit = parseInt(req.query.limit ?? 10, 10) || 10;
+
+    // Handle ?type=S&type=M  OR  ?type[]=S&type[]=M  OR  ?type=S
+    const rawType = req.query.type ?? req.query['type[]'];
+    const types = rawType
+      ? (Array.isArray(rawType) ? rawType : [rawType]).map(t => t.trim()).filter(Boolean)
+      : [];
+
+    const getCategoryData = await service.getAllCategoryData(types, branch_id, zodu_id, page, limit);
+    if (!getCategoryData.success) return res.status(400).json({ message: getCategoryData.message });
+
+    return res.status(200).json({
+      message: "Category Data Get Successfully",
+      pagination: {
+        current_page: page,
+        total_pages:  getCategoryData.total_pages,
+        total_count:  getCategoryData.total_count,
+        limit,
+      },
+      Data: getCategoryData.data,
+    });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: error.message });
@@ -1267,8 +1310,10 @@ router.post("/add/category", async (req, res) => {
 
 router.put("/update/category/:id", async (req, res) => {
   try {
-    const { name, type, branch_id } = req.body;
-    const data = await service.updateCategoryData(req.params.id, name, type, branch_id);
+    console.log("update category", req.params.id, req.body)
+    const { name, type, zodu_id, branch_id } = req.body;
+    console.log(req.params.id, name, type, zodu_id, branch_id,"----------")
+    const data = await service.updateCategoryData(req.params.id, name, type, zodu_id, branch_id);
     if (!data.success) return res.status(400).json({ message: data.message });
     return res.status(201).json({ message: "Category updated successfully", data: data.data });
   } catch (error) {
@@ -1277,9 +1322,23 @@ router.put("/update/category/:id", async (req, res) => {
   }
 });
 
-router.delete("/delete/category/:id/:branch_id", async (req, res) => {
+router.put("/inactivate/category/:id", async (req, res) => {
   try {
-    const data = await service.deleteCategoryData(req.params.id, req.params.branch_id);
+    const { zodu_id, branch_id, active, page_expense } = req.body;
+    const data = await service.InactivateCategory(req.params.id, zodu_id, branch_id, active, page_expense);
+    if (!data.success) return res.status(400).json({ message: data.message });
+    return res.status(201).json({ message: "Status Updated successfully" });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+
+router.delete("/delete/category/:id/:branch_id/:zodu_id/:page_expense", async (req, res) => {
+  try {
+    const { id, zodu_id, branch_id, page_expense } = req.params;
+    const data = await service.deleteCategoryData(id, branch_id, zodu_id, page_expense);
     if (!data.success) return res.status(400).json({ message: data.message });
     return res.status(201).json({ message: "Category deleted successfully" });
   } catch (error) {

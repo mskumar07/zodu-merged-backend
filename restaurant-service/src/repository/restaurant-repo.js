@@ -265,19 +265,99 @@ exports.findMaxZoduId = async () => {
 //     'SELECT name,zodu_id,branch_id,active FROM tbl_category');
 // }
 
-exports.get_category_data = async (type,branch_id, zodu_id) => {
+exports.get_category_data = async (type, branch_id, zodu_id, page = 1, limit = 10) => {
   try {
+    const offset = (page - 1) * limit;
 
-    const query = `
+    const dataQuery = `
       SELECT *
       FROM tbl_category
-      WHERE type = $1 AND branch_id = $2 AND zodu_id = $3
-      ORDER BY id ASC
+      WHERE type = $1 AND branch_id = $2 AND zodu_id = $3 AND active = true
+      ORDER BY id DESC
+      LIMIT $4 OFFSET $5
     `;
 
-    const result = await conn.query(query, [type, branch_id, zodu_id]);
+    const countQuery = `
+      SELECT COUNT(*)::int AS total_count
+      FROM tbl_category
+      WHERE type = $1 AND branch_id = $2 AND zodu_id = $3 And active = true
+    `;
 
-    return result.rows;
+    const [dataResult, countResult] = await Promise.all([
+      conn.query(dataQuery,  [type, branch_id, zodu_id, limit, offset]),
+      conn.query(countQuery, [type, branch_id, zodu_id]),
+    ]);
+
+    const total_count = countResult.rows[0].total_count;
+    const total_pages = Math.ceil(total_count / limit);
+
+    return {
+      rows: dataResult.rows,
+      total_count,
+      total_pages,
+    };
+  } catch (err) {
+    throw new Error("Unable to fetch category data: " + err.message);
+  }
+}
+
+exports.get_all_category_data = async (types, branch_id, zodu_id, page = 1, limit = 10) => {
+  try {
+    const offset = (page - 1) * limit;
+
+    // types is an array e.g. ['S','M']. If empty, return all types.
+    const typeFilter = types && types.length > 0 ? `AND type = ANY($1)` : "";
+    const baseParams = types && types.length > 0
+      ? [types, branch_id, zodu_id]
+      : [branch_id, zodu_id];
+    const branchIdx  = types && types.length > 0 ? 2 : 1;
+    const zoduIdx    = types && types.length > 0 ? 3 : 2;
+    const limitIdx   = baseParams.length + 1;
+    const offsetIdx  = baseParams.length + 2;
+
+    const dataQuery = `
+      SELECT
+        id,
+        zodu_id,
+        branch_id,
+        name,
+        active,
+        created_at,
+        updated_at,
+        type AS type_code,
+        CASE type
+          WHEN 'S' THEN 'Sellable'
+          WHEN 'E' THEN 'Expense'
+          WHEN 'M' THEN 'Service'
+          ELSE type
+        END AS type
+      FROM tbl_category
+      WHERE branch_id = $${branchIdx} AND zodu_id = $${zoduIdx}
+        ${typeFilter}
+      ORDER BY active DESC, id DESC
+      LIMIT $${limitIdx} OFFSET $${offsetIdx}
+    `;
+
+    const countQuery = `
+      SELECT COUNT(*)::int AS total_count
+      FROM tbl_category
+      WHERE branch_id = $${branchIdx} AND zodu_id = $${zoduIdx}
+        ${typeFilter}
+    `;
+
+    const [dataResult, countResult] = await Promise.all([
+      conn.query(dataQuery,  [...baseParams, limit, offset]),
+      conn.query(countQuery, baseParams),
+    ]);
+
+    const total_count = countResult.rows[0].total_count;
+    const total_pages = Math.ceil(total_count / limit);
+
+    return {
+      rows:        dataResult.rows,
+      total_count,
+      total_pages,
+    };
   } catch (err) {
     throw new Error("Unable to fetch category data: " + err.message);
   }
@@ -2583,15 +2663,15 @@ exports.createCategory = async (zodu_id, branch_id, name, type) => {
   }
 }
 
-exports.updateCategory = async (id, name, type, branch_id) => {
+exports.updateCategory = async (id, name, type, zodu_id, branch_id) => {
   try {
     const query = `
       UPDATE tbl_category
       SET name = $1,type = $3,updated_at = CURRENT_TIMESTAMP
-      WHERE id = $2 AND branch_id = $4
+      WHERE id = $2 AND branch_id = $4 AND zodu_id = $5
       RETURNING *;
     `;
-    const values = [name, id, type, branch_id];
+    const values = [name, id, type, branch_id, zodu_id];
     const result = await conn.query(query, values);
     return result.rows[0];
   } catch (err) {
@@ -2599,48 +2679,73 @@ exports.updateCategory = async (id, name, type, branch_id) => {
   }
 }
 
-exports.deleteCategory = async (id, branch_id) => {
+exports.InactivateCategory = async (id, zodu_id, branch_id, active, page_expense) => {
   try {
-    // 1️⃣ Check usage in tbl_menu_item
-    const menuCheckQuery = `
-      SELECT COUNT(*) AS used_in_menu
-      FROM tbl_menu_item
-      WHERE menu_category_id = $1 AND branch_id = $2
-    `;
-    const menuRes = await conn.query(menuCheckQuery, [id, branch_id]);
-    const usedInMenu = parseInt(menuRes.rows[0].used_in_menu, 10);
+    if (active === false) {
+      if (!page_expense) {
+        const usageRes = await conn.query(
+          `SELECT
+            EXISTS (SELECT 1 FROM tbl_menu_items WHERE category_id = $1 AND branch_id = $2 AND zodu_id = $3) AS in_menu,
+            EXISTS (SELECT 1 FROM tbl_inventory ti JOIN tbl_menu_items ie ON ie.item_id = ti.item_id WHERE ie.category_id = $1 AND ie.branch_id = $2 AND ie.zodu_id = $3) AS in_inventory`,
+          [id, branch_id, zodu_id]
+        );
+        const { in_menu, in_inventory } = usageRes.rows[0];
+        if (in_menu) throw new Error("Category cannot be deactivated. This category is used in menu items.");
+        if (in_inventory) throw new Error("Category cannot be deactivated. This category is used in inventory items.");
+      } else {
+        console.log("Checking expense usage for category in branch", active);
+        const usageRes = await conn.query(
+          `SELECT EXISTS (
+            SELECT 1 FROM tbl_expense_items ie
+            JOIN tbl_expense e ON e.expense_id = ie.expense_id
+            WHERE ie.category_id = $1 AND e.branch_id = $2 AND e.zodu_id = $3
+          ) AS in_expense`,
+          [id, branch_id, zodu_id]
+        );
+        if (usageRes.rows[0].in_expense) throw new Error("Category cannot be deactivated. This category is used in expense items.");
+      }
+    }
+    const result = await conn.query(
+      `UPDATE tbl_category SET active = $4 WHERE id = $1 AND branch_id = $2 AND zodu_id = $3 RETURNING *`,
+      [id, branch_id, zodu_id, active]
+    );
+    return result.rows[0];
+  } catch (err) {
+    throw new Error(err.message);
+  }
+}
 
-    // 2️⃣ Check usage in tbl_inventory
-    const inventoryCheckQuery = `
-      SELECT COUNT(*) AS used_in_inventory
-      FROM tbl_inventory
-      WHERE category_id = $1 AND branch_id = $2
-    `;
-    const invRes = await conn.query(inventoryCheckQuery, [id, branch_id]);
-    const usedInInventory = parseInt(invRes.rows[0].used_in_inventory, 10);
-
-    // 3️⃣ If category is used → THROW ERROR
-    if (usedInMenu > 0 || usedInInventory > 0) {
-      throw new Error(
-        `Category cannot be deleted. It is used in ${usedInMenu} menu items and ${usedInInventory} inventory items.`
+exports.deleteCategory = async (id, branch_id, zodu_id, page_expense) => {
+  try {
+    if (!page_expense) {
+      const usageRes = await conn.query(
+        `SELECT
+          EXISTS (SELECT 1 FROM tbl_menu_items WHERE category_id = $1 AND branch_id = $2 AND zodu_id = $3) AS in_menu,
+          EXISTS (SELECT 1 FROM tbl_inventory ti JOIN tbl_menu_items ie ON ie.item_id = ti.item_id WHERE ie.category_id = $1 AND ie.branch_id = $2 AND ie.zodu_id = $3) AS in_inventory`,
+        [id, branch_id, zodu_id]
       );
+      const { in_menu, in_inventory } = usageRes.rows[0];
+      if (in_menu) throw new Error("Category cannot be deleted. This category is used in menu items.");
+      if (in_inventory) throw new Error("Category cannot be deleted. This category is used in inventory items.");
+    } else {
+      const usageRes = await conn.query(
+        `SELECT EXISTS (
+          SELECT 1 FROM tbl_expense_items ie
+          JOIN tbl_expense e ON e.expense_id = ie.expense_id
+          WHERE ie.category_id = $1 AND e.branch_id = $2 AND e.zodu_id = $3
+        ) AS in_expense`,
+        [id, branch_id, zodu_id]
+      );
+      if (usageRes.rows[0].in_expense) throw new Error("Category cannot be deleted. This category is used in expense items.");
     }
 
-    // 4️⃣ Safe to delete
-    const deleteQuery = `
-      DELETE FROM tbl_category
-      WHERE id = $1 AND branch_id = $2
-      RETURNING id;
-    `;
-    const result = await conn.query(deleteQuery, [id, branch_id]);
-
-    return {
-      success: true,
-      message: "Category deleted successfully",
-    };
-
+    await conn.query(
+      `DELETE FROM tbl_category WHERE id = $1 AND branch_id = $2 AND zodu_id = $3`,
+      [id, branch_id, zodu_id]
+    );
+    return { success: true, message: "Category deleted successfully" };
   } catch (err) {
-    throw new Error("Unable to delete category: " + err.message);
+    throw new Error(err.message);
   }
 };
 

@@ -11,7 +11,7 @@ const ITEM_SELECT = `
   u.short_name  AS unit_short_name,
   g.gst_rate    AS gst_rate
 FROM tbl_menu_items m
-LEFT JOIN tbl_category c ON c.id = m.category_id
+LEFT JOIN tbl_category c ON c.id = m.category_id and c.active = true
 LEFT JOIN tbl_units    u ON u.id = m.unit
 LEFT JOIN tbl_gst      g ON g.id = m.gst_type
 `;

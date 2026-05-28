@@ -192,7 +192,8 @@ async function AccountLogin(userInputs, meta = {}) {
         pincode:           companyInfo?.pincode            ?? null,
         account_number:    companyInfo?.account_number    ?? null,
         account_type:      companyInfo?.account_type      ?? null,
-        ifsc_code:         companyInfo?.ifsc_code         ?? null,
+        ifsc_code: companyInfo?.ifsc_code ?? null,
+        company_name: companyInfo?.business_name ?? null,
         branches,
       };
     })

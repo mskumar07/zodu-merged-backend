@@ -465,13 +465,34 @@ async function deletePurchase(id) {
   
 }
 
-async function getCategoryData(type,branch_id ,zodu_id) {
+async function getCategoryData(type, branch_id, zodu_id, page = 1, limit = 10) {
   try {
-    const allCategoryData = await repository.get_category_data(type,branch_id, zodu_id);
+    const result = await repository.get_category_data(type, branch_id, zodu_id, page, limit);
 
     return {
-      success: true,
-      data: allCategoryData,
+      success:     true,
+      data:        result.rows,
+      total_count: result.total_count,
+      total_pages: result.total_pages,
+    };
+  } catch (error) {
+    console.error("Category Data getting Error", error);
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+}
+
+async function getAllCategoryData(types, branch_id, zodu_id, page = 1, limit = 10) {
+  try {
+    const result = await repository.get_all_category_data(types, branch_id, zodu_id, page, limit);
+
+    return {
+      success:     true,
+      data:        result.rows,
+      total_count: result.total_count,
+      total_pages: result.total_pages,
     };
   } catch (error) {
     console.error("Category Data getting Error", error);
@@ -514,10 +535,26 @@ async function addExpenseCategory(zodu_id, branch_id, name) {
   }
 }
 
-
-async function updateCategoryData(id, name, type, branch_id) {
+async function InactivateCategory(id, zodu_id, branch_id, active, page_expense) {
   try {
-    const updatedCategory = await repository.updateCategory(id, name, type, branch_id);
+    const InActivateCategory = await repository.InactivateCategory(id, zodu_id, branch_id, active, page_expense);
+    return {
+      success: true,
+      data: InActivateCategory,
+    };
+  } catch (error) {
+    console.error("Category Data updating Error", error);
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+}
+
+
+async function updateCategoryData(id, name, type, zodu_id, branch_id) {
+  try {
+    const updatedCategory = await repository.updateCategory(id, name, type, zodu_id, branch_id);
     return {
       success: true,
       data: updatedCategory,
@@ -530,9 +567,9 @@ async function updateCategoryData(id, name, type, branch_id) {
     };
   }
 }
-async function deleteCategoryData(id, branch_id) {
+async function deleteCategoryData(id, branch_id, zodu_id, page_expense) {
   try {
-    const deletedCategory = await repository.deleteCategory(id, branch_id);
+    const deletedCategory = await repository.deleteCategory(id, branch_id, zodu_id, page_expense);
     return {
       success: true,
       data: deletedCategory.message,
@@ -2787,6 +2824,7 @@ module.exports = {
   getUnits,
   updateUnit,
   deleteUnit,
+  getAllCategoryData,
   getGST,
   addGST,
   updateGST,
@@ -2796,6 +2834,7 @@ module.exports = {
   replaceUnit,
   addCategoryData,
   updateCategoryData,
+  InactivateCategory,
   deleteCategoryData,
   createExpenseItem,
   getExpAllItems,
