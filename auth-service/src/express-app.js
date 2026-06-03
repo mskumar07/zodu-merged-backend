@@ -12,6 +12,7 @@ app.use(cors());
 app.use(httpLogger);
 
 app.use('/', authRouter);
+app.use('/internal', require('./api/internal-controller'));
 
 app.use(HandleErrorWithLogger);
 

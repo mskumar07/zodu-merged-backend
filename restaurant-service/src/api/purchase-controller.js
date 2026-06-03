@@ -1,10 +1,14 @@
 const express = require("express");
 const router = express.Router();
 const service = require("../services/purchase.service");
+const RequestValidator = require("../utils/requestValidator");
+const vSchema = require("../schema/validation-schema");
 
 // CREATE PURCHASE
 router.post("/", async (req, res) => {
-  const result = await service.createPurchase(req.body);
+  const { errors, input } = await RequestValidator(vSchema.purchase_create, req.body);
+  if (errors) return res.status(400).json({ errors });
+  const result = await service.createPurchase(input);
   return res.status(result.success ? 201 : 400).json(result);
 });
 
@@ -31,20 +35,23 @@ router.get("/:id", async (req, res) => {
 
 // UPDATE
 router.put("/:id", async (req, res) => {
-  const result = await service.updatePurchase(req.params.id, req.body);
+  const { errors, input } = await RequestValidator(vSchema.purchase_update, req.body);
+  if (errors) return res.status(400).json({ errors });
+  const result = await service.updatePurchase(req.params.id, input);
   return res.status(result.success ? 200 : 400).json(result);
 });
 
 // DELETE (WITH STOCK REVERSAL)
 router.delete("/:id", async (req, res) => {
   const result = await service.deletePurchase(req.params.id);
-  console.log(result)
   return res.status(result.success ? 200 : 400).json(result);
 });
 
 // MARK PAYMENT
 router.post("/payment/:id/", async (req, res) => {
-  const result = await service.markPayment(req.params.id, req.body);
+  const { errors, input } = await RequestValidator(vSchema.purchase_payment, req.body);
+  if (errors) return res.status(400).json({ errors });
+  const result = await service.markPayment(req.params.id, input);
   return res.status(result.success ? 200 : 400).json(result);
 });
 

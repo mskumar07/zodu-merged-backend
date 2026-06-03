@@ -3,8 +3,8 @@ version: "3.8"
 services:
   # Auth Service
   auth-service:
-    image: vicky0015/zodu-backemd-retail-auth-service:uat
-    container_name: uat-auth-service
+    image: vicky0015/zodu-backend-retail-auth-service:uat
+    container_name: uat-auth-service-latest
     restart: always
     expose:
       - "4000"
@@ -19,9 +19,9 @@ services:
 
 
   # Restaurant Service
-  restaurant-service:
-    image: vicky0015/zodu-backemd-retail-restaurant-service:uat
-    container_name: uat-restaurant-service
+  retail-service:
+    image: vicky0015/zodu-backend-retail-service:uat
+    container_name: uat-retail-service-latest
     restart: always
     expose:
       - "4001"
@@ -42,8 +42,8 @@ services:
 
   # Employee Service
   employee-service:
-    image: vicky0015/zodu-backemd-retail-employee-service:uat
-    container_name: uat-employee-service
+    image: vicky0015/zodu-backend-employee-service:uat
+    container_name: uat-employee-service-latest
     restart: always
     expose:
       - "4002"
@@ -60,24 +60,46 @@ services:
       MINIO_ACCESSKEY: zoduminio
       MINIO_SECRETKEY: zodu@2025
       MINIO_BUCKET_NAME: zodu
+  
+  restaurant-service:
+    image: vicky0015/zodu-backend-restaurant-service:uat
+    container_name: uat-restaurant-service-latest
+    restart: always
+    expose:
+      - "4003"
+    environment:
+      NODE_ENV: production
+      PORT: 4003
+      DB_HOSTNAME: 72.60.206.59
+      DB_PORT: 5432
+      DB_USERNAME: zodudb
+      DB_PASSWORD: zodu@2025
+      DB_Name: restaurant-service
+      MINIO_HOST: 72.60.206.59
+      MINIO_PORT: 9000
+      MINIO_ACCESSKEY: zoduminio
+      MINIO_SECRETKEY: zodu@2025
+      MINIO_BUCKET_NAME: zodu
 
 
   # API Gateway
   apigateway:
-    image: vicky0015/zodu-backemd-retail-apigateway:uat
-    container_name: uat-apigateway
+    image: vicky0015/zodu-backend-apigateway:uat
+    container_name: uat-apigateway-latest
     restart: always
     ports:
       - "5001:5001"
     environment:
       PORT: 5001
       AUTH_SERVICE_URL: http://auth-service:4000
-      RESTAURANT_SERVICE_URL: http://restaurant-service:4001
+      RETAIL_SERVICE_URL: http://retail-service:4001
       EMPLOYEE_SERVICE_URL: http://employee-service:4002
+      RESTAURANT_SERVICE_URL: http://restaurant-service:4003
     depends_on:
       - auth-service
-      - restaurant-service
+      - retail-service
       - employee-service
+      - restaurant-service
 
 
 

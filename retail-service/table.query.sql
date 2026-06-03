@@ -1,0 +1,129 @@
+CREATE TABLE tbl_company_registration (
+    id SERIAL PRIMARY KEY,
+    zodu_id VARCHAR(50) UNIQUE NOT NULL,
+    owner_admin_name VARCHAR(100) NOT NULL,
+    mobile_no VARCHAR(15) NOT NULL,
+    mail_id VARCHAR(100) NOT NULL,
+    gst_no VARCHAR(50),
+    pincode VARCHAR(10),
+    city VARCHAR(50),
+    district VARCHAR(50),
+    state VARCHAR(50),
+    building_no VARCHAR(100),
+    address_line_2 VARCHAR(100),
+    account_number VARCHAR(30),
+    account_type VARCHAR(20),
+    ifsc_code VARCHAR(20),
+    active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+select * from tbl_company_registration;
+
+CREATE TABLE tbl_resturant_branch (
+    id SERIAL PRIMARY KEY,
+    branch_id VARCHAR(50) NOT NULL,
+    zodu_id VARCHAR(50) NOT NULL,
+    qr_code_id VARCHAR(50),
+    branch_name VARCHAR(100) NOT NULL,
+    branch_manager_or_admin VARCHAR(100),
+    branch_mobile_no VARCHAR(15) NOT NULL,
+    branch_mail_id VARCHAR(100) NOT NULL,
+    branch_city VARCHAR(50) NOT NULL,
+    branch_pincode VARCHAR(10) NOT NULL,
+    branch_district VARCHAR(50) NOT NULL,
+    branch_state VARCHAR(50) NOT NULL,
+    branch_image TEXT,
+    fssai VARCHAR(50),
+    opening_hours JSONB, -- Array of objects stored as JSONB
+    branch_address_line_1 VARCHAR(100) NOT NULL,
+    branch_address_line_2 VARCHAR(100) NOT NULL,
+    branch_account_no VARCHAR(30) NOT NULL,
+    branch_ifsc VARCHAR(20) NOT NULL,
+    branch_account_type VARCHAR(20) NOT NULL,
+    active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_zodu_id FOREIGN KEY (zodu_id) 
+    REFERENCES tbl_company_registration (zodu_id)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_qr_code_id FOREIGN KEY (qr_code_id) 
+    REFERENCES tbl_qr_code (id)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT uq_branch_zodu UNIQUE (branch_id, zodu_id)
+);
+
+select * from tbl_resturant_branch;
+
+
+CREATE TABLE tbl_qr_code (
+    id SERIAL PRIMARY KEY,
+    qr_code TEXT NOT NULL,
+    active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+select * from tbl_qr_code;
+
+-- Existing DB migration for branch_id scope:
+-- DROP INDEX IF EXISTS tbl_resturant_branch_branch_id_key;
+-- ALTER TABLE tbl_resturant_branch
+--   ADD CONSTRAINT uq_branch_zodu UNIQUE (branch_id, zodu_id);
+
+CREATE TABLE tbl_category (
+    id SERIAL PRIMARY KEY,
+    zodu_id VARCHAR(50) NOT NULL,
+    branch_id VARCHAR(50) NOT NULL,
+    name VARCHAR(40) NOT NULL,
+    status BOOLEAN DEFAULT TRUE,
+    active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_zodu_id FOREIGN KEY (zodu_id) 
+        REFERENCES tbl_company_registration(zodu_id)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE
+);
+
+select * from tbl_category;
+
+
+CREATE TABLE tbl_menu_item (
+    id SERIAL PRIMARY KEY,
+    zodu_id VARCHAR(50) NOT NULL,
+    branch_id VARCHAR(50) NOT NULL,
+    menu_category_id INT NOT NULL,
+    menu_name VARCHAR(100) NOT NULL,
+    food_type VARCHAR(25),
+    variants JSONB,
+    qr_code_id INT,
+    sell_price VARCHAR(100),
+    purchase_price VARCHAR(100),
+    hsn_code VARCHAR(50),
+    gst_tax VARCHAR(50),
+    tax_include_or_exclude VARCHAR(50),
+    menu_image TEXT,
+    menu_type VARCHAR(50) NOT NULL, 
+    active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    -- Foreign keys
+    CONSTRAINT fk_zodu_id FOREIGN KEY (zodu_id)
+        REFERENCES tbl_company_registration(zodu_id)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+
+    CONSTRAINT fk_menu_category_id FOREIGN KEY (menu_category_id)
+        REFERENCES tbl_category(id)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+
+    CONSTRAINT fk_item_qr_code_id FOREIGN KEY (item_qr_code_id)
+        REFERENCES tbl_qr_code(id)
+        ON UPDATE CASCADE
+        ON DELETE SET NULL
+);

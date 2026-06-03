@@ -91,7 +91,7 @@ CREATE TABLE tbl_category (
 select * from tbl_category;
 
 
-CREATE TABLE tbl_menu_item (
+CREATE TABLE tbl_menu_items (
     id SERIAL PRIMARY KEY,
     zodu_id VARCHAR(50) NOT NULL,
     branch_id VARCHAR(50) NOT NULL,

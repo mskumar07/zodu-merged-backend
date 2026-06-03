@@ -45,8 +45,25 @@ const normalizeBranchIds = (branchIds) => {
   return normalized;
 };
 
+async function get_pos_data(data) {
+  try {
+    const posData = await repository.get_pos_data(data);
+    return {
+      success: true,
+      data: posData.rows,
+    };
+  } catch (error) {
+    console.error("Menu Item Data getting Error", error);
+    return {
+      success: false,
+      message: error.message,
+    };
+  }
+}
+
 // service — unchanged, but now receives correct error propagation
 async function createCompanyService(companyData) {
+  console.log("Creating company with data:--------", companyData);
   try {
     const company = await repository.createCompany(companyData);
 

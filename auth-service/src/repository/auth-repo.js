@@ -176,6 +176,7 @@ async function addUserCompany({ user_id, zodu_id, is_primary = false }) {
 }
 
 async function getUserCompanies({ user_id }) {
+  console.log("Fetching companies for user_id:", user_id);
   const result = await conn.query(
     `SELECT uc.zodu_id, uc.is_primary, uc.created_at
      FROM tbl_user_companies uc

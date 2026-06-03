@@ -10,7 +10,6 @@ const STATUS_CODES = require("../utils/error/status-codes");
 router.post("/signup-default", async (req, res) => {
   try {
     const { zodu_id, branch_name, branch_mobile_no, branch_mail_id } = req.body;
-    console.log("REQ BODY:", req.body);
     if (!zodu_id || !branch_name) {
       return res.status(400).json({ success: false, error: 'zodu_id and branch_name are required' });
     }

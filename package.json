@@ -8,7 +8,8 @@
     "start:restaurant": "npm start --prefix restaurant-service",
     "start:gateway": "npm start --prefix api-gateway",
     "start:employee": "npm start --prefix employee-service",
-    "start": "concurrently \"npm run start:auth\" \"npm run start:restaurant\" \"npm run start:gateway\" \"npm run start:employee\""
+    "start:retail": "npm start --prefix retail-service",
+    "start": "concurrently \"npm run start:auth\" \"npm run start:restaurant\" \"npm run start:gateway\" \"npm run start:employee\" \"npm run start:retail\""
   },
   "keywords": [],
   "author": "",

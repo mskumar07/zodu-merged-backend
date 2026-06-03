@@ -7,6 +7,7 @@ const {
 } = require('../utils');
 
 const repository = require('../repository/auth-repo');
+const businessRepo = require('../repository/business-repo');
 const axios = require('axios');
 const jwt = require('jsonwebtoken');
 const { APP_SECRET, RESTAURANT_SERVICE_URL } = require('../config');
@@ -160,40 +161,30 @@ async function AccountLogin(userInputs, meta = {}) {
   // 5. Fetch all companies the user belongs to
   const userCompanies = await repository.getUserCompanies({ user_id: user.user_id });
 
-  // 6. For each company, fetch company details + branches in parallel
+  // 6. For each company, fetch company details + branches from own DB
   const companies = await Promise.all(
     userCompanies.map(async (uc) => {
-      const [companyRes, branchRes] = await Promise.allSettled([
-        axios.get(`${RESTAURANT_SERVICE_URL}/get/company_details/${uc.zodu_id}`),
-        axios.get(`${RESTAURANT_SERVICE_URL}/api/branch/${uc.zodu_id}`),
+      const [companyInfo, branches] = await Promise.all([
+        businessRepo.getCompany(uc.zodu_id).catch(() => null),
+        businessRepo.getBranches(uc.zodu_id).catch(() => []),
       ]);
 
-      const companyInfo = companyRes.status === 'fulfilled'
-        ? (companyRes.value.data?.Data?.[0] ?? null)
-        : null;
-
-      const branches = branchRes.status === 'fulfilled'
-        ? (branchRes.value.data?.data ?? [])
-        : [];
-
       return {
-        zodu_id:           uc.zodu_id,
-        is_primary:        uc.is_primary,
-        store_name:        companyInfo?.store_name        ?? null,
-        owner_admin_name:  companyInfo?.owner_admin_name  ?? null,
-        gst_no:            companyInfo?.gst_no            ?? null,
-        address_line_1:    companyInfo?.address_line_1    ?? companyInfo?.building_no ?? null,
-        address_line_2:    companyInfo?.address_line_2    ?? companyInfo?.area_street_name ?? null,
-        building_no:       companyInfo?.building_no       ?? companyInfo?.address_line_1 ?? null,
-        area_street_name:  companyInfo?.area_street_name  ?? companyInfo?.address_line_2 ?? null,
-        city:              companyInfo?.city               ?? null,
-        district:          companyInfo?.district           ?? null,
-        state:             companyInfo?.state              ?? null,
-        pincode:           companyInfo?.pincode            ?? null,
-        account_number:    companyInfo?.account_number    ?? null,
-        account_type:      companyInfo?.account_type      ?? null,
-        ifsc_code: companyInfo?.ifsc_code ?? null,
-        company_name: companyInfo?.business_name ?? null,
+        zodu_id:          uc.zodu_id,
+        is_primary:       uc.is_primary,
+        store_name:       companyInfo?.business_name    ?? null,
+        company_name:     companyInfo?.business_name    ?? null,
+        owner_admin_name: companyInfo?.owner_admin_name ?? null,
+        gst_no:           companyInfo?.gst_no           ?? null,
+        address_line_1:   companyInfo?.address_line_1   ?? null,
+        address_line_2:   companyInfo?.address_line_2   ?? null,
+        city:             companyInfo?.city              ?? null,
+        district:         companyInfo?.district          ?? null,
+        state:            companyInfo?.state             ?? null,
+        pincode:          companyInfo?.pincode           ?? null,
+        account_number:   companyInfo?.account_number   ?? null,
+        account_type:     companyInfo?.account_type     ?? null,
+        ifsc_code:        companyInfo?.ifsc_code         ?? null,
         branches,
       };
     })
@@ -465,23 +456,15 @@ async function GetMyCompanies(user_id) {
 
   const details = await Promise.all(
     userCompanies.map(async (uc) => {
-      const [companyRes, branchRes] = await Promise.allSettled([
-        axios.get(`${RESTAURANT_SERVICE_URL}/get/company_details/${uc.zodu_id}`),
-        axios.get(`${RESTAURANT_SERVICE_URL}/api/branch/${uc.zodu_id}`),
+      const [companyInfo, branches] = await Promise.all([
+        businessRepo.getCompany(uc.zodu_id).catch(() => null),
+        businessRepo.getBranches(uc.zodu_id).catch(() => []),
       ]);
-
-      const companyInfo = companyRes.status === 'fulfilled'
-        ? (companyRes.value.data?.Data?.[0] ?? null)
-        : null;
-
-      const branches = branchRes.status === 'fulfilled'
-        ? (branchRes.value.data?.data ?? [])
-        : [];
 
       return {
         ...(companyInfo ?? {}),
-        zodu_id:          companyInfo?.zodu_id ?? uc.zodu_id,
-        is_primary:       uc.is_primary,
+        zodu_id:    companyInfo?.zodu_id ?? uc.zodu_id,
+        is_primary: uc.is_primary,
         branches,
       };
     })

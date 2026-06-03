@@ -2,6 +2,7 @@ const express = require("express");
 // const restaurantService = require("../service/restaurant-service");
 const RequestValidator = require("../utils/requestValidator")
 const schema = require("../schema/restaurant-schema");
+const vSchema = require("../schema/validation-schema");
 const STATUS_CODES = require("../utils/error/status-codes");
 const service = require("../services/restaurant-service");
 const branchService = require("../services/branch-service");
@@ -501,26 +502,7 @@ router.put(
 );
 
 
-router.post("/api/add/orders", async (req, res) => {
-  try {
-    const { errors, input } = await RequestValidator(schema.order_create, req.body);
-    if (errors) {
-      console.log(errors)
-      return res.status(400).json({ errors });
-    }
- 
-    const data = await service.createOrder(input);
- 
-    if (!data.success) {
-      return res.status(400).json({ message: data.message });
-    }
- 
-    return res.status(201).json(data);
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-});
+// POST /api/add/orders moved to orders-controller
 
 
 router.put("/api/update/orders", async (req, res) => {
@@ -1139,17 +1121,13 @@ router.get("/get/expense-item/:branch_id", async (req, res) => {
 
 router.put("/update/expense-item/:id/:branch_id", async (req, res) => {
   try {
-    const { id, branch_id } = req.params
-    const { name } = req.body
-    const data = await service.editExpItem(id, branch_id, name)
-    if (!data.success) {
-      await conn.query("ROLLBACK");
-      return res.status(400).json({ message: data.message });
-    }
+    const { id, branch_id } = req.params;
+    const { errors, input } = await RequestValidator(vSchema.expense_item_update, req.body);
+    if (errors) return res.status(400).json({ errors });
+    const data = await service.editExpItem(id, branch_id, input.name);
+    if (!data.success) return res.status(400).json({ message: data.message });
     return res.status(201).json({ data });
-
   } catch (error) {
-    await conn.query("ROLLBACK");
     console.error(error);
     return res.status(500).json({ error: error.message });
   }
@@ -1208,37 +1186,7 @@ router.delete("/api/delete/purchase/:id", async (req, res) => {
   }
 }
 );
-router.put("/api/update/inventory", async (req, res) => {
-  try {
-    console.log(req.body);
-    const items = req.body;
-
-    await conn.query("BEGIN");
-    const { errors, input } = await RequestValidator(
-      schema.inventorySchema,
-      items
-    );
-
-    if (errors) {
-      await conn.query("ROLLBACK");
-      return res.status(400).json({ errors });
-    }
-
-    const data = await service.update_Inventory(input);
-
-    if (!data.success) {
-      await conn.query("ROLLBACK");
-      return res.status(400).json({ message: data.message });
-    }
-
-    await conn.query("COMMIT");
-    return res.status(201).json({ data });
-  } catch (error) {
-    await conn.query("ROLLBACK");
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-})
+// PUT /api/update/inventory moved to inventory-controller
 
 router.get("/get/category/:type/:branch_id/:zodu_id", async (req, res) => {
   try {
@@ -1298,8 +1246,9 @@ router.get("/get/category/:zodu_id/:branch_id", async (req, res) => {
 
 router.post("/add/category", async (req, res) => {
   try {
-    const { zodu_id, branch_id, name, type } = req.body;
-    const data = await service.addCategoryData(zodu_id, branch_id, name, type);
+    const { errors, input } = await RequestValidator(vSchema.category_create, req.body);
+    if (errors) return res.status(400).json({ errors });
+    const data = await service.addCategoryData(input.zodu_id, input.branch_id, input.name, input.type);
     if (!data.success) return res.status(400).json({ message: data.message });
     return res.status(201).json({ message: "Category added successfully", data: data.data });
   } catch (error) {
@@ -1310,10 +1259,9 @@ router.post("/add/category", async (req, res) => {
 
 router.put("/update/category/:id", async (req, res) => {
   try {
-    console.log("update category", req.params.id, req.body)
-    const { name, type, zodu_id, branch_id } = req.body;
-    console.log(req.params.id, name, type, zodu_id, branch_id,"----------")
-    const data = await service.updateCategoryData(req.params.id, name, type, zodu_id, branch_id);
+    const { errors, input } = await RequestValidator(vSchema.category_update, req.body);
+    if (errors) return res.status(400).json({ errors });
+    const data = await service.updateCategoryData(req.params.id, input.name, input.type, input.zodu_id, input.branch_id);
     if (!data.success) return res.status(400).json({ message: data.message });
     return res.status(201).json({ message: "Category updated successfully", data: data.data });
   } catch (error) {
@@ -1324,8 +1272,9 @@ router.put("/update/category/:id", async (req, res) => {
 
 router.put("/inactivate/category/:id", async (req, res) => {
   try {
-    const { zodu_id, branch_id, active, page_expense } = req.body;
-    const data = await service.InactivateCategory(req.params.id, zodu_id, branch_id, active, page_expense);
+    const { errors, input } = await RequestValidator(vSchema.category_inactivate, req.body);
+    if (errors) return res.status(400).json({ errors });
+    const data = await service.InactivateCategory(req.params.id, input.zodu_id, input.branch_id, input.active, input.page_expense);
     if (!data.success) return res.status(400).json({ message: data.message });
     return res.status(201).json({ message: "Status Updated successfully" });
   } catch (error) {
@@ -1379,17 +1328,15 @@ router.get("/get/expense-category/:branch_id", async (req, res) => {
 
 router.put("/update/expense-category/:id", async (req, res) => {
   try {
-    const { name, branch_id } = req.body;
-    const { id } = req.params
-    const data = await service.updateExpenseCategory(name, id, branch_id)
+    const { errors, input } = await RequestValidator(vSchema.expense_category_update, req.body);
+    if (errors) return res.status(400).json({ errors });
+    const data = await service.updateExpenseCategory(input.name, req.params.id, input.branch_id);
     if (!data.success) return res.status(400).json({ message: data.message });
-    return res.status(201).json({ message: "Data updated Successfully", Data: data.data });
-
+    return res.status(201).json({ message: "Data updated Successfully", data: data.data });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: error.message });
   }
-
 })
 
 router.delete("/delete/expense-category/:id", async (req, res) => {
@@ -1423,10 +1370,11 @@ router.get("/get/purchase-category/:branch_id", async (req, res) => {
 
 router.post("/add/expense-category", async (req, res) => {
   try {
-    const { zodu_id, branch_id, name } = req.body;
-    const data = await service.addExpenseCategory(zodu_id, branch_id, name);
+    const { errors, input } = await RequestValidator(vSchema.expense_category_create, req.body);
+    if (errors) return res.status(400).json({ errors });
+    const data = await service.addExpenseCategory(input.zodu_id, input.branch_id, input.name);
     if (!data.success) return res.status(400).json({ message: data.message });
-    return res.status(201).json({ message: "Data Get Successfully", Data: data.data });
+    return res.status(201).json({ message: "Category added successfully", data: data.data });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: error.message });
@@ -1434,20 +1382,7 @@ router.post("/add/expense-category", async (req, res) => {
 });
 
 
-router.get("/get/inventory-list/:branch_id", async (req, res) => {
-
-  try {
-
-    const { branch_id } = req.params;
-    const { type, category } = req.query
-    const getInventoryListData = await service.getInventoryListData(branch_id, type, category);
-    if (!getInventoryListData.success) return res.status(400).json({ message: getInventoryListData.message });
-    return res.status(201).json({ message: "Data Get Successfully", Data: getInventoryListData.data });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-});
+// GET /get/inventory-list/:branch_id moved to inventory-controller
 
 router.get("/get/purchase-list/:branch_id", async (req, res) => {
   try {
@@ -1566,33 +1501,7 @@ router.get("/get/vendor/:branch_id", async (req, res) => {
   }
 });
 
-router.get("/get/menu_item/:branch_id", async (req, res) => {
-  try {
-    const { branch_id } = req.params;
-    const { page = 1, limit = 10, search = "" } = req.query;
-
-    const result = await service.get_menuItem_data(
-      branch_id,
-      page,
-      limit,
-      search
-    );
-
-    if (!result.success) {
-      return res.status(400).json({ message: result.message });
-    }
-
-    return res.status(200).json({
-      message: "Data Get Successfully",
-      pagination: result.pagination,   // <-- ADD THIS
-      data: result.data                // <-- ADD THIS
-    });
-
-  } catch (error) {
-    console.error("Get Menu API Error =>", error);
-    return res.status(500).json({ error: error.message });
-  }
-});
+// GET /get/menu_item moved to menu-controller
 
 router.get("/get/pos_data/:branch_id/:zodu_id", async (req, res) => {
   try {
@@ -1607,69 +1516,22 @@ router.get("/get/pos_data/:branch_id/:zodu_id", async (req, res) => {
 });
 
 
-router.delete("/delete/menu_item/:id", async (req, res) => {
+router.get("/get/pos_data/:branch_id", async (req, res) => {
   try {
-    const data = await service.deleteMenuItem(req.params.id);
-    if (!data.success) return res.status(400).json({ message: data.message });
-    return res.status(201).json({ message: "Menu item deleted successfully", data: data.data });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-});
-
-router.put("/update/menu_item/:id", async (req, res) => {
-  try {
-    const menuData = req.body;
-    console.log("con", menuData)
-
-    const data = await service.updateMenuItem(req.params.id, menuData);
-    if (!data.success) return res.status(400).json({ message: data.message });
-    console.log(data)
-    return res.status(201).json({ message: "Menu item updated successfully", data: data.data });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-});
-
-router.get("/get/orders/:branch_id", async (req, res) => {
-
-  try {
-
     const { branch_id } = req.params
-    const getMenuItemData = await service.get_ordered_data(branch_id);
-    if (!getMenuItemData.success) return res.status(400).json({ message: getMenuItemData.message });
-    return res.status(201).json({ message: "Data Get Successfully", Data: getMenuItemData.data });
+    const getPosData = await service.get_pos_data(branch_id);
+    if (!getPosData.success) return res.status(400).json({ message: getPosData.message });
+    return res.status(201).json({ message: "Data Get Successfully", Data: getPosData.data });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: error.message });
   }
 });
 
-router.get(
-  "/api/order/:zodu_id/:branch_id/:api_order_id",
-  async (req, res) => {
-    try {
-      const { zodu_id, branch_id, api_order_id } = req.params;
-      console.log("test",req.params)
 
-      const result = await service.getSingleOrder(
-        zodu_id,
-        branch_id,
-        api_order_id
-      );
+// DELETE /delete/menu_item and PUT /update/menu_item moved to menu-controller
 
-      return res.status(200).json({
-        message: "Order fetched successfully",
-        data: result
-      });
-    } catch (error) {
-      console.error(error);
-      return res.status(500).json({ error: error.message });
-    }
-  }
-);
+// GET /get/orders and GET /api/order moved to orders-controller
 
 
 router.get("/get/units/:branch_id/:zodu_id", async (req, res) => {
@@ -1687,8 +1549,9 @@ router.get("/get/units/:branch_id/:zodu_id", async (req, res) => {
 // ➤ ADD UNIT
 router.post("/add/unit", async (req, res) => {
   try {
-    const { zodu_id, branch_id, name, short_name } = req.body;
-    const data = await service.addUnit(zodu_id, branch_id, name, short_name);
+    const { errors, input } = await RequestValidator(vSchema.unit_create, req.body);
+    if (errors) return res.status(400).json({ errors });
+    const data = await service.addUnit(input.zodu_id, input.branch_id, input.name, input.short_name);
     if (!data.success) return res.status(400).json({ message: data.message });
     return res.status(201).json({ message: "Unit added successfully", data: data.data });
   } catch (error) {
@@ -1700,8 +1563,9 @@ router.post("/add/unit", async (req, res) => {
 // ➤ UPDATE UNIT
 router.put("/update/unit/:id", async (req, res) => {
   try {
-    const { name, short_name } = req.body;
-    const data = await service.updateUnit(req.params.id, name, short_name);
+    const { errors, input } = await RequestValidator(vSchema.unit_update, req.body);
+    if (errors) return res.status(400).json({ errors });
+    const data = await service.updateUnit(req.params.id, input.name, input.short_name);
     return success(res, "Unit updated successfully", data);
   } catch (error) {
     console.error(error);
@@ -1728,17 +1592,11 @@ router.delete("/delete/unit/:id/:branch_id", async (req, res) => {
 
 router.post("/replace/unit", async (req, res) => {
   try {
-    const { old_unit_id, new_unit_id, branch_id } = req.body;
-    const result = await service.replaceUnit(old_unit_id, new_unit_id, branch_id);
-
-    if (!result.success)
-      return res.status(400).json({ message: result.message });
-
-    return res.status(201).json({
-      message: "Unit replaced successfully",
-      data: result.data,
-    });
-
+    const { errors, input } = await RequestValidator(vSchema.unit_replace, req.body);
+    if (errors) return res.status(400).json({ errors });
+    const result = await service.replaceUnit(input.old_unit_id, input.new_unit_id, input.branch_id);
+    if (!result.success) return res.status(400).json({ message: result.message });
+    return res.status(201).json({ message: "Unit replaced successfully", data: result.data });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: error.message });
@@ -1770,22 +1628,11 @@ router.get("/get/gst/:branch_id/:zodu_id", async (req, res) => {
 // ➤ ADD GST
 router.post("/add/gst", async (req, res) => {
   try {
-    const { zodu_id, branch_id, gst_rate } = req.body;
-
-    const result = await service.addGST(
-      zodu_id,
-      branch_id,
-      gst_rate
-    );
-
-    if (!result.success)
-      return res.status(400).json({ message: result.message });
-
-    return res.status(201).json({
-      message: "GST Added Successfully",
-      data: result.data,
-    });
-
+    const { errors, input } = await RequestValidator(vSchema.gst_create, req.body);
+    if (errors) return res.status(400).json({ errors });
+    const result = await service.addGST(input.zodu_id, input.branch_id, input.gst_rate);
+    if (!result.success) return res.status(400).json({ message: result.message });
+    return res.status(201).json({ message: "GST Added Successfully", data: result.data });
   } catch (error) {
     console.error("GST POST Error", error);
     return res.status(500).json({ error: error.message });
@@ -1795,19 +1642,11 @@ router.post("/add/gst", async (req, res) => {
 // ➤ UPDATE GST
 router.put("/update/gst/:id", async (req, res) => {
   try {
-    const { id } = req.params;
-    const { gst_rate } = req.body;
-
-    const result = await service.updateGST(id, gst_rate);
-
-    if (!result.success)
-      return res.status(400).json({ message: result.message });
-
-    return res.status(200).json({
-      message: "GST Updated Successfully",
-      data: result.data,
-    });
-
+    const { errors, input } = await RequestValidator(vSchema.gst_update, req.body);
+    if (errors) return res.status(400).json({ errors });
+    const result = await service.updateGST(req.params.id, input.gst_rate);
+    if (!result.success) return res.status(400).json({ message: result.message });
+    return res.status(200).json({ message: "GST Updated Successfully", data: result.data });
   } catch (error) {
     console.error("GST UPDATE Error", error);
     return res.status(500).json({ error: error.message });
@@ -1836,55 +1675,21 @@ router.delete("/delete/gst/:id", async (req, res) => {
 
 router.post("/api/completeorder", async (req, res) => {
   try {
-    const data = req.body
-
-    console.log("complete",req.body)
-    const orderData = await service.update_Final_payment(data);
-
-    if (!orderData.success) {
-      await conn.query("ROLLBACK");
-      return res.status(400).json({ message: orderData.message });
-    }
-
-    await conn.query("COMMIT");
+    const { errors, input } = await RequestValidator(vSchema.complete_order, req.body);
+    if (errors) return res.status(400).json({ errors });
+    const orderData = await service.update_Final_payment(input);
+    if (!orderData.success) return res.status(400).json({ message: orderData.message });
     return res.status(201).json({ orderData });
   } catch (err) {
-    console.error(err)
-    return res.status(500).json({ error: err.message })
+    console.error(err);
+    return res.status(500).json({ error: err.message });
   }
 })
 
 
 
 
-router.post("/api/add/inventory", async (req, res) => {
-
-  try {
-    const { errors, input } = await RequestValidator(
-      schema.Inventory,
-      req.body
-    );
-    console.log(req.body)
-    if (errors) {
-      return res.status(400).json({ success: false, error: errors });
-    }
-    const data = await service.addin_Inventory(input);
-
-    if (!data.success) {
-      return res.status(400).json({ message: data.message });
-    }
-
-    return res.status(201).json({ data });
-
-  } catch (err) {
-    console.error("Inventory Update Failed", err.message)
-    return res.status(500).json({
-      success: false,
-      message: err.message || "Internal server error",
-    })
-  }
-
-});
+// POST /api/add/inventory moved to inventory-controller
 
 
 
@@ -1916,52 +1721,14 @@ router.get("/get/expense/:expense_id", async (req, res) => {
 });
 
 
-router.post("/add/hold_menu", async (req, res) => {
-  try {
-    const { errors, input } = await RequestValidator(schema.holdSchema, req.body);
-    if (errors) return res.status(400).json({ success: false, error: errors });
-
-    const data = await service.addHoldMenu(input);
-    if (!data.success) return res.status(400).json({ message: data.message });
-
-    return res.status(201).json({ data });
-  } catch (error) {
-    console.error("Error adding hold:", error);
-    res.status(500).json({ error: "Failed to save hold" });
-  }
-});
-
-// ✅ :id is now hold_uuid
-router.delete("/delete/hold-menu/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const data = await service.deleteHoldMenu(id);
-    if (!data.success) return res.status(400).json({ message: data.message });
-
-    return res.status(200).json({ data });  // ✅ 200 for DELETE, not 201
-  } catch (error) {
-    console.error("Error deleting hold:", error);
-    res.status(500).json({ error: "Failed to delete hold" });
-  }
-});
-
-// ── Get holds for a branch (needed for POS recall) ────────────
-router.get("/get/hold_menu/:zodu_id/:branch_id", async (req, res) => {
-  try {
-    const { zodu_id, branch_id } = req.params;
-    console.log(zodu_id,branch_id)
-    const data = await service.getHoldData(zodu_id, branch_id);
-    return res.status(200).json({ data });
-  } catch (error) {
-    console.error("Error fetching holds:", error);
-    res.status(500).json({ error: "Failed to fetch holds" });
-  }
-});
+// Hold routes moved to hold_item_controller
 
 // POST /api/payment/pay
 router.post("/api/payment/pay", async (req, res) => {
   try {
-    const result = await service.makePayment(req.body);
+    const { errors, input } = await RequestValidator(vSchema.make_payment, req.body);
+    if (errors) return res.status(400).json({ errors });
+    const result = await service.makePayment(input);
     return res.status(200).json(result);
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
@@ -1970,19 +1737,13 @@ router.post("/api/payment/pay", async (req, res) => {
 
 router.post("/api/payments/add", async (req, res) => {
   try {
-
-    const result = await service.markSalePayment(req.body);
-
+    const { errors, input } = await RequestValidator(vSchema.sale_payment_add, req.body);
+    if (errors) return res.status(400).json({ errors });
+    const result = await service.markSalePayment(input);
     return res.status(200).json(result);
-
   } catch (error) {
-
     console.error("Payment Error:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Failed to add payment",
-    });
+    return res.status(500).json({ success: false, message: "Failed to add payment" });
   }
 });
 

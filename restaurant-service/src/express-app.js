@@ -1,6 +1,6 @@
 const express = require('express');
 const cors  = require('cors');
-const conn  = require('./database/connection');
+const conn = require('./database/connection');
 const { httpLogger, logger } = require('./utils/logger');
 const { HandleErrorWithLogger } = require('./utils/error/handler');
 const resRouter = require('./api/restaurant-controller');
@@ -20,19 +20,22 @@ app.use('/api/vendor', require('./api/vendor-controller'));
 app.use('/api/sale-returns', require('./api/saleReturn-controller'));
 app.use('/api/report',      require('./api/report-controller'));
 app.use('/api/expense',     require('./api/expense-controller'));
+app.use('/api/hold',        require('./api/hold_item_controller'));
+app.use('/api/inventory',   require('./api/inventory-controller'));
+app.use('/api/orders',      require('./api/orders-controller'));
 
 app.use(HandleErrorWithLogger);
 
 
 
-// ✅ SAFE DB CHECK (connect + release)
+// ✅ SAFE DB CHECK
 (async () => {
   try {
     const client = await conn.connect();
-    logger.info('✅ Database connected');
+    logger.info('✅ Restaurant DB connected');
     client.release();
   } catch (err) {
-    logger.error('❌ Database connection failed:', err.message);
+    logger.error('❌ Restaurant DB connection failed:', err.message);
   }
 })();
 

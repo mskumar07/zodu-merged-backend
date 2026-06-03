@@ -15,21 +15,29 @@ app.use(cors({
 
 
 const AUTH_SERVICE_URL       = process.env.AUTH_SERVICE_URL       || 'http://auth-service:3000';
-const RESTAURANT_SERVICE_URL = process.env.RESTAURANT_SERVICE_URL || 'http://restaurant-service:3001';
-const EMPLOYEE_SERVICE_URL   = process.env.EMPLOYEE_SERVICE_URL   || 'http://employee-service:3002';
+const RETAIL_SERVICE_URL = process.env.RETAIL_SERVICE_URL || 'http://retail-service:3001';
+const EMPLOYEE_SERVICE_URL = process.env.EMPLOYEE_SERVICE_URL || 'http://employee-service:3002';
+const RESTAURANT_SERVICE_URL   = process.env.RESTAURANT_SERVICE_URL   || 'http://restaurant-service:3004';
+
 
 app.use('/auth', createProxyMiddleware({
   target: AUTH_SERVICE_URL,
   changeOrigin: true
 }));
 
-app.use('/restaurant', createProxyMiddleware({
-  target: RESTAURANT_SERVICE_URL,
-  changeOrigin: true
+app.use('/retail', createProxyMiddleware({
+  target: RETAIL_SERVICE_URL,
+  changeOrigin: true,
+  pathRewrite: { '^/retail': '' }
 }));
 
 app.use('/employee', createProxyMiddleware({
   target: EMPLOYEE_SERVICE_URL,
+  changeOrigin: true
+}));
+
+app.use('/restaurant', createProxyMiddleware({
+  target: RESTAURANT_SERVICE_URL,
   changeOrigin: true
 }));
 
