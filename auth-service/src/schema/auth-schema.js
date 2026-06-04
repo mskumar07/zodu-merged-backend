@@ -12,6 +12,7 @@ const schema = {
     email: joi.string().email().required(),
 
     password: joi.string().pattern(passwordRegex).required(),
+    business_type: joi.string().max(50).allow(null, ''),
 
     gst_no: joi.string().allow(null, ''),
     pincode: joi.string().allow(null, ''),

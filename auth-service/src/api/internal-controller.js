@@ -40,17 +40,6 @@ router.get('/company/:zodu_id', async (req, res) => {
   }
 });
 
-// GET /internal/branches/:zodu_id  — get all branches for a company
-router.get('/branches/:zodu_id', async (req, res) => {
-  try {
-    const branches = await repo.getBranches(req.params.zodu_id);
-    return res.status(200).json({ success: true, data: branches });
-  } catch (err) {
-    console.error('[internal] getBranches:', err.message);
-    return res.status(500).json({ success: false, message: err.message });
-  }
-});
-
 // GET /internal/branches/max/:zodu_id  — get max branch_id for ID generation
 router.get('/branches/max/:zodu_id', async (req, res) => {
   try {
@@ -58,6 +47,17 @@ router.get('/branches/max/:zodu_id', async (req, res) => {
     return res.status(200).json({ success: true, max: row.max });
   } catch (err) {
     console.error('[internal] findMaxBranchId:', err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET /internal/branches/:zodu_id  — get all branches for a company
+router.get('/branches/:zodu_id', async (req, res) => {
+  try {
+    const branches = await repo.getBranches(req.params.zodu_id);
+    return res.status(200).json({ success: true, data: branches });
+  } catch (err) {
+    console.error('[internal] getBranches:', err.message);
     return res.status(500).json({ success: false, message: err.message });
   }
 });

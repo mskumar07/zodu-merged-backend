@@ -37,21 +37,22 @@ exports.createCompany = async (data) => {
     // 3. tbl_business
     const r = await client.query(
       `INSERT INTO tbl_business
-         (zodu_id, business_name, owner_admin_name, mobile_no, mail_id, gst_no, address_id, bank_details_id, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,true)
+         (zodu_id, business_name, owner_admin_name, mobile_no, mail_id, gst_no, type, address_id, bank_details_id, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true)
        ON CONFLICT (zodu_id) DO UPDATE
          SET business_name    = EXCLUDED.business_name,
              owner_admin_name = EXCLUDED.owner_admin_name,
              mobile_no        = EXCLUDED.mobile_no,
              mail_id          = EXCLUDED.mail_id,
              gst_no           = EXCLUDED.gst_no,
+             type             = COALESCE(EXCLUDED.type, tbl_business.type),
              address_id       = COALESCE(EXCLUDED.address_id, tbl_business.address_id),
              bank_details_id  = COALESCE(EXCLUDED.bank_details_id, tbl_business.bank_details_id),
              updated_at       = now()
        RETURNING *`,
       [data.zodu_id, data.restaurant_name || data.business_name,
        data.owner_admin_name || null, data.mobile_no || null, data.mail_id || null,
-       data.gst_no || null, address_id, bank_details_id]
+       data.gst_no || null, data.business_type || null, address_id, bank_details_id]
     );
 
     await client.query('COMMIT');

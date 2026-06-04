@@ -39,7 +39,7 @@ function refreshTokenExpiresAt() {
 // ── CreateAccount ─────────────────────────────────────────────────────────────
 
 async function CreateAccount(userInputs) {
-  const { restaurant_name, phone_number, email, password, same_for_branch } = userInputs;
+  const { restaurant_name, phone_number, email, password, same_for_branch, business_type } = userInputs;
 
   if (phone_number) {
     const phoneCheck = await repository.findPhnExist({ phone_number });
@@ -77,6 +77,7 @@ async function CreateAccount(userInputs) {
       restaurant_name,
       mobile_no: phone_number,
       mail_id: email,
+      business_type: business_type || null,
     });
   } catch (err) {
     console.error('restaurant-service failed — rolling back:', err.message);
@@ -184,7 +185,8 @@ async function AccountLogin(userInputs, meta = {}) {
         pincode:          companyInfo?.pincode           ?? null,
         account_number:   companyInfo?.account_number   ?? null,
         account_type:     companyInfo?.account_type     ?? null,
-        ifsc_code:        companyInfo?.ifsc_code         ?? null,
+        ifsc_code: companyInfo?.ifsc_code ?? null,
+        business_type: companyInfo?.type ?? null,
         branches,
       };
     })

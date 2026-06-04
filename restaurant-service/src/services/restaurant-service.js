@@ -66,25 +66,6 @@ async function createCompanyService(companyData) {
   console.log("Creating company with data:--------", companyData);
   try {
     const company = await repository.createCompany(companyData);
-
-    if (companyData.can_use_for_branch) {
-      const branchRepo = require('../repository/branch-repo');
-
-      const branch_id = 'B1';
-      // const createQr = await repository.createQRCode(branch_id);
-
-      await branchRepo.createBranch({
-        branch_id,
-        zodu_id:          company.zodu_id,
-        branch_name:      companyData.city || companyData.restaurant_name,
-        branch_mobile_no: companyData.mobile_no   || null,
-        branch_mail_id:   companyData.mail_id      || null,
-        address_id:       company.address_id       || null,
-        bank_details_id:  company.bank_details_id  || null,
-        // qr_code_id:       createQr.id,
-      });
-    }
-
     return { success: true, message: 'Company created successfully', data: company };
   } catch (err) {
     console.error('Error inserting company:', err);
