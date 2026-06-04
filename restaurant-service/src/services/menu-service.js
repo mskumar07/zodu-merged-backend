@@ -55,9 +55,9 @@ async function updateMenustaus(menu_id, active) {
   }
 }
 
-async function get_menuItem_data(branch_id, page, limit, search) {
+async function get_menuItem_data(branch_id, type, page, limit, search, category_ids = []) {
   try {
-    const allMenuItemData = await repository.get_menuItem_data(branch_id, page, limit, search);
+    const allMenuItemData = await repository.get_menuItem_data(branch_id, type, page, limit, search, category_ids);
     const { total_count, total_pages, current_page, limit: pageLimit, rows } = allMenuItemData;
 
     const categories = (rows || []).map((category) => {

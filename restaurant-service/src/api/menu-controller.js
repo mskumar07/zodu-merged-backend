@@ -81,18 +81,29 @@ router.put("/update/menustatus/:menu_status/:menuId", async (req, res) => {
   }
 });
 
-router.get("/get/menu_item/:branch_id", async (req, res) => {
+const handleGetMenuItems = async (req, res) => {
   try {
-    const { branch_id } = req.params;
+    const { branch_id, type } = req.params;
     const { page = 1, limit = 10, search = "" } = req.query;
-    const result = await service.get_menuItem_data(branch_id, page, limit, search);
+
+    const rawCategoryIds = req.query.category_ids ?? req.query["category_ids[]"];
+    const category_ids = rawCategoryIds
+      ? (Array.isArray(rawCategoryIds) ? rawCategoryIds : String(rawCategoryIds).split(","))
+          .map((id) => parseInt(id, 10))
+          .filter((id) => !isNaN(id))
+      : [];
+
+    const result = await service.get_menuItem_data(branch_id, type, page, limit, search, category_ids);
     if (!result.success) return res.status(400).json({ message: result.message });
     return res.status(200).json({ message: "Data Get Successfully", pagination: result.pagination, data: result.data });
   } catch (error) {
     console.error("Get Menu API Error =>", error);
     return res.status(500).json({ error: error.message });
   }
-});
+};
+
+router.get("/get/menu_item/:branch_id/:type", handleGetMenuItems);
+router.get("/get/menu_item/:branch_id", handleGetMenuItems);
 
 router.delete("/delete/menu_item/:id", async (req, res) => {
   try {

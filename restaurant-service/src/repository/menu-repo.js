@@ -158,13 +158,33 @@ exports.createQRCode = async (qr_code) => {
   }
 };
 
-exports.get_menuItem_data = async (branch_id, page, limit, search) => {
+exports.get_menuItem_data = async (branch_id, type, page, limit, search, category_ids = []) => {
   const offset = (page - 1) * limit;
+
+  const params = [branch_id];
+  const conditions = [`m.branch_id = $1`];
+
+  if (type && type.trim() !== "") {
+    params.push(type);
+    conditions.push(`LOWER(m.menu_type) = LOWER($${params.length})`);
+  }
+
+  if (category_ids.length > 0) {
+    params.push(category_ids);
+    conditions.push(`m.menu_category_id = ANY($${params.length})`);
+  }
+
+  params.push(search || "");
+  const searchIdx = params.length;
+  conditions.push(`(m.menu_name ILIKE '%' || $${searchIdx} || '%' OR c.name ILIKE '%' || $${searchIdx} || '%')`);
+
+  const whereClause = conditions.join(" AND ");
+
   const totalCountResult = await conn.query(
     `SELECT COUNT(*) AS total FROM tbl_menu_items m
      JOIN tbl_category c ON c.id = m.menu_category_id
-     WHERE m.branch_id = $1 AND (m.menu_name ILIKE '%' || $2 || '%' OR c.name ILIKE '%' || $2 || '%')`,
-    [branch_id, search]
+     WHERE ${whereClause}`,
+    params
   );
   const total_count = Number(totalCountResult.rows[0].total);
   const total_pages = Math.ceil(total_count / limit);
@@ -183,10 +203,10 @@ exports.get_menuItem_data = async (branch_id, page, limit, search) => {
      LEFT JOIN tbl_gst g ON g.id = m.gst_tax
      LEFT JOIN tbl_units u ON u.id = m.menu_unit
      LEFT JOIN tbl_inventory i ON i.item_id = m.menu_id AND i.branch_id = m.branch_id
-     WHERE m.branch_id = $1 AND (m.menu_name ILIKE '%' || $2 || '%' OR c.name ILIKE '%' || $2 || '%')
+     WHERE ${whereClause}
      ORDER BY c.name, m.menu_name
-     LIMIT $3 OFFSET $4`,
-    [branch_id, search, limit, offset]
+     LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+    [...params, limit, offset]
   );
 
   return { total_count, total_pages, current_page: Number(page), limit: Number(limit), rows: dataResult.rows };
