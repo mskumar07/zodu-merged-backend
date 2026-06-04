@@ -11,7 +11,7 @@ const isTaxInclusive = (value) =>
   value === true || value === "true" || value === 1 || value === "1";
 
 const calculateItemTax = (item) => {
-  const qty = toNumber(item.quantity);          // ✅ FIX
+  const qty = toNumber(item.qty ?? item.quantity);
   const price = toNumber(item.price);
   const gst = toNumber(item.gst_percentage);    // ✅ FIX
   const taxInclusive = isTaxInclusive(item.tax_inclusive);
@@ -45,7 +45,7 @@ const calculateItemTax = (item) => {
 const getTaxFromItem = (item) => {
   const data = calculateItemTax(item);
   return {
-    base: data.subtotal,
+    base: data.base,
     tax: data.tax_amount,
     cgst: data.cgst,
     sgst: data.sgst,
@@ -64,6 +64,8 @@ function calculateOrderTotals(
 ) {
   let subtotal = 0;
   let total_tax = 0;
+
+  console.log("Calculating order totals with GST mode:", gst_mode,items);
 
   const parsedItems = items.map((item) => {
     const taxData = calculateItemTax(item); // ✅ use your GST logic
@@ -117,6 +119,16 @@ function calculateOrderTotals(
   const rounded_total = Math.round(total_amount);
   const roundoff = Number((rounded_total - total_amount).toFixed(2));
 
+  console.log("calculateOrderTotals:", {
+   total_items: items.length,
+  subtotal,
+    discount_amount,
+    total_tax,
+    total_amount, // before roundoff
+    roundoff,
+  
+    });
+
   return {
     total_items: items.length,
     subtotal: subtotal,
@@ -130,8 +142,60 @@ function calculateOrderTotals(
   };
 }
 
+const calculateOrderTotalsWithDiscount = (items, discount_type, discount_value) => {
+  let subtotalBeforeDiscount = 0;
+  let no_of_items = 0;
+  const itemBases = [];
+
+  for (const item of items) {
+    const taxData = calculateItemTax(item);
+    const itemBase = taxData.base;
+
+    subtotalBeforeDiscount += itemBase;
+    no_of_items += 1;
+    itemBases.push({
+      base: itemBase,
+      gst: toNumber(item.gst_percentage ?? item.tax)
+    });
+  }
+
+  const discountType = discount_type ? String(discount_type).toUpperCase() : null;
+  let discount_amount = 0;
+
+  if (discountType === "PERCENT") {
+    discount_amount = (subtotalBeforeDiscount * toNumber(discount_value)) / 100;
+  } else if (discountType === "FLAT") {
+    discount_amount = toNumber(discount_value);
+  }
+
+  if (discount_amount > subtotalBeforeDiscount) {
+    discount_amount = subtotalBeforeDiscount;
+  }
+
+  const discountedSubtotal = subtotalBeforeDiscount - discount_amount;
+
+  let total_tax = 0;
+  for (const item of itemBases) {
+    const share = subtotalBeforeDiscount > 0 ? item.base / subtotalBeforeDiscount : 0;
+    const discountedBase = item.base - (discount_amount * share);
+    total_tax += (discountedBase * item.gst) / 100;
+  }
+
+  const total_amt = discountedSubtotal + total_tax;
+
+  return {
+    no_of_items,
+    subtotal: round2(discountedSubtotal),
+    total_tax: round2(total_tax),
+    discountType,
+    discount_amount: round2(discount_amount),
+    total_amt: round2(total_amt)
+  };
+};
+
 module.exports = {
   calculateItemTax,
   getTaxFromItem,
-  calculateOrderTotals
+  calculateOrderTotals,
+  calculateOrderTotalsWithDiscount
 };
