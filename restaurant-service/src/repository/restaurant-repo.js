@@ -4,7 +4,7 @@ const conn = require('../database/connection');
 const { randomUUID } = require("crypto");
 const { deleteFileFromMinIO } = require('../services/restaurant-service');
 const { generatePublicOrderNo } = require('./generatePublicOrderNo');
-const { calculateItemTax } = require('../utils/gstcalcukator');
+const { calculateItemTax, calculateOrderTotalsWithDiscount } = require('../utils/gstcalcukator');
 const authClient = require('../utils/authClient');
 
 

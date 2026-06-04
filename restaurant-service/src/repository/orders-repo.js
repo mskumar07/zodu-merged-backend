@@ -61,6 +61,8 @@ exports.createOrder = async (orderData) => {
     const api_order_id = randomUUID();
     const public_order_no = await generatePublicOrderNo(orderData.branch_id);
 
+    console.log("Creating order with API Order ID:",orderData);
+
     const totals = calculateOrderTotals(
       orderData.items || [],
       orderData.discount_type,
