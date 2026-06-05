@@ -81,10 +81,29 @@ router.put("/update/menustatus/:menu_status/:menuId", async (req, res) => {
   }
 });
 
+router.put("/update/menusfav/:fav/:menuId", async (req, res) => {
+  try {
+    const { menuId, fav } = req.params;
+    await conn.query("BEGIN");
+    const data = await service.updateMenusFav(menuId, fav);
+    if (!data.success) {
+      await conn.query("ROLLBACK");
+      return res.status(400).json({ message: data.message });
+    }
+    await conn.query("COMMIT");
+    return res.status(200).json({ data });
+  } catch (error) {
+    await conn.query("ROLLBACK");
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 const handleGetMenuItems = async (req, res) => {
   try {
-    const { branch_id, type } = req.params;
-    const { page = 1, limit = 10, search = "" } = req.query;
+    const { zodu_id, branch_id, type: typeParam } = req.params;
+    const { page = 1, limit = 10, search = "", type: typeQuery } = req.query;
+    const type = typeParam || typeQuery || "";
 
     const rawCategoryIds = req.query.category_ids ?? req.query["category_ids[]"];
     const category_ids = rawCategoryIds
@@ -93,7 +112,7 @@ const handleGetMenuItems = async (req, res) => {
           .filter((id) => !isNaN(id))
       : [];
 
-    const result = await service.get_menuItem_data(branch_id, type, page, limit, search, category_ids);
+    const result = await service.get_menuItem_data(zodu_id,branch_id, type, page, limit, search, category_ids);
     if (!result.success) return res.status(400).json({ message: result.message });
     return res.status(200).json({ message: "Data Get Successfully", pagination: result.pagination, data: result.data });
   } catch (error) {
@@ -102,8 +121,8 @@ const handleGetMenuItems = async (req, res) => {
   }
 };
 
-router.get("/get/menu_item/:branch_id/:type", handleGetMenuItems);
-router.get("/get/menu_item/:branch_id", handleGetMenuItems);
+router.get("/get/menu_item/:zodu_id/:branch_id/:type", handleGetMenuItems);
+router.get("/get/menu_item/:zodu_id/:branch_id", handleGetMenuItems);
 
 router.delete("/delete/menu_item/:id", async (req, res) => {
   try {
@@ -116,7 +135,7 @@ router.delete("/delete/menu_item/:id", async (req, res) => {
   }
 });
 
-router.put("/update/menu_item/:id", async (req, res) => {
+router.put("/update/menu_item/:id", upload.single("menu_image"), async (req, res) => {
   try {
     const data = await service.updateMenuItem(req.params.id, req.body);
     if (!data.success) return res.status(400).json({ message: data.message });

@@ -35,17 +35,20 @@ exports.updateMenuItem = async (menuId, data) => {
     if (!updatedMenu) throw new Error("Menu item not found");
 
     if (updatedMenu.menu_type && updatedMenu.menu_type.toLowerCase() === "product") {
+      const stockQty = Number(data.opening_stock || 0);
+      const stockAlert = Number(data.alert_stock || 0);
       const invCheck = await conn.query(`SELECT * FROM tbl_inventory WHERE item_id = $1`, [menuId]);
       if (invCheck.rows.length > 0) {
         await conn.query(
-          `UPDATE tbl_inventory SET item_name=$1, purchase_price=$2, selling_price=$3, item_unit=$4 WHERE item_id=$5`,
-          [updatedMenu.menu_name, updatedMenu.purchase_price, updatedMenu.sell_price, updatedMenu.menu_unit, menuId]
+          `UPDATE tbl_inventory SET item_name=$1, purchase_price=$2, selling_price=$3, item_unit=$4,
+           stock_qty=stock_qty+$5, stock_alert=$6, updated_at=NOW() WHERE item_id=$7`,
+          [updatedMenu.menu_name, updatedMenu.purchase_price, updatedMenu.sell_price, updatedMenu.menu_unit, stockQty, stockAlert, menuId]
         );
       } else {
         await conn.query(
-          `INSERT INTO tbl_inventory (zodu_id, branch_id, item_id, category_id, item_name, item_unit, stock_qty, stock_alert, purchase_price, selling_price, last_purchase_date)
-           VALUES ($1,$2,$3,$4,$5,$6,0,$7,$8,$9,NOW())`,
-          [updatedMenu.zodu_id, updatedMenu.branch_id, updatedMenu.menu_id, updatedMenu.menu_category_id, updatedMenu.menu_name, updatedMenu.menu_unit, 0, updatedMenu.purchase_price, updatedMenu.sell_price]
+          `INSERT INTO tbl_inventory (zodu_id, branch_id, item_id, category_id, item_name, item_unit, stock_qty, stock_alert, purchase_price, selling_price, inventory_type, last_purchase_date, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW())`,
+          [updatedMenu.zodu_id, updatedMenu.branch_id, updatedMenu.menu_id, updatedMenu.menu_category_id, updatedMenu.menu_name, updatedMenu.menu_unit, stockQty, stockAlert, updatedMenu.purchase_price, updatedMenu.sell_price, "direct"]
         );
       }
     }
@@ -77,13 +80,12 @@ exports.deleteMenuItem = async (menuId) => {
 
 exports.createMenuItem = async (menuData) => {
   try {
-    await conn.query("BEGIN");
     const query = `
       INSERT INTO tbl_menu_items (
         zodu_id, branch_id, menu_category_id, menu_name, menu_type, food_type,
         variants, qr_code_id, sell_price, purchase_price,
-        hsn_code, gst_tax, tax_include_or_exclude, menu_image, menu_code, menu_id, menu_unit, favorites
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+        hsn_code, gst_tax, tax_include_or_exclude, menu_image, menu_code, menu_id, menu_unit, favorites,opening_stock, alert_stock
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
       RETURNING *;
     `;
     const values = [
@@ -92,7 +94,7 @@ exports.createMenuItem = async (menuData) => {
       menuData.variants ? JSON.stringify(menuData.variants) : null,
       menuData.qr_code_id, menuData.sell_price, menuData.purchase_price,
       menuData.hsn_code, menuData.gst_tax, menuData.tax_include_or_exclude,
-      menuData.menu_image, menuData.menu_code, menuData.menu_id, menuData.menu_unit, menuData.favorites
+      menuData.menu_image, menuData.menu_code, menuData.menu_id, menuData.menu_unit, menuData.favorites, menuData.opening_stock, menuData.alert_stock
     ];
     const result = await conn.query(query, values);
     const createdMenu = result.rows[0];
@@ -108,37 +110,35 @@ exports.createMenuItem = async (menuData) => {
         );
       } else {
         await conn.query(
-          `INSERT INTO tbl_inventory (zodu_id, branch_id, item_id, category_id, item_name, item_unit, stock_qty, stock_alert, purchase_price, selling_price, inventory_type, last_purchase_date)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())`,
+          `INSERT INTO tbl_inventory (zodu_id, branch_id, item_id, category_id, item_name, item_unit, stock_qty, stock_alert, purchase_price, selling_price, inventory_type, last_purchase_date, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW())`,
           [createdMenu.zodu_id, createdMenu.branch_id, createdMenu.menu_id, createdMenu.menu_category_id, createdMenu.menu_name, createdMenu.menu_unit, stockQty, stockAlert, createdMenu.purchase_price, createdMenu.sell_price, "direct"]
         );
       }
     }
-    await conn.query("COMMIT");
     return createdMenu;
   } catch (err) {
-    await conn.query("ROLLBACK");
     throw new Error("Unable to create menu: " + err.message);
   }
 };
 
 exports.getNextMenuId = async (zoduId, branchId) => {
   try {
-    await conn.query("BEGIN");
-    const result = await conn.query(
-      `SELECT menu_id FROM tbl_menu_items WHERE zodu_id=$1 AND branch_id=$2
-       ORDER BY (regexp_replace(menu_id, '[^0-9]', '', 'g'))::int DESC LIMIT 1 FOR UPDATE`,
+    // Lock all rows for this branch so concurrent inserts serialize here
+    await conn.query(
+      `SELECT 1 FROM tbl_menu_items WHERE zodu_id=$1 AND branch_id=$2 FOR UPDATE`,
       [zoduId, branchId]
     );
-    let nextNumber = 1;
-    if (result.rows.length > 0) {
-      const match = result.rows[0].menu_id.match(/(\d+)$/);
-      nextNumber = match ? parseInt(match[1], 10) + 1 : 1;
-    }
-    await conn.query("COMMIT");
+    // Extract only the trailing numeric suffix and take the max
+    const result = await conn.query(
+      `SELECT MAX((regexp_match(menu_id, '([0-9]+)$'))[1]::int) AS max_seq
+       FROM tbl_menu_items WHERE zodu_id=$1 AND branch_id=$2`,
+      [zoduId, branchId]
+    );
+    const maxSeq = result.rows[0].max_seq;
+    const nextNumber = maxSeq ? maxSeq + 1 : 1;
     return String(nextNumber).padStart(3, "0");
   } catch (err) {
-    await conn.query("ROLLBACK");
     throw new Error("Error generating next menu ID: " + err.message);
   }
 };
@@ -158,11 +158,11 @@ exports.createQRCode = async (qr_code) => {
   }
 };
 
-exports.get_menuItem_data = async (branch_id, type, page, limit, search, category_ids = []) => {
+exports.get_menuItem_data = async (zodu_id,branch_id, type, page, limit, search, category_ids = []) => {
   const offset = (page - 1) * limit;
 
-  const params = [branch_id];
-  const conditions = [`m.branch_id = $1`];
+  const params = [zodu_id,branch_id];
+  const conditions = [`m.zodu_id = $1`, `m.branch_id = $2`];
 
   if (type && type.trim() !== "") {
     params.push(type);
@@ -192,7 +192,7 @@ exports.get_menuItem_data = async (branch_id, type, page, limit, search, categor
   const dataResult = await conn.query(
     `SELECT
       m.zodu_id, m.branch_id, m.menu_id, m.menu_name, m.menu_code, m.menu_type, m.menu_image,
-      m.variants, m.sell_price, m.purchase_price, m.hsn_code,
+      m.variants, m.sell_price, m.purchase_price, m.hsn_code,m.item_uuid,m.opening_stock,m.alert_stock,
       m.gst_tax AS gst_id, g.gst_rate AS gst_tax,
       m.menu_unit AS unit_id, u.name AS unit_name, u.short_name AS menu_unit,
       c.name AS category, m.menu_category_id AS category_id,
@@ -217,6 +217,21 @@ exports.updateActive = async (menuId, active) => {
     await conn.query("BEGIN");
     const result = await conn.query(
       `UPDATE tbl_menu_items SET active=$1 WHERE menu_id=$2 RETURNING *`,
+      [active, menuId]
+    );
+    await conn.query("COMMIT");
+    return result.rows[0];
+  } catch (error) {
+    await conn.query("ROLLBACK");
+    throw error;
+  }
+};
+
+exports.AddFav = async (menuId, active) => {
+  try {
+    await conn.query("BEGIN");
+    const result = await conn.query(
+      `UPDATE tbl_menu_items SET favorites=$1 WHERE menu_id=$2 RETURNING *`,
       [active, menuId]
     );
     await conn.query("COMMIT");

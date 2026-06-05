@@ -1,11 +1,12 @@
 const conn = require("../database/connection");
 const repo = require("../repository/purchase-repo");
-const inventoryRepo = require("../repository/menu-repo");
+const purchaseRepo = require("../repository/purchase-repo");
+
 
 // Must use `client` so stock updates stay inside the same transaction
 // Returns the updated inventory record with new stock level
 const adjustStockWithLedger = async (client, payload) => {
-  let current = await inventoryRepo.getInventoryByItemUuid(
+  let current = await purchaseRepo.getInventoryByItemUuid(
     client,
     payload.item_uuid
   );
@@ -20,18 +21,23 @@ const adjustStockWithLedger = async (client, payload) => {
     if (existing.rows.length === 0) {
       const inserted = await client.query(
         `INSERT INTO tbl_inventory (
-          item_uuid, item_id, item_name,
+          item_uuid, item_id,
           zodu_id, branch_id,
-          available_qty, reorder_level
+          item_name, item_unit, purchase_price, category_id,
+          stock_qty, stock_alert,
+          created_at
         )
-        VALUES ($1, $2, $3, $4, $5, 0, 0)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, 0, NOW())
         RETURNING *`,
         [
           payload.item_uuid,
           payload.item_id,
-          payload.item_name,
           payload.zodu_id,
           payload.branch_id,
+          payload.item_name || null,
+          payload.unit_id || null,
+          payload.purchase_price != null ? Number(payload.purchase_price) : null,
+          payload.category_id != null ? Number(payload.category_id) : null,
         ]
       );
       current = inserted.rows[0];
@@ -50,40 +56,51 @@ const adjustStockWithLedger = async (client, payload) => {
 
   // Validate that subtract operation won't result in negative stock
   if (payload.adjustment_type === "subtract") {
-    const newQty = current.available_qty - payload.adjustment_qty;
+    const newQty = current.stock_qty - payload.adjustment_qty;
     if (newQty < 0) {
       throw new Error(
         `Insufficient stock for item ${payload.item_name}. ` +
-        `Current: ${current.available_qty}, Attempting to subtract: ${payload.adjustment_qty}`
+        `Current: ${current.stock_qty}, Attempting to subtract: ${payload.adjustment_qty}`
       );
     }
   }
 
   const updated = await client.query(
     `UPDATE tbl_inventory
-     SET available_qty = available_qty ${operator} $1,
-         last_stock_update = NOW()
+     SET stock_qty      = stock_qty ${operator} $1,
+         item_name      = COALESCE($3, item_name),
+         item_unit      = COALESCE($4, item_unit),
+         purchase_price = COALESCE($5, purchase_price),
+         category_id    = COALESCE($6, category_id),
+         updated_at     = NOW()
      WHERE item_uuid = $2
      RETURNING *`,
-    [payload.adjustment_qty, payload.item_uuid]
+    [
+      payload.adjustment_qty,
+      payload.item_uuid,
+      payload.item_name || null,
+      payload.unit_id != null ? Number(payload.unit_id) : null,
+      payload.purchase_price != null ? Number(payload.purchase_price) : null,
+      payload.category_id != null ? Number(payload.category_id) : null,
+    ]
   );
 
   const newStock = updated.rows[0];
 
-  await inventoryRepo.createStockLedger(client, {
+  await purchaseRepo.createStockLedger(client, {
     item_uuid:        payload.item_uuid,
     item_id:          current.item_id,
     zodu_id:          current.zodu_id,
     branch_id:        current.branch_id,
-    item_name:        current.item_name,
+    item_name:        current.item_name || payload.item_name,
     transaction_type: payload.reason,
     reference_id:     payload.reference_id,
     qty_change:
       payload.adjustment_type === "subtract"
         ? -payload.adjustment_qty
         : payload.adjustment_qty,
-    stock_before: current.available_qty,
-    stock_after:  newStock.available_qty,
+    stock_before: current.stock_qty,
+    stock_after:  newStock.stock_qty,
   });
 
   return newStock;
@@ -109,15 +126,18 @@ exports.createPurchase = async (data) => {
     // Add stock for each purchased item
     for (const item of data.items) {
       await adjustStockWithLedger(client, {
-        item_uuid:       item.item_uuid,
-        item_id:         item.item_id,
-        item_name:       item.item_name,
-        zodu_id:         data.zodu_id,
-        branch_id:       data.branch_id,
+        item_uuid:      item.item_uuid,
+        item_id:        item.item_id,
+        item_name:      item.item_name,
+        unit_id:        item.unit_id,
+        purchase_price: item.purchase_price,
+        category_id:    item.category_id,
+        zodu_id:        data.zodu_id,
+        branch_id:      data.branch_id,
         adjustment_type: "add",
         adjustment_qty:  item.qty,
         reason:          "purchase",
-        reference_id:    purchase.id,  // ✅ fixed: was purchase.purchase_id
+        reference_id:    purchase.id,
       });
     }
 
@@ -267,11 +287,14 @@ exports.updatePurchase = async (purchase_id, data) => {
         );
         
         await adjustStockWithLedger(client, {
-          item_uuid:       oldItem.item_uuid,
-          item_id:         oldItem.item_id,
-          item_name:       oldItem.item_name,
-          zodu_id:         oldPurchase.zodu_id,
-          branch_id:       oldPurchase.branch_id,
+          item_uuid:      oldItem.item_uuid,
+          item_id:        oldItem.item_id,
+          item_name:      newItem.item_name || oldItem.item_name,
+          unit_id:        newItem.unit_id ?? oldItem.unit_id,
+          purchase_price: newItem.purchase_price,
+          category_id:    newItem.category_id,
+          zodu_id:        oldPurchase.zodu_id,
+          branch_id:      oldPurchase.branch_id,
           adjustment_type: adjustment_type,
           adjustment_qty:  Math.abs(qtyDifference),
           reason:          "purchase_item_qty_updated",
@@ -296,11 +319,14 @@ exports.updatePurchase = async (purchase_id, data) => {
           `Item ${newItem.item_uuid} ADDED - adding ${newItem.qty} units`
         );
         await adjustStockWithLedger(client, {
-          item_uuid:       newItem.item_uuid,
-          item_id:         newItem.item_id,
-          item_name:       newItem.item_name,
-          zodu_id:         zodu_id,
-          branch_id:       branch_id,
+          item_uuid:      newItem.item_uuid,
+          item_id:        newItem.item_id,
+          item_name:      newItem.item_name,
+          unit_id:        newItem.unit_id,
+          purchase_price: newItem.purchase_price,
+          category_id:    newItem.category_id,
+          zodu_id:        zodu_id,
+          branch_id:      branch_id,
           adjustment_type: "add",
           adjustment_qty:  newItem.qty,
           reason:          "purchase_item_added",

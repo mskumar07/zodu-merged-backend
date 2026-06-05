@@ -693,6 +693,47 @@ const editSchema = Joi.object({
     opening_stock:  Joi.number().min(0).allow(null),reorder_level:  Joi.number().min(0).allow(null),
 }).min(1); // at least one field required for edit
  
+const menu_item_create = Joi.object({
+  zodu_id:                Joi.string().max(50).required(),
+  branch_id:              Joi.string().max(50).required(),
+  menu_category_id:       Joi.number().integer().required(),
+  menu_name:              Joi.string().max(200).required(),
+  menu_type:              Joi.string().max(50).required(),
+  food_type:              Joi.string().max(50).optional().allow(null, ""),
+  sell_price:             Joi.number().min(0).required(),
+  purchase_price:         Joi.number().min(0).optional().allow(null),
+  tax_include_or_exclude: Joi.alternatives().try(Joi.boolean(), Joi.string()).optional().allow(null, ""),
+  menu_unit:              Joi.alternatives().try(Joi.number().integer(), Joi.string()).optional().allow(null, ""),
+  item_code:              Joi.string().max(100).required(),
+  variants:               Joi.alternatives().try(Joi.array(), Joi.string()).optional().allow(null),
+  hsn_code:               Joi.string().max(20).optional().allow(null, ""),
+  gst_tax:                Joi.alternatives().try(Joi.number().integer(), Joi.string()).optional().allow(null, ""),
+  opening_stock:          Joi.number().min(0).optional().allow(null),
+  alert_stock:            Joi.number().min(0).optional().allow(null),
+  menu_image:             Joi.string().optional().allow(null, ""),
+  menu_code:              Joi.string().max(100).optional().allow(null, ""),
+});
+
+const menu_item_update = Joi.object({
+  menu_category_id:       Joi.number().integer().optional(),
+  menu_name:              Joi.string().max(200).optional(),
+  menu_type:              Joi.string().max(50).optional(),
+  food_type:              Joi.string().max(50).optional().allow(null, ""),
+  sell_price:             Joi.number().min(0).optional(),
+  purchase_price:         Joi.number().min(0).optional().allow(null),
+  tax_include_or_exclude: Joi.alternatives().try(Joi.boolean(), Joi.string()).optional().allow(null, ""),
+  menu_unit:              Joi.alternatives().try(Joi.number().integer(), Joi.string()).optional().allow(null, ""),
+  item_code:              Joi.string().max(100).optional(),
+  variants:               Joi.alternatives().try(Joi.array(), Joi.string()).optional().allow(null),
+  hsn_code:               Joi.string().max(20).optional().allow(null, ""),
+  gst_tax:                Joi.alternatives().try(Joi.number().integer(), Joi.string()).optional().allow(null, ""),
+  favorites:              Joi.boolean().optional().allow(null),
+  menu_image:             Joi.string().optional().allow(null, ""),
+  menu_code:              Joi.string().max(100).optional().allow(null, ""),
+  opening_stock:          Joi.number().min(0).optional().allow(null),
+  alert_stock:            Joi.number().min(0).optional().allow(null),
+}).min(1);
+
 const ledgerSchema = Joi.object({
   // Path param
   custUuid: Joi.string().uuid({ version: 'uuidv4' }).required(),
@@ -736,5 +777,7 @@ module.exports = {
   createSchema,
   editSchema,
   order_update,
-  ledgerSchema
+  ledgerSchema,
+  menu_item_create,
+  menu_item_update,
 };

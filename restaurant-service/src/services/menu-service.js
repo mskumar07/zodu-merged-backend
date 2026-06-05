@@ -55,9 +55,19 @@ async function updateMenustaus(menu_id, active) {
   }
 }
 
-async function get_menuItem_data(branch_id, type, page, limit, search, category_ids = []) {
+async function updateMenusFav(menu_id, active) {
   try {
-    const allMenuItemData = await repository.get_menuItem_data(branch_id, type, page, limit, search, category_ids);
+    const updatestatus = await repository.AddFav(menu_id, active);
+    return { success: true, data: updatestatus };
+  } catch (err) {
+    console.error("Error updating Menu:", err);
+    return { success: false, message: err.message };
+  }
+}
+
+async function get_menuItem_data(zodu_id,branch_id, type, page, limit, search, category_ids = []) {
+  try {
+    const allMenuItemData = await repository.get_menuItem_data(zodu_id,branch_id, type, page, limit, search, category_ids);
     const { total_count, total_pages, current_page, limit: pageLimit, rows } = allMenuItemData;
 
     const categories = (rows || []).map((category) => {
@@ -99,4 +109,7 @@ async function updateMenuItem(menuId, menuData) {
   }
 }
 
-module.exports = { createMenuItem, editMenuItem, updateMenustaus, get_menuItem_data, deleteMenuItem, updateMenuItem };
+module.exports = {
+  createMenuItem, editMenuItem, updateMenustaus, updateMenusFav,
+  get_menuItem_data, deleteMenuItem, updateMenuItem
+};

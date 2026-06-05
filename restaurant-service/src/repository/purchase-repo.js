@@ -1,5 +1,52 @@
 const conn = require("../database/connection");
 
+
+
+
+const INV_COLS = `
+  i.item_uuid,
+  i.item_id,
+  i.zodu_id,
+  i.branch_id,
+  m.menu_name      AS item_name,
+  i.stock_qty,
+  i.stock_alert,
+  i.created_at,
+  m.sell_price,
+  m.purchase_price,
+  m.menu_image,
+  m.menu_type,
+  m.active        AS item_status,
+  m.hsn_code,
+  m.qr_code_id,
+  c.name          AS category_name,
+  u.short_name    AS unit_short_name,
+  g.gst_rate
+`;
+ 
+const INV_FROM = `
+  FROM tbl_inventory i
+  LEFT JOIN tbl_menu_items m  ON m.item_uuid  = i.item_uuid
+  LEFT JOIN tbl_category   c  ON c.id         = m.menu_category_id
+  LEFT JOIN tbl_units      u  ON u.id         = m.menu_unit
+  LEFT JOIN tbl_gst        g  ON g.id         = m.gst_tax
+`;
+ 
+// ─────────────────────────────────────────────────────────────
+//  Derived stock status — mirrors the UI badge logic
+//    Out of Stock  : available_qty = 0
+//    Low Stock     : available_qty > 0 AND available_qty <= reorder_level
+//    In Stock      : available_qty > reorder_level
+// ─────────────────────────────────────────────────────────────
+const STOCK_STATUS_EXPR = `
+  CASE
+    WHEN i.stock_qty = 0                              THEN 'out_of_stock'
+    WHEN i.stock_qty <= i.stock_alert               THEN 'low_stock'
+    ELSE                                                       'in_stock'
+  END
+`;
+
+
 exports.createPurchase = async (client, data) => {
   const { rows } = await client.query(
     `INSERT INTO tbl_purchase (
@@ -43,12 +90,12 @@ exports.createPurchaseItems = async (client, items, purchase_id) => {
         item.item_name,
         item.qty,
         item.unit || null,
-        item.purchase_price,
-        item.gst_percentage || null,
-        item.tax_amount || null,
-        item.cgst || null,
-        item.sgst || null,
-        item.category_id || null,
+        item.purchase_price != null && item.purchase_price !== "NULL" ? Number(item.purchase_price) : null,
+        item.gst_percentage != null && item.gst_percentage !== "NULL" ? Number(item.gst_percentage) : null,
+        item.tax_amount     != null && item.tax_amount     !== "NULL" ? Number(item.tax_amount)     : null,
+        item.cgst           != null && item.cgst           !== "NULL" ? Number(item.cgst)           : null,
+        item.sgst           != null && item.sgst           !== "NULL" ? Number(item.sgst)           : null,
+        item.category_id    != null && item.category_id    !== "NULL" ? Number(item.category_id)    : null,
         item.item_uuid || null,
       ]
     );
@@ -168,7 +215,7 @@ const { rows: items } = await conn.query(
      mi.hsn_code                -- 🔥 ADDED
    FROM tbl_purchase_items pi
    LEFT JOIN tbl_menu_items mi 
-     ON mi.item_id = pi.item_id AND mi.branch_id = $3 AND mi.zodu_id = $2  -- 🔥 JOIN WITH MENU ITEMS TO GET HSN CODE
+     ON mi.menu_id = pi.item_id AND mi.branch_id = $3 AND mi.zodu_id = $2  -- 🔥 JOIN WITH MENU ITEMS TO GET HSN CODE
    WHERE pi.purchase_id = $1
    ORDER BY pi.purchase_item_id ASC`,
   [purchase.purchase_id, purchase.zodu_id, purchase.branch_id]
@@ -289,6 +336,20 @@ exports.createPurchasePayment = async (client, data) => {
       data.status || "completed",
     ]
   );
+};
+
+
+exports.getInventoryByItemUuid = async (client, item_uuid) => {
+  const { rows } = await client.query(
+    `SELECT
+       ${INV_COLS},
+       ${STOCK_STATUS_EXPR} AS stock_status,
+       ROUND(i.stock_qty * COALESCE(NULLIF(m.purchase_price, 'NULL')::numeric, 0), 2) AS stock_value
+     ${INV_FROM}
+     WHERE i.item_uuid = $1`,
+    [item_uuid]
+  );
+  return rows[0] ?? null;
 };
 
 exports.createStockLedger = async (client, data) => {

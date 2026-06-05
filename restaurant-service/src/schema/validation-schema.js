@@ -178,9 +178,14 @@ const purchase_item_schema = Joi.object({
   item_name:      Joi.string().required(),
   qty:            Joi.number().min(0.001).required(),
   unit:           Joi.string().max(50).optional().allow(null, ""),
+  unit_id:        Joi.number().integer().optional().allow(null),
   purchase_price: Joi.number().min(0).required(),
   selling_price:  Joi.number().min(0).optional(),
   gst_percentage: Joi.number().min(0).max(100).default(0),
+  tax_amount:     Joi.number().min(0).optional().allow(null),
+  cgst:           Joi.number().min(0).optional().allow(null),
+  sgst:           Joi.number().min(0).optional().allow(null),
+  category_id:    Joi.number().integer().optional().allow(null),
   hsn_code:       Joi.string().max(20).optional().allow(null, ""),
   total_price:    Joi.number().min(0).optional(),
 });
@@ -191,9 +196,9 @@ const purchase_create = Joi.object({
   purchase_date:   Joi.string().isoDate().required(),
   total_amount:    Joi.number().min(0).required(),
   paid_amount:     Joi.number().min(0).default(0),
-  payment_status:  Joi.string().valid("pending", "partial", "completed").default("pending"),
+  payment_status:  Joi.string().valid("pending", "partial", "paid").default("pending"),
   notes:           Joi.string().optional().allow(null, ""),
-  attachment_url:  Joi.array().items(Joi.string()).optional(),
+  attachment_url:  Joi.array().items(Joi.alternatives().try(Joi.string(), Joi.object())).optional(),
   due_date:        Joi.string().isoDate().optional().allow(null, ""),
   transaction_type: Joi.string().optional().allow(null, ""),
   transaction_id:   Joi.string().optional().allow(null, ""),
@@ -202,15 +207,20 @@ const purchase_create = Joi.object({
 }).options({ abortEarly: false });
 
 const purchase_update = Joi.object({
-  vendor_id:      Joi.string().optional().allow(null, ""),
-  purchase_date:  Joi.string().isoDate().optional(),
-  total_amount:   Joi.number().min(0).optional(),
-  paid_amount:    Joi.number().min(0).optional(),
-  payment_status: Joi.string().valid("pending", "partial", "completed").optional(),
-  notes:          Joi.string().optional().allow(null, ""),
-  attachment_url: Joi.array().items(Joi.string()).optional(),
-  due_date:       Joi.string().isoDate().optional().allow(null, ""),
-  items:          Joi.array().items(purchase_item_schema).min(1).optional(),
+  zodu_id:          Joi.string().max(50).optional().allow(null, ""),
+  branch_id:        Joi.string().max(50).optional().allow(null, ""),
+  vendor_id:        Joi.string().optional().allow(null, ""),
+  purchase_date:    Joi.string().isoDate().optional(),
+  total_amount:     Joi.number().min(0).optional(),
+  paid_amount:      Joi.number().min(0).optional(),
+  payment_status:   Joi.string().valid("pending", "partial", "paid").optional(),
+  notes:            Joi.string().optional().allow(null, ""),
+  attachment_url:   Joi.array().items(Joi.alternatives().try(Joi.string(), Joi.object())).optional(),
+  due_date:         Joi.string().isoDate().optional().allow(null, ""),
+  transaction_type: Joi.string().optional().allow(null, ""),
+  transaction_id:   Joi.string().optional().allow(null, ""),
+  payment_date:     Joi.string().isoDate().optional().allow(null, ""),
+  items:            Joi.array().items(purchase_item_schema).min(1).optional(),
 }).min(1).options({ abortEarly: false });
 
 const purchase_payment = Joi.object({
@@ -239,6 +249,7 @@ const vendor_create_v2 = Joi.object({
   city:             Joi.string().max(50).optional().allow(null, ""),
   state:            Joi.string().max(50).optional().allow(null, ""),
   pincode:          Joi.string().pattern(/^[0-9]{5,10}$/).optional().allow(null, ""),
+  type:             Joi.string().max(50).optional().allow(null, ""),
 }).options({ abortEarly: false });
 
 const vendor_update_v2 = Joi.object({
@@ -260,12 +271,19 @@ const vendor_update_v2 = Joi.object({
 // ─────────────────────────────────────────────────────────────
 
 const expense_line_item = Joi.object({
-  item_id:        Joi.string().optional().allow(null, ""),
+  item_uuid:      Joi.string().optional().allow(null, ""),
+  item_id:        Joi.alternatives().try(Joi.string(), Joi.number()).optional().allow(null, ""),
   item_name:      Joi.string().max(150).required(),
   qty:            Joi.number().min(0.001).required(),
   unit:           Joi.string().max(50).optional().allow(null, ""),
-  purchase_price: Joi.number().min(0).required(),
+  purchase_price: Joi.number().min(0).optional(),
+  price:          Joi.number().min(0).optional(),
   total_price:    Joi.number().min(0).optional(),
+  gst_percentage: Joi.number().min(0).optional().allow(null),
+  tax_amount:     Joi.number().min(0).optional().allow(null),
+  cgst:           Joi.number().min(0).optional().allow(null),
+  sgst:           Joi.number().min(0).optional().allow(null),
+  category_id:    Joi.number().integer().optional().allow(null),
 });
 
 const expense_create_v2 = Joi.object({
@@ -274,27 +292,34 @@ const expense_create_v2 = Joi.object({
   category_id:      Joi.number().integer().optional().allow(null),
   total_amount:     Joi.number().min(0).required(),
   paid_amount:      Joi.number().min(0).default(0),
-  payment_status:   Joi.string().valid("pending", "partial", "completed").default("pending"),
+  balance_amount:   Joi.number().min(0).optional().allow(null),
+  payment_status:   Joi.string().valid("pending", "partial", "paid").default("pending"),
   notes:            Joi.string().optional().allow(null, ""),
-  attachment_url:   Joi.array().items(Joi.string()).optional(),
+  attachment_url:   Joi.array().items(Joi.alternatives().try(Joi.string(), Joi.object())).optional(),
   due_date:         Joi.string().isoDate().optional().allow(null, ""),
   transaction_type: Joi.string().optional().allow(null, ""),
   transaction_id:   Joi.string().optional().allow(null, ""),
   payment_date:     Joi.string().isoDate().optional().allow(null, ""),
+  vendor_id:        Joi.alternatives().try(Joi.string(), Joi.number()).optional().allow(null, ""),
   items:            Joi.array().items(expense_line_item).optional(),
 }).options({ abortEarly: false });
 
 const expense_update_v2 = Joi.object({
+  zodu_id:          Joi.string().max(50).optional(),
+  branch_id:        Joi.string().max(50).optional(),
   expense_date:     Joi.string().isoDate().optional(),
   category_id:      Joi.number().integer().optional().allow(null),
   total_amount:     Joi.number().min(0).optional(),
   paid_amount:      Joi.number().min(0).optional(),
-  payment_status:   Joi.string().valid("pending", "partial", "completed").optional(),
+  balance_amount:   Joi.number().min(0).optional().allow(null),
+  payment_status:   Joi.string().valid("pending", "partial", "paid").optional(),
   notes:            Joi.string().optional().allow(null, ""),
-  attachment_url:   Joi.array().items(Joi.string()).optional(),
+  attachment_url:   Joi.array().items(Joi.alternatives().try(Joi.string(), Joi.object())).optional(),
   due_date:         Joi.string().isoDate().optional().allow(null, ""),
   transaction_type: Joi.string().optional().allow(null, ""),
   transaction_id:   Joi.string().optional().allow(null, ""),
+  payment_date:     Joi.string().isoDate().optional().allow(null, ""),
+  vendor_id:        Joi.alternatives().try(Joi.string(), Joi.number()).optional().allow(null, ""),
   items:            Joi.array().items(expense_line_item).optional(),
 }).min(1).options({ abortEarly: false });
 
