@@ -61,7 +61,7 @@ exports.generatePublicOrderNo = async (branch_id, zodu_id) => {
 
     if (numbering_type === "ZODUID_BRANCH_SEQ") {
       // Default format: Z{zodu_id}-B{branch_id}-{counter:04d}
-      return `Z${zodu_id}-B${branch_id}-${seq.toString().padStart(4, '0')}`;
+      return `${zodu_id}-${branch_id}-${seq.toString().padStart(4, '0')}`;
     } else if (numbering_type === "BRANCH_SEQ") {
       return `${branch_id}-${seq}`;
     } else {
