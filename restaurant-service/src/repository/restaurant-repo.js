@@ -129,7 +129,7 @@ exports.updateFinalPayment = async (data) => {
     );
 
 
-    const public_order_no = await generatePublicOrderNo(branch_id);
+    const public_order_no = await generatePublicOrderNo(branch_id, zodu_id);
 
     const orderRes = await conn.query(
       `

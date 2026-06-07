@@ -1676,6 +1676,7 @@ router.delete("/delete/gst/:id", async (req, res) => {
 router.post("/api/completeorder", async (req, res) => {
   try {
     const { errors, input } = await RequestValidator(vSchema.complete_order, req.body);
+    console.log(errors,input)
     if (errors) return res.status(400).json({ errors });
     const orderData = await service.update_Final_payment(input);
     if (!orderData.success) return res.status(400).json({ message: orderData.message });

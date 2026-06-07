@@ -59,7 +59,7 @@ exports.createOrder = async (orderData) => {
     await conn.query("BEGIN");
 
     const api_order_id = randomUUID();
-    const public_order_no = await generatePublicOrderNo(orderData.branch_id);
+    const public_order_no = await generatePublicOrderNo(orderData.branch_id, orderData.zodu_id);
 
     console.log("Creating order with API Order ID:",orderData);
 

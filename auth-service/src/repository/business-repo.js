@@ -159,7 +159,7 @@ exports.getCompany = async (zodu_id) => {
   console.log("Fetching company for zodu_id:", zodu_id);
   const r = await conn.query(
     `SELECT b.*,
-            b.business_name AS restaurant_name,
+            b.business_name AS restaurant_name,b.type AS business_type,
             a.address_line_1, a.address_line_2,
             a.city, a.district, a.state, a.pincode,
             bd.bank_name, bd.bank_branch, bd.holder_name,

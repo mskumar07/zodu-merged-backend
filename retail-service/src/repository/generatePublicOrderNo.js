@@ -1,7 +1,7 @@
 const conn = require('../database/connection');
 
 
-exports.generatePublicOrderNo = async (branch_id) => {
+exports.generatePublicOrderNo = async (branch_id, zodu_id) => {
   const tplRes = await conn.query(
     `SELECT numbering_type, reset_policy
      FROM tbl_order_no_template
@@ -9,11 +9,14 @@ exports.generatePublicOrderNo = async (branch_id) => {
     [branch_id]
   );
 
-  if (!tplRes.rowCount) {
-    throw new Error("Order number template not configured");
-  }
+  // Use default template if not configured
+  let numbering_type = "ZODUID_BRANCH_SEQ";
+  let reset_policy = "DAILY";
 
-  const { numbering_type, reset_policy } = tplRes.rows[0];
+  if (tplRes.rowCount > 0) {
+    numbering_type = tplRes.rows[0].numbering_type;
+    reset_policy = tplRes.rows[0].reset_policy;
+  }
 
   let period_key = "GLOBAL";
   const now = new Date();
@@ -56,16 +59,17 @@ exports.generatePublicOrderNo = async (branch_id) => {
     // release and return
     client.release();
 
-    return numbering_type === "BRANCH_SEQ"
-      ? `${branch_id}-${seq}`
-      : String(seq);
+    if (numbering_type === "ZODUID_BRANCH_SEQ") {
+      // Default format: Z{zodu_id}-B{branch_id}-{counter:04d}
+      return `${zodu_id}-${branch_id}-${seq.toString().padStart(4, '0')}`;
+    } else if (numbering_type === "BRANCH_SEQ") {
+      return `${branch_id}-${seq}`;
+    } else {
+      return String(seq);
+    }
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     client.release();
     throw err;
   }
-
-  return numbering_type === "BRANCH_SEQ"
-    ? `${branch_id}-${seq}`
-    : String(seq);
 };
