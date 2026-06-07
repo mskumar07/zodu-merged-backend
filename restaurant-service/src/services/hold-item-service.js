@@ -62,9 +62,9 @@ async function deleteHoldMenu(hold_id) {
     };
   }
 }
-async function getHoldData(branch_id) {
+async function getHoldData(branch_id, zodu_id) {
   try {
-    const allCategoryData = await repository.getHold(branch_id);
+    const allCategoryData = await repository.getHold(branch_id, zodu_id);
     return {
       success: true,
       data: allCategoryData,

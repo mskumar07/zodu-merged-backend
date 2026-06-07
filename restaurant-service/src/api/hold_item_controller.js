@@ -42,11 +42,11 @@ router.delete("/delete/hold-menu/:id", async (req, res) => {
   }
 });
 
-router.get("/get/hold-orders/:branch_id", async (req, res) => {
+router.get("/get/hold-orders/:branch_id/:zodu_id", async (req, res) => {
 
   try {
-    const { branch_id } = req.params;
-    const getHoldData = await service.getHoldData(branch_id);
+    const { branch_id, zodu_id } = req.params;
+    const getHoldData = await service.getHoldData(branch_id, zodu_id);
     if (!getHoldData.success) return res.status(400).json({ message: getHoldData.message });
     return res.status(201).json({ message: "Holds fetched successfully", Data: getHoldData.data });
   } catch (error) {

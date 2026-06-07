@@ -7,15 +7,15 @@ async function getStats(zodu_id, branch_id) {
       -- total_due (sales side), total_reminders (sales side), total_due_to_receivable_amount
       sales_agg AS (
         SELECT
-          COALESCE(SUM(total_amount), 0)                                                AS total_sales,
+          COALESCE(SUM(total_amt), 0)                                                AS total_sales,
           COUNT(*)                                                                      AS total_invoices,
-          COALESCE(SUM(CASE WHEN sale_date = CURRENT_DATE THEN total_amount END), 0)   AS todays_revenue,
-          COALESCE(SUM(CASE WHEN payment_status IN ('unpaid','partially_paid')
-                            THEN balance_amount END), 0)                               AS sales_due_balance,
-          COUNT(CASE WHEN payment_status IN ('unpaid','partially_paid') THEN 1 END)    AS sales_due_count,
-          COALESCE(SUM(balance_amount), 0)                                             AS total_due_to_receivable_amount
-        FROM tbl_sales
-        WHERE zodu_id = $1 AND branch_id = $2 AND sale_type != 'Q'
+          COALESCE(SUM(CASE WHEN order_date = CURRENT_DATE THEN total_amt END), 0)   AS todays_revenue
+          --COALESCE(SUM(CASE WHEN payment_status IN ('unpaid','partially_paid')
+          --                   THEN balance_amount END), 0)                               AS sales_due_balance,
+          -- COUNT(CASE WHEN payment_status IN ('unpaid','partially_paid') THEN 1 END)    AS sales_due_count,
+          -- COALESCE(SUM(balance_amount), 0)                                             AS total_due_to_receivable_amount
+        FROM tbl_orders
+        WHERE zodu_id = $1 AND branch_id = $2
       ),
 
       -- Single scan of tbl_purchase: covers total_due (purchase side),
@@ -34,9 +34,9 @@ async function getStats(zodu_id, branch_id) {
       sale_items_agg AS (
         SELECT
           si.item_name,
-          SUM(si.quantity) AS qty
-        FROM tbl_sale_items si
-        JOIN tbl_sales s ON s.sale_uuid = si.sale_uuid
+          SUM(si.qty) AS qty
+        FROM tbl_ordered_items si
+        JOIN tbl_orders s ON s.sale_uuid = si.sale_uuid
         WHERE s.zodu_id = $1 AND s.branch_id = $2
         GROUP BY si.item_name
       ),
@@ -97,26 +97,25 @@ async function getSales(zodu_id, branch_id, limit, cursor) {
 
   if (cursor) {
     where += ` AND (
-      s.sale_date < $4
-      OR (s.sale_date = $4 AND s.sale_time < $5)
-      OR (s.sale_date = $4 AND s.sale_time = $5 AND s.sale_uuid < $6::uuid)
+      s.order_date < $4
+      OR (s.order_date = $4 AND s.order_time < $5)
+      OR (s.order_date = $4 AND s.order_time = $5 AND s.api_order_id < $6::uuid)
     )`;
-    values.push(cursor.sale_date, cursor.sale_time, cursor.sale_uuid);
+    values.push(cursor.order_date, cursor.order_time, cursor.api_order_id);
   }
 
   const { rows } = await conn.query(
     `SELECT
-      s.sale_uuid,
-      s.sale_id,
-      TO_CHAR(s.sale_date, 'DD Mon YYYY') AS sale_date,
-      TO_CHAR(s.sale_time, 'HH12:MI AM') AS sale_time,
-      s.total_amount,
-      s.payment_status,
+      s.api_order_id,
+      TO_CHAR(s.order_date, 'DD Mon YYYY') AS sale_date,
+      TO_CHAR(s.order_time, 'HH12:MI AM') AS sale_time,
+      s.total_amt,
+      --s.payment_status,
       COALESCE(c.cust_name, 'Walk-in') AS customer_name
-    FROM tbl_sales s
+    FROM tbl_orders s
     LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid
     WHERE ${where}
-    ORDER BY s.sale_date DESC, s.sale_time DESC, s.sale_uuid DESC
+    ORDER BY s.order_date DESC, s.order_time DESC, s.api_order_id DESC
     LIMIT $3`,
     values
   );
@@ -163,6 +162,223 @@ async function getTopItems(zodu_id, branch_id, limit, cursor) {
   return rows;
 }
 
+async function getDashboardOrders(zodu_id, branch_id, { page, limit, sortOrder }) {
+  const offset = (page - 1) * limit;
+  const order = sortOrder === "asc" ? "ASC" : "DESC";
+
+  const params = [zodu_id, branch_id];
+
+  const dataQuery = `
+    SELECT
+      o.public_order_no,
+      o.api_order_id,
+      o.total_amt,
+      o.no_of_items,
+      o.branch_id,
+      o.order_type,
+      o.payment_type,
+      TO_CHAR(o.created_at, 'DD Mon YYYY, HH12:MI AM (Dy)') AS formatted_date
+    FROM tbl_orders o
+    WHERE o.zodu_id = $1 AND o.branch_id = $2
+      AND o.final_payment = true
+    ORDER BY o.created_at ${order}
+    LIMIT $3 OFFSET $4
+  `;
+
+  const countQuery = `
+    SELECT COUNT(*) AS total
+    FROM tbl_orders o
+    WHERE o.zodu_id = $1 AND o.branch_id = $2
+      AND o.final_payment = true
+  `;
+
+  const [dataRes, countRes] = await Promise.all([
+    conn.query(dataQuery, [...params, limit, offset]),
+    conn.query(countQuery, params)
+  ]);
+
+  return {
+    rows: dataRes.rows,
+    count: Number(countRes.rows[0].total)
+  };
+}
+
+exports.getDashboardSummary = async (zodu_id, branch_id ) => {
+  const query = `
+    SELECT
+      (SELECT COUNT(*)
+       FROM tbl_orders o
+       WHERE o.zodu_id = $1 AND o.branch_id = $2 AND o.final_payment = true
+      ) AS total_orders,
+
+      (SELECT COALESCE(SUM(o.total_amt), 0)
+       FROM tbl_orders o
+       WHERE o.zodu_id = $1 AND o.branch_id = $2 AND o.final_payment = true
+      ) AS total_sales,
+
+      (SELECT COALESCE(SUM(p.balance_amount), 0)
+       FROM tbl_expense p
+       WHERE p.zodu_id = $1 AND p.branch_id = $2
+      ) +
+
+      (SELECT COALESCE(SUM(p.balance_amount), 0)
+       FROM tbl_purchase p
+       WHERE p.zodu_id = $1 AND p.branch_id = $2
+      ) AS total_due, 
+
+      (SELECT COUNT(*)
+       FROM tbl_inventory
+       WHERE zodu_id = $1 AND branch_id = $2
+         AND stock_qty <= stock_alert
+      ) AS low_stocks
+  `;
+
+  const res = await conn.query(query, [zodu_id, branch_id]);
+  return res.rows[0];
+};
+
+
+async function getDashboardTopItems(zodu_id, branch_id, { limit, offset }) {
+  const dataQuery = `
+    SELECT
+      m.menu_name,
+      c.name AS category_name,
+      u.short_name AS unit,
+      SUM(i.qty) AS total_qty,
+      COALESCE(SUM(i.total_amount), 0) AS total_amount
+    FROM tbl_ordered_items i
+    JOIN tbl_orders o ON o.api_order_id = i.api_order_id
+    JOIN tbl_menu_items m ON m.menu_id = i.item_id
+    LEFT JOIN tbl_category c ON c.id = m.menu_category_id
+    LEFT JOIN tbl_units u ON u.id = m.menu_unit
+    WHERE o.zodu_id = $1
+      AND o.branch_id = $2
+      AND o.final_payment = true
+    GROUP BY m.menu_name, c.name, u.short_name
+    ORDER BY total_qty DESC
+    LIMIT $3 OFFSET $4
+  `;
+
+  const countQuery = `
+    SELECT COUNT(DISTINCT i.item_id) AS count
+    FROM tbl_ordered_items i
+    JOIN tbl_orders o ON o.api_order_id = i.api_order_id
+    WHERE o.zodu_id = $1
+      AND o.branch_id = $2
+      AND o.final_payment = true
+  `;
+
+  const [dataRes, countRes] = await Promise.all([
+    conn.query(dataQuery, [zodu_id, branch_id, limit, offset]),
+    conn.query(countQuery, [zodu_id, branch_id])
+  ]);
+
+  return {
+    rows: dataRes.rows,
+    count: Number(countRes.rows[0].count)
+  };
+}
+
+// async function getReminders(zodu_id, branch_id, limit, cursor) {
+//   const values = [zodu_id, branch_id, limit];
+//   let cursorClause = "";
+
+//   if (cursor) {
+//     cursorClause = `AND (
+//       due_date > $4
+//       OR (due_date = $4 AND ref_type > $6)
+//       OR (due_date = $4 AND ref_type = $6 AND ref_id > $5)
+//     )`;
+//     values.push(cursor.due_date, cursor.ref_id, cursor.ref_type);
+//   }
+
+//   const { rows } = await conn.query(
+//   `SELECT
+//     ref_id,
+//     ref_type,
+//     txn_date,
+//     TO_CHAR(due_date, 'DD Mon YYYY') AS due_date,   -- format for display
+//     total_amount,
+//     paid_amount,
+//     balance_amount,
+//     payment_status,
+//     transaction_type,
+//     party_name,
+//     vendor_name
+//   FROM (
+
+//     SELECT
+//       s.sale_id::varchar                      AS ref_id,
+//       s.sale_uuid                             AS ref_uuid,
+//       'SALE'                                  AS ref_type,
+//       TO_CHAR(s.sale_date, 'DD Mon YYYY')     AS txn_date,
+//       s.due_date::date                        AS due_date,
+//       s.total_amount,
+//       s.paid_amount,
+//       s.balance_amount,
+//       s.payment_status,
+//       NULL::varchar                           AS transaction_type,
+//       COALESCE(c.cust_name, 'Walk-in')        AS party_name,
+//       NULL::varchar                           AS vendor_name
+//     FROM tbl_order s
+//     LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid
+//     WHERE s.zodu_id = $1 AND s.branch_id = $2
+//       AND s.payment_status IN ('unpaid', 'partially_paid')
+
+//     UNION ALL
+
+//     SELECT
+//       p.purchase_id::varchar                                                                AS ref_id,
+//       NULL::uuid                                                                            AS ref_uuid,
+//       'PURCHASE'                                                                            AS ref_type,
+//       TO_CHAR(p.purchase_date, 'DD Mon YYYY')                                              AS txn_date,
+//       COALESCE(MAX(pp.payment_date), p.due_date)::date                                     AS due_date,
+//       p.total_amount,
+//       p.paid_amount,
+//       p.balance_amount,
+//       p.payment_status,
+//       STRING_AGG(DISTINCT pp.transaction_type, ', ' ORDER BY pp.transaction_type)          AS transaction_type,
+//       NULL::varchar                                                                         AS party_name,
+//       COALESCE(v.vendor_name, 'Unknown Vendor')                                            AS vendor_name
+//     FROM tbl_purchase p
+//     LEFT JOIN tbl_purchase_payment pp
+//       ON pp.purchase_id = p.purchase_id
+//      AND pp.zodu_id = $1 AND pp.branch_id = $2
+//     LEFT JOIN tbl_vendor v ON v.vendor_id = p.vendor_id AND v.zodu_id = $1 AND v.branch_id = $2
+//     WHERE p.zodu_id = $1 AND p.branch_id = $2
+//       AND p.payment_status IN ('pending', 'partial')
+//     GROUP BY p.purchase_id, p.purchase_date, p.due_date, p.total_amount, p.paid_amount,
+//              p.balance_amount, p.payment_status, v.vendor_name
+
+//     UNION ALL
+
+//     SELECT
+//       e.expense_id                                   AS ref_id,
+//       NULL::uuid                                     AS ref_uuid,
+//       'EXPENSE'                                      AS ref_type,
+//       TO_CHAR(e.expense_date, 'DD Mon YYYY')         AS txn_date,
+//       e.due_date::date                               AS due_date,
+//       e.total_amount,
+//       e.paid_amount,
+//       e.balance_amount,
+//       e.payment_status,
+//       NULL::varchar                                  AS transaction_type,
+//       c.name                                         AS party_name,
+//       NULL::varchar                                  AS vendor_name
+//     FROM tbl_expense e
+//     LEFT JOIN tbl_category c ON c.id = e.category_id AND c.zodu_id = $1 AND c.branch_id = $2
+//     WHERE e.zodu_id = $1 AND e.branch_id = $2
+//       AND e.payment_status IN ('pending', 'partial')
+
+//   ) combined
+//   WHERE 1=1 ${cursorClause}
+//   ORDER BY due_date ASC NULLS LAST, ref_type ASC, ref_id ASC
+//   LIMIT $3`,
+//   values
+// );
+//   return rows;
+// }
+
 async function getReminders(zodu_id, branch_id, limit, cursor) {
   const values = [zodu_id, branch_id, limit];
   let cursorClause = "";
@@ -190,26 +406,6 @@ async function getReminders(zodu_id, branch_id, limit, cursor) {
     party_name,
     vendor_name
   FROM (
-
-    SELECT
-      s.sale_id::varchar                      AS ref_id,
-      s.sale_uuid                             AS ref_uuid,
-      'SALE'                                  AS ref_type,
-      TO_CHAR(s.sale_date, 'DD Mon YYYY')     AS txn_date,
-      s.due_date::date                        AS due_date,
-      s.total_amount,
-      s.paid_amount,
-      s.balance_amount,
-      s.payment_status,
-      NULL::varchar                           AS transaction_type,
-      COALESCE(c.cust_name, 'Walk-in')        AS party_name,
-      NULL::varchar                           AS vendor_name
-    FROM tbl_sales s
-    LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid
-    WHERE s.zodu_id = $1 AND s.branch_id = $2 AND s.sale_type != 'Q'
-      AND s.payment_status IN ('unpaid', 'partially_paid')
-
-    UNION ALL
 
     SELECT
       p.purchase_id::varchar                                                                AS ref_id,
@@ -266,14 +462,14 @@ async function getReminders(zodu_id, branch_id, limit, cursor) {
 async function getInventoryAlerts(zodu_id, branch_id, limit, cursor) {
   const values = [zodu_id, branch_id, limit];
   let where = `i.zodu_id = $1 AND i.branch_id = $2
-    AND i.available_qty <= i.reorder_level`;
+    AND i.stock_qty <= i.stock_alert`;
 
   if (cursor) {
     where += ` AND (
-      i.available_qty > $4
-      OR (i.available_qty = $4 AND i.item_uuid > $5::uuid)
+      i.stock_qty > $4
+      OR (i.stock_qty = $4 AND i.item_uuid > $5::uuid)
     )`;
-    values.push(cursor.available_qty, cursor.item_uuid);
+    values.push(cursor.stock_qty, cursor.item_uuid);
   }
 
   const { rows } = await conn.query(
@@ -283,21 +479,21 @@ async function getInventoryAlerts(zodu_id, branch_id, limit, cursor) {
       i.item_id,
       i.item_name,
       c.name AS category_name,
-      i.available_qty,
-      i.reorder_level,
-      i.last_stock_update,
+      i.stock_qty,
+      i.stock_alert,
+      i.updated_at,
       CASE
-        WHEN i.available_qty = 0                      THEN 'out'
-        WHEN i.available_qty <= i.reorder_level * 0.5 THEN 'critical'
+        WHEN i.stock_qty = 0                      THEN 'out'
+        WHEN i.stock_qty <= i.stock_alert * 0.5 THEN 'critical'
         ELSE                                               'low'
       END AS stock_status
     FROM tbl_inventory i
     LEFT JOIN tbl_menu_items m
       ON m.item_uuid = i.item_uuid AND m.zodu_id = $1 AND m.branch_id = $2
     LEFT JOIN tbl_category c
-      ON c.id = m.category_id AND c.zodu_id = $1 AND c.branch_id = $2
+      ON c.id = m.menu_category_id AND c.zodu_id = $1 AND c.branch_id = $2
     WHERE ${where}
-    ORDER BY i.available_qty ASC, i.item_uuid ASC
+    ORDER BY i.stock_qty ASC, i.item_uuid ASC
     LIMIT $3`,
     values
   );
@@ -310,4 +506,7 @@ module.exports = {
   getTopItems,
   getReminders,
   getInventoryAlerts,
+  getDashboardOrders,
+  getDashboardTopItems,
+  getDashboardSummary: exports.getDashboardSummary,
 };

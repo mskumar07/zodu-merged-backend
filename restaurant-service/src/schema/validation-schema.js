@@ -132,6 +132,7 @@ const complete_order = Joi.object({
       price:          Joi.number().min(0).required(),
       gst_percentage: Joi.number().min(0).default(0),
       tax_inclusive:  Joi.boolean().default(false),
+      tax:            Joi.number().min(0).default(0),
       menu_unit:      Joi.string().allow(null, ""),
       variant_id:     Joi.string().allow(null, ""),
       variant_name:   Joi.string().allow(null, ""),

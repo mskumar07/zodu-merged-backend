@@ -63,6 +63,52 @@ async function getSales(zodu_id, branch_id, rawLimit, cursorToken) {
   }));
 }
 
+
+
+async function getDashboardOrders(zodu_id, branch_id, options) {
+  const {
+    page = 1,
+    limit = 10,
+    sortOrder = "desc"
+  } = options;
+
+  const result = await repo.getDashboardOrders(zodu_id, branch_id, {
+    page: Number(page),
+    limit: Number(limit),
+    sortOrder
+  });
+
+  const totalPages = Math.ceil(result.count / limit);
+
+  return {
+    data: result.rows,
+    pagination: {
+      page: Number(page),
+      limit: Number(limit),
+      totalRecords: result.count,
+      totalPages
+    }
+  };
+}
+
+async function getDashboardTopItems(zodu_id, branch_id, options) {
+  const { page = 1, limit = 10 } = options;
+  const offset = (page - 1) * limit;
+
+  const result = await repo.getDashboardTopItems(zodu_id, branch_id, { limit: Number(limit), offset });
+
+  return {
+    data: result.rows,
+    pagination: {
+      page: Number(page),
+      limit: Number(limit),
+      totalRecords: result.count,
+      totalPages: Math.ceil(result.count / limit)
+    }
+  };
+}
+
+
 async function getTopItems(zodu_id, branch_id, rawLimit, cursorToken) {
   const limit  = parseLimit(rawLimit);
   const cursor = decodeCursor(cursorToken);
@@ -98,10 +144,17 @@ async function getInventoryAlerts(zodu_id, branch_id, rawLimit, cursorToken) {
   }));
 }
 
+async function getDashboardSummary(zodu_id, branch_id) {
+  return repo.getDashboardSummary(zodu_id, branch_id);
+}
+
 module.exports = {
   getStats,
   getSales,
   getTopItems,
   getReminders,
   getInventoryAlerts,
+  getDashboardOrders,
+  getDashboardTopItems,
+  getDashboardSummary,
 };

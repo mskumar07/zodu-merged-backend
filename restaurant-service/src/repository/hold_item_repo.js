@@ -1,7 +1,7 @@
 const conn = require("../database/connection");
 
 
-exports. getHold = async (branch_id) => {
+exports. getHold = async (branch_id, zodu_id) => {
   try {
     const result = await conn.query(
       `
@@ -30,11 +30,11 @@ exports. getHold = async (branch_id) => {
         ) AS items
       FROM tbl_hold h
       LEFT JOIN tbl_hold_items hi ON h.hold_id = hi.hold_id
-      WHERE h.branch_id = $1
+      WHERE h.branch_id = $1 AND h.zodu_id = $2
       GROUP BY h.hold_id,h.zodu_id,h.branch_id,h.order_type,h.table_no,h.customer_name,h.customer_phone,h.created_at
       ORDER BY h.created_at DESC;
       `,
-      [String(branch_id)]
+      [String(branch_id), String(zodu_id)]
     );
 
     return {

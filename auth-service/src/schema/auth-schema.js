@@ -1,6 +1,6 @@
 const joi = require("@hapi/joi");
 
-const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^a-zA-Z0-9]).{8,30}$/;
+const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,30}$/;
 
 const schema = {
   account_create: joi.object({
