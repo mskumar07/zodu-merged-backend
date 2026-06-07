@@ -21,10 +21,10 @@ router.post("/add/orders", async (req, res) => {
   }
 });
 
-router.get("/get/orders/:branch_id", async (req, res) => {
+router.get("/get/orders/:branch_id/:zodu_id", async (req, res) => {
   try {
-    const { branch_id } = req.params;
-    const getMenuItemData = await service.get_ordered_data(branch_id);
+    const { branch_id, zodu_id } = req.params;
+    const getMenuItemData = await service.get_ordered_data(branch_id, zodu_id);
     if (!getMenuItemData.success) return res.status(400).json({ message: getMenuItemData.message });
     return res.status(200).json({ message: "Data Get Successfully", data: getMenuItemData.data });
   } catch (error) {

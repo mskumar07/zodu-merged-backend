@@ -59,7 +59,7 @@ exports.createOrder = async (orderData) => {
     await conn.query("BEGIN");
 
     const api_order_id = randomUUID();
-    const public_order_no = await generatePublicOrderNo(orderData.branch_id);
+    const public_order_no = await generatePublicOrderNo(orderData.branch_id, orderData.zodu_id);
 
     console.log("Creating order with API Order ID:",orderData);
 
@@ -347,7 +347,7 @@ exports.get_category_item_wise_report = async (zodu_id, branch_id, page = 1, lim
   }
 };
 
-exports.get_ordered_data = async (branch_id) => {
+exports.get_ordered_data = async (branch_id, zodu_id) => {
   const query = `
     SELECT
       o.api_order_id, o.legacy_order_ref, o.table_no, o.order_type,
@@ -366,14 +366,14 @@ exports.get_ordered_data = async (branch_id) => {
     LEFT JOIN tbl_tmp_ordered_items i ON o.api_order_id = i.api_order_id
     LEFT JOIN tbl_menu_items mi ON i.item_id = mi.menu_id
     LEFT JOIN tbl_kot_list k ON o.api_order_id = k.api_order_id
-    WHERE o.branch_id = $1 AND o.final_payment = false
+    WHERE o.branch_id = $1 AND o.zodu_id = $2 AND o.final_payment = false
     GROUP BY o.api_order_id, o.legacy_order_ref, o.table_no, o.order_type,
       o.customer_name, o.customer_phone, o.total_amt, o.final_payment,
-      o.branch_id, o.order_date, o.order_time
+      o.branch_id, o.zodu_id, o.order_date, o.order_time
     ORDER BY o.created_at DESC;
   `;
   try {
-    const { rows } = await conn.query(query, [branch_id]);
+    const { rows } = await conn.query(query, [branch_id, zodu_id]);
     return rows || [];
   } catch (error) {
     throw new Error("Failed to fetch ordered data: " + error.message);

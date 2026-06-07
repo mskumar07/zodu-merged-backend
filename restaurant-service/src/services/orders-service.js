@@ -52,9 +52,9 @@ async function getSingleOrder(zodu_id, branch_id, api_order_id) {
   }
 }
 
-async function get_ordered_data(branch_id) {
+async function get_ordered_data(branch_id, zodu_id) {
   try {
-    const orderData = await repository.get_ordered_data(branch_id);
+    const orderData = await repository.get_ordered_data(branch_id, zodu_id);
     return { success: true, data: orderData };
   } catch (error) {
     console.error("get_ordered_data Error", error);
