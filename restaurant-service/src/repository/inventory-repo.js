@@ -5,7 +5,7 @@ const INV_COLS = `
   i.item_id,
   i.zodu_id,
   i.branch_id,
-  m.menu_name      AS item_name,
+  COALESCE(m.menu_name, i.item_name) AS item_name,
   i.stock_qty,
   i.stock_alert,
   i.created_at,
