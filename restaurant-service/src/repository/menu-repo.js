@@ -110,9 +110,9 @@ exports.createMenuItem = async (menuData) => {
         );
       } else {
         await conn.query(
-          `INSERT INTO tbl_inventory (zodu_id, branch_id, item_id, category_id, item_name, item_unit, stock_qty, stock_alert, purchase_price, selling_price, inventory_type, last_purchase_date, created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW())`,
-          [createdMenu.zodu_id, createdMenu.branch_id, createdMenu.menu_id, createdMenu.menu_category_id, createdMenu.menu_name, createdMenu.menu_unit, stockQty, stockAlert, createdMenu.purchase_price, createdMenu.sell_price, "direct"]
+          `INSERT INTO tbl_inventory (zodu_id, branch_id, item_id, category_id, item_name, item_unit, stock_qty, stock_alert, purchase_price, selling_price, inventory_type, last_purchase_date, created_at,item_uuid)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW(),$12)`,
+          [createdMenu.zodu_id, createdMenu.branch_id, createdMenu.menu_id, createdMenu.menu_category_id, createdMenu.menu_name, createdMenu.menu_unit, stockQty, stockAlert, createdMenu.purchase_price, createdMenu.sell_price, "direct", createdMenu.item_uuid]
         );
       }
     }
@@ -204,7 +204,7 @@ exports.get_menuItem_data = async (zodu_id,branch_id, type, page, limit, search,
      LEFT JOIN tbl_units u ON u.id = m.menu_unit
      LEFT JOIN tbl_inventory i ON i.item_id = m.menu_id AND i.branch_id = m.branch_id
      WHERE ${whereClause}
-     ORDER BY c.name, m.menu_name
+     ORDER BY m.created_at DESC
      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
     [...params, limit, offset]
   );
@@ -225,6 +225,17 @@ exports.updateActive = async (menuId, active) => {
     await conn.query("ROLLBACK");
     throw error;
   }
+};
+
+exports.checkItemIdExists = async (item_id, zodu_id, branch_id) => {
+  const { rows } = await conn.query(
+    `SELECT item_uuid, menu_id, menu_name, active
+     FROM tbl_menu_items
+     WHERE menu_code = $1 AND zodu_id = $2 AND branch_id = $3
+     LIMIT 1`,
+    [item_id, zodu_id, branch_id]
+  );
+  return rows[0] ?? null;
 };
 
 exports.AddFav = async (menuId, active) => {

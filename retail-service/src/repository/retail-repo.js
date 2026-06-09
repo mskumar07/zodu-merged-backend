@@ -1607,7 +1607,7 @@ const query = `
   WHERE i.branch_id = $1
     AND ($2::text IS NULL OR i.inventory_type = $2::text)
     AND ($3::int IS NULL OR i.category_id::int = $3::int)
-  ORDER BY i.updated_at DESC;
+  ORDER BY i.created_at DESC;
 `;
 
     const result = await conn.query(query, [
@@ -2506,7 +2506,7 @@ exports.get_menuItem_data = async (branch_id, page, limit, search) => {
         OR c.name ILIKE '%' || $2 || '%'
       )
 
-    ORDER BY m.item_name ASC
+    ORDER BY m.created_at DESC
     LIMIT $3 OFFSET $4
     `,
     [branch_id, search, limit, offset]

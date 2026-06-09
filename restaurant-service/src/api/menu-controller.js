@@ -135,6 +135,32 @@ router.delete("/delete/menu_item/:id", async (req, res) => {
   }
 });
 
+
+//  GET /restaurant/api/check/item_id
+//  Check if item_id already exists for a given zodu_id + branch_id
+//  Query params: zodu_id, branch_id, item_id
+// ─────────────────────────────────────────────────────────────
+router.get('/check/item_id', async (req, res) => {
+  try {
+    const { zodu_id, branch_id, item_id } = req.query;
+    if (!zodu_id || !branch_id || !item_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'zodu_id, branch_id, and item_id are required',
+      });
+    }
+    const result = await service.checkItemIdExists({ item_id, zodu_id, branch_id });
+    return res.status(200).json({
+      success: true,
+      exists: result.exists,
+      ...(result.exists && { data: result.data }),
+    });
+  } catch (error) {
+    console.error('[menu] checkItemId error:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 router.put("/update/menu_item/:id", upload.single("menu_image"), async (req, res) => {
   try {
     const data = await service.updateMenuItem(req.params.id, req.body);

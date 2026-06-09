@@ -65,6 +65,14 @@ async function updateMenusFav(menu_id, active) {
   }
 }
 
+async function checkItemIdExists({ item_id, zodu_id, branch_id }) {
+  const row = await repository.checkItemIdExists(item_id, zodu_id, branch_id);
+  if (row) {
+    return { success: true, exists: true, data: row };
+  }
+  return { success: true, exists: false };
+}
+
 async function get_menuItem_data(zodu_id,branch_id, type, page, limit, search, category_ids = []) {
   try {
     const allMenuItemData = await repository.get_menuItem_data(zodu_id,branch_id, type, page, limit, search, category_ids);
@@ -111,5 +119,5 @@ async function updateMenuItem(menuId, menuData) {
 
 module.exports = {
   createMenuItem, editMenuItem, updateMenustaus, updateMenusFav,
-  get_menuItem_data, deleteMenuItem, updateMenuItem
+  get_menuItem_data, deleteMenuItem, updateMenuItem,checkItemIdExists
 };

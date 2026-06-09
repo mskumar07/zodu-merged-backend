@@ -332,7 +332,7 @@ exports.get_inventory_list = async (zodu_id, branch_id, type, category, search, 
         AND ($3::text IS NULL OR i.inventory_type = $3::text)
         AND ($4::int[] IS NULL OR i.category_id::int = ANY($4::int[]))
         AND ($5::text IS NULL OR i.item_name ILIKE $5 OR i.item_id ILIKE $5)
-      ORDER BY i.updated_at DESC
+      ORDER BY i.created_at DESC
       LIMIT $6 OFFSET $7
     `;
 

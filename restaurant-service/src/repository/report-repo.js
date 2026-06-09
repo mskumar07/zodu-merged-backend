@@ -567,13 +567,12 @@ async function getProfitByYear(zodu_id, branch_id, year) {
      ),
      sales_data AS (
        SELECT
-         EXTRACT(MONTH FROM sale_date)::int AS month_num,
-         COALESCE(SUM(total_amount), 0)     AS total_sales
-       FROM tbl_sales
+         EXTRACT(MONTH FROM order_date)::int AS month_num,
+         COALESCE(SUM(total_amt), 0)     AS total_sales
+       FROM tbl_orders
        WHERE zodu_id = $1 AND branch_id = $2
-         AND EXTRACT(YEAR FROM sale_date) = $3::int
-         AND sale_type != 'Q'
-       GROUP BY EXTRACT(MONTH FROM sale_date)
+         AND EXTRACT(YEAR FROM order_date) = $3::int
+       GROUP BY EXTRACT(MONTH FROM order_date)
      ),
      purchase_data AS (
        SELECT
@@ -617,7 +616,7 @@ async function getProfitActiveYears(zodu_id, branch_id) {
   const { rows } = await conn.query(
     `SELECT DISTINCT year
      FROM (
-       SELECT EXTRACT(YEAR FROM sale_date)::int     AS year FROM tbl_sales    WHERE zodu_id = $1 AND branch_id = $2 AND sale_type != 'Q'
+       SELECT EXTRACT(YEAR FROM order_date)::int     AS year FROM tbl_orders    WHERE zodu_id = $1 AND branch_id = $2
        UNION
        SELECT EXTRACT(YEAR FROM purchase_date)::int AS year FROM tbl_purchase WHERE zodu_id = $1 AND branch_id = $2
        UNION
@@ -644,18 +643,18 @@ async function getProfitYearwise(zodu_id, branch_id, limit, offset) {
            - COALESCE(p.total_purchase, 0)
            - COALESCE(e.total_expense,  0) AS profit
        FROM (
-         SELECT EXTRACT(YEAR FROM sale_date)::int     AS year FROM tbl_sales    WHERE zodu_id = $1 AND branch_id = $2 AND sale_type != 'Q'
+         SELECT EXTRACT(YEAR FROM order_date)::int     AS year FROM tbl_orders    WHERE zodu_id = $1 AND branch_id = $2
          UNION
          SELECT EXTRACT(YEAR FROM purchase_date)::int AS year FROM tbl_purchase WHERE zodu_id = $1 AND branch_id = $2
          UNION
          SELECT EXTRACT(YEAR FROM expense_date)::int  AS year FROM tbl_expense  WHERE zodu_id = $1 AND branch_id = $2
        ) y
        LEFT JOIN (
-         SELECT EXTRACT(YEAR FROM sale_date)::int AS year,
-                SUM(total_amount)                 AS total_sales
-         FROM   tbl_sales
-         WHERE  zodu_id = $1 AND branch_id = $2 AND sale_type != 'Q'
-         GROUP  BY EXTRACT(YEAR FROM sale_date)
+         SELECT EXTRACT(YEAR FROM order_date)::int AS year,
+                SUM(total_amt)                 AS total_sales
+         FROM   tbl_orders
+         WHERE  zodu_id = $1 AND branch_id = $2
+         GROUP  BY EXTRACT(YEAR FROM order_date)
        ) s ON s.year = y.year
        LEFT JOIN (
          SELECT EXTRACT(YEAR FROM purchase_date)::int AS year,
@@ -680,7 +679,7 @@ async function getProfitYearwise(zodu_id, branch_id, limit, offset) {
     conn.query(
       `SELECT COUNT(DISTINCT year)::int AS total
        FROM (
-         SELECT EXTRACT(YEAR FROM sale_date)::int     AS year FROM tbl_sales    WHERE zodu_id = $1 AND branch_id = $2 AND sale_type != 'Q'
+         SELECT EXTRACT(YEAR FROM order_date)::int     AS year FROM tbl_orders    WHERE zodu_id = $1 AND branch_id = $2
          UNION
          SELECT EXTRACT(YEAR FROM purchase_date)::int AS year FROM tbl_purchase WHERE zodu_id = $1 AND branch_id = $2
          UNION
@@ -692,11 +691,11 @@ async function getProfitYearwise(zodu_id, branch_id, limit, offset) {
     // overall summary — all years combined
     conn.query(
       `SELECT
-         COALESCE(SUM(s.total_amount), 0) AS total_sales,
+         COALESCE(SUM(s.total_amt), 0) AS total_sales,
          COALESCE(SUM(p.total_amount), 0) AS total_purchase,
          COALESCE(SUM(e.total_amount), 0) AS total_expense
        FROM
-         (SELECT SUM(total_amount) AS total_amount FROM tbl_sales    WHERE zodu_id = $1 AND branch_id = $2 AND sale_type != 'Q') s,
+         (SELECT SUM(total_amt) AS total_amt FROM tbl_orders    WHERE zodu_id = $1 AND branch_id = $2) s,
          (SELECT SUM(total_amount) AS total_amount FROM tbl_purchase WHERE zodu_id = $1 AND branch_id = $2) p,
          (SELECT SUM(total_amount) AS total_amount FROM tbl_expense  WHERE zodu_id = $1 AND branch_id = $2) e`,
       [zodu_id, branch_id]

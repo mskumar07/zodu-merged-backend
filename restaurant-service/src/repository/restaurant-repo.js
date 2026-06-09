@@ -2643,8 +2643,8 @@ exports.InactivateCategory = async (id, zodu_id, branch_id, active, page_expense
       if (!page_expense) {
         const usageRes = await conn.query(
           `SELECT
-            EXISTS (SELECT 1 FROM tbl_menu_items WHERE category_id = $1 AND branch_id = $2 AND zodu_id = $3) AS in_menu,
-            EXISTS (SELECT 1 FROM tbl_inventory ti JOIN tbl_menu_items ie ON ie.item_id = ti.item_id WHERE ie.category_id = $1 AND ie.branch_id = $2 AND ie.zodu_id = $3) AS in_inventory`,
+            EXISTS (SELECT 1 FROM tbl_menu_items WHERE menu_category_id = $1 AND branch_id = $2 AND zodu_id = $3) AS in_menu,
+            EXISTS (SELECT 1 FROM tbl_inventory ti JOIN tbl_menu_items ie ON ie.menu_id = ti.item_id WHERE ie.menu_category_id = $1 AND ie.branch_id = $2 AND ie.zodu_id = $3) AS in_inventory`,
           [id, branch_id, zodu_id]
         );
         const { in_menu, in_inventory } = usageRes.rows[0];
@@ -2675,17 +2675,20 @@ exports.InactivateCategory = async (id, zodu_id, branch_id, active, page_expense
 
 exports.deleteCategory = async (id, branch_id, zodu_id, page_expense) => {
   try {
-    if (!page_expense) {
+    if (page_expense === "false") {
+      console.log("Checking usage for category in branch", id, branch_id, zodu_id, page_expense);
       const usageRes = await conn.query(
         `SELECT
-          EXISTS (SELECT 1 FROM tbl_menu_items WHERE category_id = $1 AND branch_id = $2 AND zodu_id = $3) AS in_menu,
-          EXISTS (SELECT 1 FROM tbl_inventory ti JOIN tbl_menu_items ie ON ie.item_id = ti.item_id WHERE ie.category_id = $1 AND ie.branch_id = $2 AND ie.zodu_id = $3) AS in_inventory`,
+          EXISTS (SELECT 1 FROM tbl_menu_items WHERE menu_category_id = $1 AND branch_id = $2 AND zodu_id = $3) AS in_menu,
+          EXISTS (SELECT 1 FROM tbl_inventory ie WHERE ie.category_id = $1 AND ie.branch_id = $2 AND ie.zodu_id = $3) AS in_inventory`,
         [id, branch_id, zodu_id]
       );
+      console.log("Category usage result:", usageRes.rows[0]);
       const { in_menu, in_inventory } = usageRes.rows[0];
       if (in_menu) throw new Error("Category cannot be deleted. This category is used in menu items.");
       if (in_inventory) throw new Error("Category cannot be deleted. This category is used in inventory items.");
     } else {
+      console.log("Checking expense usage for category in branch", id, branch_id, zodu_id,page_expense);
       const usageRes = await conn.query(
         `SELECT EXISTS (
           SELECT 1 FROM tbl_expense_items ie
