@@ -1,6 +1,5 @@
 const conn = require("../database/connection");
 const { randomUUID } = require("crypto");
-const { calculateItemTax, calculateOrderTotals } = require("../utils/gstcalcukator");
 const { generatePublicOrderNo } = require("./generatePublicOrderNo");
 
 exports.getSingleOrder = async (zodu_id, branch_id, api_order_id) => {
@@ -61,14 +60,6 @@ exports.createOrder = async (orderData) => {
     const api_order_id = randomUUID();
     const public_order_no = await generatePublicOrderNo(orderData.branch_id, orderData.zodu_id);
 
-    console.log("Creating order with API Order ID:",orderData);
-
-    const totals = calculateOrderTotals(
-      orderData.items || [],
-      orderData.discount_type,
-      orderData.discount_value
-    );
-
     const result = await conn.query(
       `INSERT INTO tbl_orders (
         zodu_id, branch_id,
@@ -85,11 +76,11 @@ exports.createOrder = async (orderData) => {
       [
         orderData.zodu_id, orderData.branch_id,
         api_order_id, public_order_no,
-        orderData.table_no, orderData.order_type, totals.total_items,
-        orderData.customer_name, orderData.customer_phone,
-        totals.subtotal, totals.total_tax, totals.total_amount,
-        totals.discount_type || orderData.discount_type, orderData.discount_value, totals.discount_amount,
-        orderData.payment_type, orderData.order_date, orderData.order_time
+        orderData.table_no || null, orderData.order_type, orderData.no_of_items,
+        orderData.customer_name || null, orderData.customer_phone || null,
+        orderData.subtotal || 0, orderData.tax_amount || 0, orderData.total_amt,
+        orderData.discount_type || null, orderData.discount_value || 0, orderData.discount_amount || 0,
+        orderData.payment_type || null, orderData.order_date, orderData.order_time
       ]
     );
 
@@ -130,19 +121,18 @@ exports.createOrderedItems = async (orderData) => {
         const result = await conn.query(updateQuery, updateValues);
         insertedItems.push(result.rows[0]);
       } else {
-        const taxData = calculateItemTax(item);
         const result = await conn.query(
           `INSERT INTO tbl_ordered_items (
             zodu_id, branch_id, api_order_id, item_id, item_name,
             qty, price, item_unit, variant_id, variant_name,
             gst_percentage, tax_amount, cgst, sgst, tax_inclusive
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,false) RETURNING *`,
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
           [
             orderData.zodu_id, orderData.branch_id, orderData.api_order_id,
             item.menu_id, item.name, item.qty, item.price, item.menu_unit,
             hasVariant ? item.variant_id : null,
             hasVariant ? item.variant_name : null,
-            taxData.gst_percentage, taxData.tax_amount, taxData.cgst, taxData.sgst
+            item.gst_percentage, item.tax, item.cgst, item.sgst, item.tax_inclusive ?? false
           ]
         );
         insertedItems.push(result.rows[0]);
@@ -353,7 +343,7 @@ exports.get_ordered_data = async (branch_id, zodu_id) => {
     SELECT
       o.api_order_id, o.legacy_order_ref, o.table_no, o.order_type,
       o.customer_name, o.customer_phone, o.total_amt, o.final_payment,
-      o.branch_id, o.zodu_id, o.order_date, o.order_time,
+      o.branch_id, o.zodu_id, o.order_date, o.order_time,o.discount_type,o.discount_value,o.discount_amount,
       COALESCE(JSON_AGG(DISTINCT JSONB_BUILD_OBJECT(
         'item_id', i.item_id, 'item_name', i.item_name, 'qty', i.qty,
         'price', i.price, 'item_unit', i.item_unit, 'item_image', mi.menu_image,
@@ -385,47 +375,52 @@ exports.createtmpOrder = async (orderData) => {
   try {
     await conn.query("BEGIN");
 
-    if (orderData.api_order_id) {
-      const existing = await conn.query(`SELECT * FROM tbl_tmp_orders WHERE api_order_id = $1 LIMIT 1`, [orderData.api_order_id]);
-      if (existing.rowCount > 0) { await conn.query("COMMIT"); return existing.rows[0]; }
-    }
-
+    // For Dine-In, check for an open order on the same table and accumulate totals
     if (orderData.order_type === "Dine-In" && orderData.table_no) {
       const existing = await conn.query(
-        `SELECT * FROM tbl_tmp_orders WHERE branch_id = $1 AND table_no = $2 AND final_payment = false LIMIT 1`,
-        [orderData.branch_id, orderData.table_no]
+        `UPDATE tbl_tmp_orders
+         SET no_of_items = no_of_items + $1,
+             subtotal    = subtotal    + $2,
+             total_tax   = total_tax   + $3,
+             total_amt   = total_amt   + $4
+         WHERE branch_id = $5 AND table_no = $6 AND final_payment = false AND zodu_id = $7
+         RETURNING *`,
+        [
+          orderData.no_of_items, orderData.subtotal || 0,
+          orderData.tax_amount || 0, orderData.total_amt,
+          orderData.branch_id, orderData.table_no, orderData.zodu_id
+        ]
       );
-      if (existing.rowCount > 0) { await conn.query("COMMIT"); return existing.rows[0]; }
+      if (existing.rowCount > 0) {
+        await conn.query("COMMIT");
+        return existing.rows[0];
+      }
     }
 
+    // No existing order found — insert a new one
     const api_order_id = orderData.api_order_id || randomUUID();
     const legacy_order_ref = `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-
-    let subtotal = 0, total_tax = 0, no_of_items = 0;
-    for (const item of orderData.items) {
-      const taxData = calculateItemTax(item);
-      subtotal += taxData.base;
-      total_tax += taxData.tax_amount;
-      no_of_items += 1;
-    }
-    const total_amt = subtotal + total_tax;
 
     const result = await conn.query(
       `INSERT INTO tbl_tmp_orders (
         zodu_id, branch_id, api_order_id, legacy_order_ref,
         table_no, order_type, no_of_items, customer_name, customer_phone,
-        subtotal, total_tax, total_amt, final_payment, payment_type, order_date, order_time
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,false,$13,CURRENT_DATE,CURRENT_TIME)
+        subtotal, total_tax, total_amt, final_payment, payment_type,
+        order_date, order_time, discount_type, discount_value, discount_amount
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,false,$13,$14,$15,$16,$17,$18)
       ON CONFLICT (api_order_id) DO UPDATE SET
-        subtotal = EXCLUDED.subtotal, total_tax = EXCLUDED.total_tax,
-        total_amt = EXCLUDED.total_amt, no_of_items = EXCLUDED.no_of_items
+        no_of_items = tbl_tmp_orders.no_of_items + EXCLUDED.no_of_items,
+        subtotal    = tbl_tmp_orders.subtotal    + EXCLUDED.subtotal,
+        total_tax   = tbl_tmp_orders.total_tax   + EXCLUDED.total_tax,
+        total_amt   = tbl_tmp_orders.total_amt   + EXCLUDED.total_amt
       RETURNING *`,
       [
         orderData.zodu_id, orderData.branch_id, api_order_id, legacy_order_ref,
-        orderData.table_no, orderData.order_type, no_of_items,
+        orderData.table_no || null, orderData.order_type, orderData.no_of_items,
         orderData.customer_name || null, orderData.customer_phone || null,
-        subtotal, total_tax, total_amt, orderData.payment_type || null
+        orderData.subtotal || 0, orderData.tax_amount || 0, orderData.total_amt,
+        orderData.payment_type || null, orderData.order_date, orderData.order_time,
+        orderData.discount_type || null, orderData.discount_value || 0, orderData.discount_amount || 0
       ]
     );
 
@@ -446,7 +441,6 @@ exports.createtmpOrderedItems = async (orderData) => {
     const insertedItems = [];
     for (const item of items) {
       const hasVariant = !!item.variant_id;
-      const taxData = calculateItemTax(item);
 
       const checkQuery = hasVariant
         ? `SELECT * FROM tbl_tmp_ordered_items WHERE api_order_id = $1 AND item_id = $2 AND variant_id = $3`
@@ -462,8 +456,8 @@ exports.createtmpOrderedItems = async (orderData) => {
           ? `UPDATE tbl_tmp_ordered_items SET qty=qty+$1,gst_percentage=$2,tax_amount=tax_amount+$3,cgst=cgst+$4,sgst=sgst+$5 WHERE api_order_id=$6 AND item_id=$7 AND variant_id=$8 RETURNING *`
           : `UPDATE tbl_tmp_ordered_items SET qty=qty+$1,gst_percentage=$2,tax_amount=tax_amount+$3,cgst=cgst+$4,sgst=sgst+$5 WHERE api_order_id=$6 AND item_id=$7 AND variant_id IS NULL RETURNING *`;
         const updateValues = hasVariant
-          ? [item.qty, taxData.gst_percentage, taxData.tax_amount, taxData.cgst, taxData.sgst, orderData.api_order_id, item.menu_id, item.variant_id]
-          : [item.qty, taxData.gst_percentage, taxData.tax_amount, taxData.cgst, taxData.sgst, orderData.api_order_id, item.menu_id];
+          ? [item.qty, item.gst_percentage, item.tax, item.cgst, item.sgst, orderData.api_order_id, item.menu_id, item.variant_id]
+          : [item.qty, item.gst_percentage, item.tax, item.cgst, item.sgst, orderData.api_order_id, item.menu_id];
         const result = await conn.query(updateQuery, updateValues);
         insertedItems.push(result.rows[0]);
       } else {
@@ -472,12 +466,12 @@ exports.createtmpOrderedItems = async (orderData) => {
             zodu_id, branch_id, api_order_id, item_id, item_name,
             qty, price, item_unit, variant_id, variant_name,
             gst_percentage, tax_amount, cgst, sgst, tax_inclusive
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,false) RETURNING *`,
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
           [
             orderData.zodu_id, orderData.branch_id, orderData.api_order_id,
             item.menu_id, item.name, item.qty, item.price, item.menu_unit,
             hasVariant ? item.variant_id : null, hasVariant ? item.variant_name : null,
-            taxData.gst_percentage, taxData.tax_amount, taxData.cgst, taxData.sgst
+            item.gst_percentage, item.tax, item.cgst, item.sgst, item.tax_inclusive ?? false
           ]
         );
         insertedItems.push(result.rows[0]);

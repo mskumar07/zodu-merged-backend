@@ -176,7 +176,7 @@ exports.get_menuItem_data = async (zodu_id,branch_id, type, page, limit, search,
 
   params.push(search || "");
   const searchIdx = params.length;
-  conditions.push(`(m.menu_name ILIKE '%' || $${searchIdx} || '%' OR c.name ILIKE '%' || $${searchIdx} || '%')`);
+  conditions.push(`(m.menu_name ILIKE '%' || $${searchIdx} || '%' OR m.menu_code ILIKE '%' || $${searchIdx} || '%' OR c.name ILIKE '%' || $${searchIdx} || '%')`);
 
   const whereClause = conditions.join(" AND ");
 

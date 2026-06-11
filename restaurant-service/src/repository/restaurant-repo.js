@@ -69,7 +69,11 @@ exports.updateFinalPayment = async (data) => {
     payment_type,
     discount_type,
     discount_value,
-    items
+    discount_amount,
+    no_of_items,
+    subtotal,
+    total_tax,
+    total_amt,
   } = data;
 
   try {
@@ -119,78 +123,29 @@ exports.updateFinalPayment = async (data) => {
 
     console.log("lol",order_time);
 
-    /* ----------------------------------------------------
-       2️⃣ CALCULATE TOTALS
-    ---------------------------------------------------- */
-    const totals = calculateOrderTotalsWithDiscount(
-      items || [],
-      discount_type,
-      discount_value
-    );
-
-
     const public_order_no = await generatePublicOrderNo(branch_id, zodu_id);
 
     const orderRes = await conn.query(
       `
       INSERT INTO tbl_orders (
-        zodu_id,
-        branch_id,
-
-        api_order_id,
-        public_order_no,
-
-        table_no,
-        order_type,
-        no_of_items,
-
-        subtotal,
-        total_tax,
-        total_amt,
-
-        discount_type,
-        discount_value,
-        discount_amount,
-
-        final_payment,
-        payment_type,
-
-        order_date,
-        order_time
+        zodu_id, branch_id,
+        api_order_id, public_order_no,
+        table_no, order_type, no_of_items,
+        subtotal, total_tax, total_amt,
+        discount_type, discount_value, discount_amount,
+        final_payment, payment_type,
+        order_date, order_time
       )
-      VALUES (
-        $1,$2,
-        $3,$4,
-        $5,$6,$7,
-        $8,$9,$10,
-        $11,$12,$13,
-        true,$14,
-        $15,$16
-      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,true,$14,$15,$16)
       RETURNING *
       `,
       [
-        zodu_id,
-        branch_id,
-
-        api_order_id,
-        public_order_no,
-
-        table_no,
-        order_type,
-        totals.no_of_items,
-
-        totals.subtotal,
-        totals.total_tax,
-        totals.total_amt,
-
-        totals.discountType,
-        discount_value,
-        totals.discount_amount,
-
-        payment_type,
-        order_date,
-        order_time
+        zodu_id, branch_id,
+        api_order_id, public_order_no,
+        table_no || null, order_type, no_of_items || 0,
+        subtotal || 0, total_tax || 0, total_amt || 0,
+        discount_type || null, discount_value || 0, discount_amount || 0,
+        payment_type, order_date, order_time
       ]
     );
 
@@ -3375,114 +3330,72 @@ exports.getSalesHistory = async (filters) => {
     branch_id,
     from_date,
     to_date,
-    payment_status,
-    sale_type,
+    order_type,
     search,
     customer_search,
     page  = 1,
     limit = 20,
   } = filters;
- 
+
   const searchTerm = search || customer_search;
- 
+
   const conditions = ["s.zodu_id = $1", "s.branch_id = $2"];
   const values     = [zodu_id, branch_id];
   let   idx        = 3;
- 
-  if (from_date)      { conditions.push(`s.sale_date >= $${idx++}`); values.push(from_date); }
-  if (to_date)        { conditions.push(`s.sale_date <= $${idx++}`); values.push(to_date); }
-  if (payment_status) { conditions.push(`s.payment_status = $${idx++}`); values.push(payment_status); }
-  if (sale_type)      { conditions.push(`s.sale_type = $${idx++}`); values.push(sale_type); }
- 
+
+  if (from_date) { conditions.push(`s.order_date >= $${idx++}`); values.push(from_date); }
+  if (to_date)   { conditions.push(`s.order_date <= $${idx++}`); values.push(to_date); }
+  if (order_type) { conditions.push(`s.order_type = $${idx++}`);  values.push(order_type); }
+
   if (searchTerm) {
     conditions.push(`(
-      s.sale_id            ILIKE $${idx}
-      OR c.cust_name       ILIKE $${idx}
-      OR c.cpy_name        ILIKE $${idx}
-      OR c.mobile_no::text ILIKE $${idx}
+      s.public_order_no ILIKE $${idx}
     )`);
     values.push(`%${searchTerm}%`);
     idx++;
   }
- 
-  const where  = conditions.join(" AND ");
-  const offset = (page - 1) * limit;
- 
-  const countResult = await conn.query(
-    `SELECT COUNT(*) AS total
-     FROM tbl_sales s
-     LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid
-     WHERE ${where}`,
-    values
-  );
-  const total = parseInt(countResult.rows[0].total, 10);
- 
-  const salesResult = await conn.query(
+
+  const where     = conditions.join(" AND ");
+  const offset    = (page - 1) * limit;
+  const limitIdx  = idx;
+  const offsetIdx = idx + 1;
+
+  const { rows } = await conn.query(
     `SELECT
-        s.sale_uuid,
-        s.sale_id,
+        s.api_order_id,
+        s.public_order_no,
         s.zodu_id,
         s.branch_id,
-        s.sale_type,
-        s.customer_uuid,
-        s.total_items,
+        s.order_type,
+        s.table_no,
+        s.no_of_items,
         s.subtotal,
         s.total_tax,
         s.discount_type,
         s.discount_value,
         s.discount_amount,
-        s.total_amount,
-        s.paid_amount,
-        s.balance_amount,
-        s.payment_status,
-        s.notes,
- 
-        TO_CHAR(s.sale_date,  'DD Mon YYYY')             AS sale_date_fmt,
-        TO_CHAR(s.sale_time,  'HH12:MI AM')              AS sale_time_fmt,
+        s.total_amt,
+        s.payment_type,
+        TO_CHAR(s.order_date, 'DD Mon YYYY')             AS sale_date_fmt,
+        TO_CHAR(s.order_time, 'HH12:MI AM')              AS sale_time_fmt,
         TO_CHAR(s.created_at, 'DD Mon YYYY, HH12:MI AM') AS created_at_fmt,
- 
-        -- customer
-        c.cust_uuid,
-        c.cust_id,
-        c.cust_name,
-        c.cpy_name,
-        c.mobile_no->>0    AS customer_mobile,
-        c.mobile_no        AS customer_all_mobiles,
-        c.email_id->>0     AS customer_email,
-        c.gst              AS customer_gst,
-        c.city             AS customer_city,
-        c.state            AS customer_state,
- 
-        -- ✅ return summary (null columns = no returns yet)
-        ret.return_count,
-        ret.total_returned,
-        ret.last_return_date
- 
-     FROM tbl_sales s
-     LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid
- 
-     -- ✅ aggregate all returns for each sale in one lateral join
-     LEFT JOIN LATERAL (
-       SELECT
-         COUNT(*)                        AS return_count,
-         COALESCE(SUM(r.return_amount), 0) AS total_returned,
-         MAX(r.return_date)              AS last_return_date
-       FROM tbl_sale_returns r
-       WHERE r.original_sale_uuid = s.sale_uuid
-     ) ret ON true
- 
+        COUNT(*) OVER() AS total_count
+     FROM tbl_orders s
      WHERE ${where}
-     ORDER BY s.sale_date DESC, s.created_at DESC
-     LIMIT $${idx++} OFFSET $${idx++}`,
+     ORDER BY s.order_date DESC, s.created_at DESC
+     LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
     [...values, limit, offset]
   );
- 
+
+  const total = rows.length > 0 ? parseInt(rows[0].total_count, 10) : 0;
+  const data  = rows.map(({ total_count, ...rest }) => rest);
+
   return {
     total,
     page:        Number(page),
     limit:       Number(limit),
     total_pages: Math.ceil(total / limit),
-    data:        salesResult.rows,
+    data,
   };
 };
  
@@ -3497,7 +3410,7 @@ exports.getSalesHistorySummary = async (filters) => {
     branch_id,
     from_date,
     to_date,
-    payment_status,
+    order_type,
     search,
     customer_search,
   } = filters;
@@ -3508,16 +3421,13 @@ exports.getSalesHistorySummary = async (filters) => {
   const values     = [zodu_id, branch_id];
   let   idx        = 3;
 
-  if (from_date)      { conditions.push(`s.sale_date >= $${idx++}`); values.push(from_date); }
-  if (to_date)        { conditions.push(`s.sale_date <= $${idx++}`); values.push(to_date); }
-  if (payment_status) { conditions.push(`s.payment_status = $${idx++}`); values.push(payment_status); }
+  if (from_date) { conditions.push(`s.order_date >= $${idx++}`); values.push(from_date); }
+  if (to_date)   { conditions.push(`s.order_date <= $${idx++}`); values.push(to_date); }
+  if (order_type) { conditions.push(`s.order_type = $${idx++}`);  values.push(order_type); }
 
   if (searchTerm) {
     conditions.push(`(
-      s.sale_id            ILIKE $${idx}
-      OR c.cust_name       ILIKE $${idx}
-      OR c.cpy_name        ILIKE $${idx}
-      OR c.mobile_no::text ILIKE $${idx}
+      s.public_order_no ILIKE $${idx}
     )`);
     values.push(`%${searchTerm}%`);
     idx++;
@@ -3527,19 +3437,22 @@ exports.getSalesHistorySummary = async (filters) => {
 
   const { rows } = await conn.query(
     `SELECT
-      COUNT(*)   FILTER (WHERE s.sale_type != 'Q') AS total_transactions,
-      COALESCE(SUM(s.total_amount) FILTER (WHERE s.sale_type != 'Q'), 0) AS net_revenue,
-      COUNT(*)   FILTER (WHERE s.sale_type = 'Q')  AS total_quotations
-    FROM tbl_sales s
-    LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid
+      COUNT(*)                        AS total_orders,
+      COALESCE(SUM(s.total_amt), 0)  AS total_revenue,
+      COALESCE(SUM(s.subtotal), 0)  AS subtotal,
+      COALESCE(SUM(s.total_tax), 0)  AS total_tax,
+      COALESCE(SUM(s.discount_amount), 0) AS total_discount
+    FROM tbl_orders s
     WHERE ${where}`,
     values
   );
 
   return {
-    total_transactions: parseInt(rows[0].total_transactions, 10),
-    net_revenue:        parseFloat(rows[0].net_revenue),
-    total_quotations:   parseInt(rows[0].total_quotations, 10),
+    total_orders:    parseInt(rows[0].total_orders, 10),
+    total_revenue:   parseFloat(rows[0].total_revenue),
+    total_tax: parseFloat(rows[0].total_tax),
+    subtotal:  parseFloat(rows[0].subtotal),
+    total_discount:  parseFloat(rows[0].total_discount),
   };
 };
 

@@ -591,7 +591,7 @@ const sales_history_query = Joi.object({
   from_date:       Joi.string().isoDate().optional(),
   to_date:         Joi.string().isoDate().optional(),
   payment_status:  Joi.string().valid("fully_paid", "partially_paid", "unpaid").optional(),
-  sale_type:       Joi.string().optional(),
+  order_type:       Joi.string().optional(),
   customer_phone:  Joi.string().optional(),
   invoice_no:      Joi.string().optional(),
   search:    Joi.string().optional(),
@@ -605,6 +605,7 @@ const sales_history_summary_query = Joi.object({
   from_date:      Joi.string().isoDate().optional(),
   to_date:        Joi.string().isoDate().optional(),
   payment_status: Joi.string().valid("fully_paid", "partially_paid", "unpaid").optional(),
+  order_type:       Joi.string().optional(),
   search:         Joi.string().optional(),
 });
 

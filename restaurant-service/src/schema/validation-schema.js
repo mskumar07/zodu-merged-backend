@@ -117,13 +117,18 @@ const gst_update = Joi.object({
 // ─────────────────────────────────────────────────────────────
 
 const complete_order = Joi.object({
-  zodu_id:        Joi.string().max(50).required(),
-  branch_id:      Joi.string().max(50).required(),
-  api_order_id:   Joi.string().required(),
-  payment_type:   Joi.string().required(),
-  table_no:       Joi.number().integer().allow(null),
-  discount_type:  Joi.string().valid("PERCENT", "FLAT", "Percent", "Amount").allow(null, ""),
-  discount_value: Joi.number().min(0).precision(2).allow(null),
+  zodu_id:         Joi.string().max(50).required(),
+  branch_id:       Joi.string().max(50).required(),
+  api_order_id:    Joi.string().required(),
+  payment_type:    Joi.string().required(),
+  table_no:        Joi.number().integer().allow(null),
+  no_of_items:     Joi.number().integer().min(0).default(0),
+  subtotal:        Joi.number().min(0).precision(2).default(0),
+  total_tax:       Joi.number().min(0).precision(2).default(0),
+  total_amt:       Joi.number().min(0).precision(2).default(0),
+  discount_type:   Joi.string().valid("PERCENT", "FLAT", "Percent", "Amount").allow(null, ""),
+  discount_value:  Joi.number().min(0).precision(2).allow(null),
+  discount_amount: Joi.number().min(0).precision(2).default(0),
   items: Joi.array().items(
     Joi.object({
       menu_id:        Joi.string().required(),
@@ -133,6 +138,8 @@ const complete_order = Joi.object({
       gst_percentage: Joi.number().min(0).default(0),
       tax_inclusive:  Joi.boolean().default(false),
       tax:            Joi.number().min(0).default(0),
+      cgst:           Joi.number().min(0).default(0),
+      sgst:           Joi.number().min(0).default(0),
       menu_unit:      Joi.string().allow(null, ""),
       variant_id:     Joi.string().allow(null, ""),
       variant_name:   Joi.string().allow(null, ""),
