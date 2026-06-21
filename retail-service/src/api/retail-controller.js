@@ -351,7 +351,7 @@ router.post(
             item.sell_price || 0,
             item.purchase_price || 0,
             item.gst_type || 0,
-            item.tax_incl_type ?? false,
+            item.tax_incl_type === true || item.tax_incl_type === 1 || String(item.tax_incl_type).toLowerCase() === "inclusive" || String(item.tax_incl_type).toLowerCase() === "true" || String(item.tax_incl_type).toLowerCase() === "yes",
             item.item_img || null
           );
 
@@ -379,7 +379,7 @@ router.post(
             purchase_price, gst_type, tax_incl_type, item_img
           )
           VALUES ${productPlaceholders.join(",")}
-          ON CONFLICT (barcode) DO NOTHING
+          ON CONFLICT DO NOTHING
           RETURNING item_uuid, item_id, zodu_id, branch_id, item_name
         `;
 

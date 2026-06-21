@@ -76,6 +76,7 @@ async function createOrder(orderData) {
     const finalOrder = await repository.createOrder(orderData);
     orderData.api_order_id = finalOrder.api_order_id;
     await repository.createOrderedItems(orderData);
+    await repository.StockLedgerInventoryEntry(orderData);
     return { success: true, message: "Order created successfully", order: finalOrder };
   } catch (err) {
     console.error("Order Error:", err);

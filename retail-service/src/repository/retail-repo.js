@@ -3728,6 +3728,30 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
     [sale_uuid,zodu_id,branch_id]
   );
  
+  // HSN-wise tax summary (SQL grouped — faster than JS reduce)
+  // taxable_value = base price before tax (excludes tax when tax_inclusive=true), minus discount
+  const hsnResult = await conn.query(
+    `SELECT
+        si.hsn_code,
+        ROUND(SUM(
+          CASE
+            WHEN si.tax_inclusive = true
+            THEN (si.price * si.quantity) / (1 + si.gst_percentage / 100.0) - COALESCE(si.discount, 0)
+            ELSE  si.price * si.quantity                                     - COALESCE(si.discount, 0)
+          END
+        )::numeric, 2)              AS taxable_value,
+        (si.gst_percentage / 2)     AS cgst_percent,
+        ROUND(SUM(si.cgst)::numeric, 2)       AS cgst_amount,
+        (si.gst_percentage / 2)     AS sgst_percent,
+        ROUND(SUM(si.sgst)::numeric, 2)       AS sgst_amount,
+        ROUND(SUM(si.tax_amount)::numeric, 2) AS total_tax
+     FROM tbl_sale_items si
+     WHERE si.sale_uuid = $1
+     GROUP BY si.hsn_code, si.gst_percentage
+     ORDER BY si.hsn_code`,
+    [sale_uuid]
+  );
+
   // Payment history
   const paymentResult = await conn.query(
     `SELECT
@@ -3794,14 +3818,13 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
   [sale_uuid]
 );
 
-console.log("test",sale,customer,itemsResult.rows,paymentResult.rows,returnResult.rows)
- 
   return {
     sale,
     customer,
     items:           itemsResult.rows,
     payment_history: paymentResult.rows,
-    return_history:  returnResult.rows,   // ✅ all returns for this sale
+    return_history:  returnResult.rows,
+    hsn_wise_tax:    hsnResult.rows,
   };
 };
 

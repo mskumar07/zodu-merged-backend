@@ -560,18 +560,18 @@ router.get("/api/sales/history/summary", async (req, res) => {
   }
 });
 
-// GET /api/sales/:sale_id?zodu_id=&branch_id=
-router.get("/api/sales/:sale_id", async (req, res) => {
+// GET /api/sales/:api_order_id?zodu_id=&branch_id=
+router.get("/api/sales/data/get/:api_order_id", async (req, res) => {
   try {
     const { errors, input } = await RequestValidator(schema.sale_by_id_params, {
-      sale_id:   req.params.sale_id,
+      api_order_id:   req.params.api_order_id,
       zodu_id:   req.query.zodu_id,
       branch_id: req.query.branch_id,
     });
     
     if (errors) return res.status(400).json({ errors });
  
-    const data = await service.getSaleById(input.sale_id, input.zodu_id, input.branch_id);
+    const data = await service.getSaleById(input.api_order_id, input.zodu_id, input.branch_id);
     if (!data.success) return res.status(404).json({ message: data.message });
  
     return res.status(200).json(data);
@@ -581,20 +581,23 @@ router.get("/api/sales/:sale_id", async (req, res) => {
   }
 });
 
-router.delete("/api/sales/:sale_id", async (req, res) => {
+router.delete("/api/sales/:api_order_id", async (req, res) => {
   try {
     const { errors, input } = await RequestValidator(schema.sale_by_id_params, {
-      sale_id: req.params.sale_id,
+      api_order_id: req.params.api_order_id,
       zodu_id: req.query.zodu_id,
       branch_id: req.query.branch_id,
     });
 
     if (errors) return res.status(400).json({ errors });
 
+    const items = req.body?.items ?? [];
+    console.log("Delete sale items from request body:", items);
     const data = await service.deleteSale(
-      input.sale_id,
+      input.api_order_id,
       input.zodu_id,
-      input.branch_id
+      input.branch_id,
+      items
     );
 
     if (!data.success) return res.status(404).json({ message: data.message });
@@ -1516,17 +1519,17 @@ router.get("/get/pos_data/:branch_id/:zodu_id", async (req, res) => {
 });
 
 
-router.get("/get/pos_data/:branch_id", async (req, res) => {
-  try {
-    const { branch_id } = req.params
-    const getPosData = await service.get_pos_data(branch_id);
-    if (!getPosData.success) return res.status(400).json({ message: getPosData.message });
-    return res.status(201).json({ message: "Data Get Successfully", Data: getPosData.data });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-});
+// router.get("/get/pos_data/:branch_id", async (req, res) => {
+//   try {
+//     const { branch_id } = req.params
+//     const getPosData = await service.get_pos_data(branch_id);
+//     if (!getPosData.success) return res.status(400).json({ message: getPosData.message });
+//     return res.status(201).json({ message: "Data Get Successfully", Data: getPosData.data });
+//   } catch (error) {
+//     console.error(error);
+//     return res.status(500).json({ error: error.message });
+//   }
+// });
 
 
 // DELETE /delete/menu_item and PUT /update/menu_item moved to menu-controller

@@ -248,11 +248,30 @@ console.log(items)
 
 // Used inside transactions — must use the client
 exports.getPurchaseByIdForUpdate = async (client, purchase_id) => {
-  const { rows } = await client.query(
+  const { rows: purchaseRows } = await client.query(
     `SELECT * FROM tbl_purchase WHERE purchase_id = $1 FOR UPDATE`,
     [purchase_id]
   );
-  return rows[0];
+  const purchase = purchaseRows[0];
+  if (!purchase) return null;
+
+  const { rows: items } = await client.query(
+    `SELECT
+       tpi.purchase_item_id,
+       tpi.item_id,
+       tpi.item_uuid,
+       tpi.item_name,
+       tpi.qty,
+       mi.item_uuid  AS menu_item_uuid,
+       mi.menu_name,
+       mi.menu_type
+     FROM tbl_purchase_items tpi
+     LEFT JOIN tbl_menu_items mi ON mi.menu_id = tpi.item_id
+     WHERE tpi.purchase_id = $1`,
+    [purchase_id]
+  );
+
+  return { ...purchase, items };
 };
 
 exports.getPurchaseItems = async (client, purchase_id) => {

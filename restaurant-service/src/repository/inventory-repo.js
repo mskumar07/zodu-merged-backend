@@ -248,7 +248,7 @@ exports.getInventoryByUuid = async (client, inventory_uuid) => {
 
 exports.adjustStock = async (
   client,
-  { inventory_uuid, adjustment_type, adjustment_qty, reason, notes }
+  { inventory_uuid, adjustment_type, adjustment_qty, reason, notes, stock_alert }
 ) => {
   const qty = Math.abs(adjustment_qty);
 
@@ -260,10 +260,11 @@ exports.adjustStock = async (
        stock_qty             = stock_qty ${operator} $1,
        reason_for_adjustment = COALESCE($3, reason_for_adjustment),
        notes                 = COALESCE($4, notes),
-       updated_at            = NOW()
+       updated_at            = NOW(),
+       stock_alert           = $5
      WHERE inventory_uuid = $2
      RETURNING *`,
-    [qty, inventory_uuid, reason || null, notes || null]
+    [qty, inventory_uuid, reason || null, notes || null, stock_alert]
   );
 
   if (rows.length === 0) throw new Error('Inventory record not found');

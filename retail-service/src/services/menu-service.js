@@ -277,6 +277,7 @@ async function adjustStock({
   adjustment_qty,
   reason,
   notes,
+  stock_alert
 }) {
   if (!["add", "subtract"].includes(adjustment_type)) {
     return { success: false, message: 'adjustment_type must be "add" or "subtract"' };
@@ -317,6 +318,7 @@ async function adjustStock({
       inventory_uuid,
       adjustment_type,
       adjustment_qty: qty,
+      stock_alert,
     });
 
     const stock_after = Number(updated.available_qty);

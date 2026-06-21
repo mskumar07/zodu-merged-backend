@@ -98,52 +98,128 @@ exports.createOrderedItems = async (orderData) => {
     const items = orderData.items;
     if (!Array.isArray(items) || items.length === 0) throw new Error("Items array is empty or invalid");
 
-    const insertedItems = [];
+    const values = [];
+    const params = [];
+    let idx = 1;
+
     for (const item of items) {
       const hasVariant = !!item.variant_id;
+      values.push(
+        `($${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++})`
+      );
+      params.push(
+        orderData.zodu_id, orderData.branch_id, orderData.api_order_id,
+        item.menu_id, item.name, item.qty, item.price, item.menu_unit,
+        hasVariant ? item.variant_id : null,
+        hasVariant ? item.variant_name : null,
+        item.gst_percentage, item.tax, item.cgst, item.sgst, item.tax_inclusive ?? false
+      );
+    }
+    const result = await conn.query(
+      `INSERT INTO tbl_ordered_items (
+        zodu_id, branch_id, api_order_id, item_id, item_name,
+        qty, price, item_unit, variant_id, variant_name,
+        gst_percentage, tax_amount, cgst, sgst, tax_inclusive
+      ) VALUES ${values.join(",")} RETURNING *`,
+      params
+    );
 
-      const checkQuery = hasVariant
-        ? `SELECT * FROM tbl_ordered_items WHERE api_order_id = $1 AND item_id = $2 AND variant_id = $3`
-        : `SELECT * FROM tbl_ordered_items WHERE api_order_id = $1 AND item_id = $2 AND variant_id IS NULL`;
-      const checkValues = hasVariant
-        ? [orderData.api_order_id, item.menu_id, item.variant_id]
-        : [orderData.api_order_id, item.menu_id];
+    await conn.query("COMMIT");
+    return result.rows;
+  } catch (err) {
+    await conn.query("ROLLBACK");
+    throw new Error("Unable to create ordered items: " + err.message);
+  }
+};
 
-      const existingItem = await conn.query(checkQuery, checkValues);
+exports.StockLedgerInventoryEntry = async (orderData) => {
+  try {
+    await conn.query("BEGIN");
+    console.log("StockLedgerInventoryEntry orderData:", orderData);
+    const items = orderData.items;
+    if (!Array.isArray(items) || items.length === 0) throw new Error("Items array is empty or invalid");
 
-      if (existingItem.rowCount > 0) {
-        const updateQuery = hasVariant
-          ? `UPDATE tbl_ordered_items SET qty = qty + $1 WHERE api_order_id = $2 AND item_id = $3 AND variant_id = $4 RETURNING *`
-          : `UPDATE tbl_ordered_items SET qty = qty + $1 WHERE api_order_id = $2 AND item_id = $3 AND variant_id IS NULL RETURNING *`;
-        const updateValues = hasVariant
-          ? [item.qty, orderData.api_order_id, item.menu_id, item.variant_id]
-          : [item.qty, orderData.api_order_id, item.menu_id];
-        const result = await conn.query(updateQuery, updateValues);
-        insertedItems.push(result.rows[0]);
-      } else {
-        const result = await conn.query(
-          `INSERT INTO tbl_ordered_items (
-            zodu_id, branch_id, api_order_id, item_id, item_name,
-            qty, price, item_unit, variant_id, variant_name,
-            gst_percentage, tax_amount, cgst, sgst, tax_inclusive
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
-          [
-            orderData.zodu_id, orderData.branch_id, orderData.api_order_id,
-            item.menu_id, item.name, item.qty, item.price, item.menu_unit,
-            hasVariant ? item.variant_id : null,
-            hasVariant ? item.variant_name : null,
-            item.gst_percentage, item.tax, item.cgst, item.sgst, item.tax_inclusive ?? false
-          ]
-        );
-        insertedItems.push(result.rows[0]);
-      }
+    const menuIds = items.map((i) => i.menu_id);
+
+    // 1. Batch fetch menu items (only Products need stock tracking)
+    const menuRes = await conn.query(
+      `SELECT item_uuid, menu_id, menu_name, menu_type, opening_stock FROM tbl_menu_items WHERE menu_id = ANY($1)`,
+      [menuIds]
+    );
+    const menuMap = {};
+    for (const row of menuRes.rows) menuMap[row.menu_id] = row;
+
+    // 2. Batch fetch inventory stock (keyed by item_id = menu_id)
+    const invRes = await conn.query(
+      `SELECT item_id, stock_qty FROM tbl_inventory WHERE item_id = ANY($1)`,
+      [menuIds]
+    );
+    const invMap = {};
+    for (const row of invRes.rows) invMap[row.item_id] = row;
+
+    // 3. Build ledger rows and inventory updates in memory
+    const ledgerValues = [];
+    const ledgerParams = [];
+    const invUpdates = []; // { stock_after, menu_id }
+    let idx = 1;
+    console.log("menuMap:", menuMap);
+    for (const item of items) {
+      const menu = menuMap[item.menu_id];
+      if (!menu) continue;
+
+      // Only track stock for Product type items
+      if (menu.menu_type !== "Product") continue;
+
+      const qty_change = -(Number(item.qty));
+      const stock_before = Number(invMap[item.menu_id]?.stock_qty ?? 0);
+      const stock_after = stock_before + qty_change;
+
+      ledgerValues.push(
+        `($${idx++},$${idx++},$${idx++},$${idx++},$${idx++},'sale',$${idx++},$${idx++},$${idx++},$${idx++},'Sale Order')`
+      );
+      ledgerParams.push(
+        menu.item_uuid,         // item_uuid (from tbl_menu_items)
+        item.menu_id,           // item_id   (menu_id)
+        orderData.zodu_id,
+        orderData.branch_id,
+        menu.menu_name,
+        orderData.api_order_id,
+        qty_change,
+        stock_before,
+        stock_after
+      );
+
+      invUpdates.push({ stock_after, menu_id: item.menu_id });
+    }
+
+    // 4. Bulk insert all ledger rows in one query
+    if (ledgerValues.length > 0) {
+      await conn.query(
+        `INSERT INTO tbl_stock_ledger (
+          item_uuid, item_id, zodu_id, branch_id, item_name,
+          transaction_type, reference_id, qty_change, stock_before, stock_after, notes
+        ) VALUES ${ledgerValues.join(",")}`,
+        ledgerParams
+      );
+    }
+
+    // 5. Bulk update inventory using unnest for a single UPDATE query
+    if (invUpdates.length > 0) {
+      const stockAfterArr = invUpdates.map((u) => u.stock_after);
+      const menuIdArr = invUpdates.map((u) => u.menu_id);
+      await conn.query(
+        `UPDATE tbl_inventory SET stock_qty = v.stock_after
+         FROM unnest($1::numeric[], $2::text[]) AS v(stock_after, menu_id)
+         WHERE tbl_inventory.item_id = v.menu_id`,
+        [stockAfterArr, menuIdArr]
+      );
     }
 
     await conn.query("COMMIT");
-    return insertedItems;
+    return { success: true };
   } catch (err) {
     await conn.query("ROLLBACK");
-    throw new Error("Unable to create or update ordered items: " + err.message);
+    throw new Error("Unable to create stock ledger entry: " + err.message);
   }
 };
 

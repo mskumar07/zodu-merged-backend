@@ -82,7 +82,7 @@ exports.updateCompany = async (zodu_id, fields) => {
     const addrFields = {}, bankFields = {}, compFields = {};
     for (const [k, v] of Object.entries(fields)) {
       if (addressCols.includes(k))   addrFields[k] = v;
-      else if (bankCols.includes(k)) bankFields[k]  = v;
+      else if (bankCols.includes(k)) bankFields[k] = v;
       else                           compFields[k]   = v;
     }
 
@@ -109,9 +109,8 @@ exports.updateCompany = async (zodu_id, fields) => {
         compFields.address_id = r.rows[0].id;
       }
     }
-
     // bank update/insert
-    if (Object.keys(bankFields).length > 0) {
+    if (Object.keys(bankFields).length > 0 && bankFields.account_number) {
       if (curBankId) {
         const keys = Object.keys(bankFields), vals = Object.values(bankFields);
         await client.query(
@@ -123,7 +122,7 @@ exports.updateCompany = async (zodu_id, fields) => {
           `INSERT INTO tbl_bank_details (zodu_id,bank_name,bank_branch,holder_name,account_number,account_type,ifsc_code)
            VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
           [zodu_id, bankFields.bank_name||null, bankFields.bank_branch||null,
-           bankFields.holder_name||null, bankFields.account_number||null,
+           bankFields.holder_name||null, bankFields.account_number,
            bankFields.account_type||null, bankFields.ifsc_code||null]
         );
         compFields.bank_details_id = r.rows[0].id;
@@ -328,7 +327,7 @@ exports.updateBranch = async (zodu_id, branch_id, fields) => {
       branch_city: 'city', branch_district: 'district', branch_state: 'state', branch_pincode: 'pincode',
     };
     const bankKeys   = ['bank_name','bank_branch','holder_name','account_number','account_type','ifsc_code'];
-    const branchKeys = ['branch_name','branch_manager','branch_manager_or_admin','branch_mobile_no','branch_mail_id','branch_image','bank_details_id','address_id'];
+    const branchKeys = ['branch_name','branch_manager','branch_manager_or_admin','branch_mobile_no','branch_mail_id','branch_image'];
 
     const addrFields = {}, bankFields = {}, branchFields = {};
     for (const [k, v] of Object.entries(fields)) {
@@ -337,8 +336,8 @@ exports.updateBranch = async (zodu_id, branch_id, fields) => {
       else if (branchKeys.includes(k)) branchFields[k === 'branch_manager_or_admin' ? 'branch_manager' : k] = v;
     }
 
-    if (use_same_address_as_company !== undefined) branchFields.same_as_address      = use_same_address_as_company;
-    if (use_same_bank_as_company    !== undefined) branchFields.same_as_bank_details = use_same_bank_as_company;
+    if (use_same_address_as_company  !== undefined) branchFields.same_as_address      = use_same_address_as_company  ?? false;
+    if (use_same_bank_as_company     !== undefined) branchFields.same_as_bank_details = use_same_bank_as_company     ?? false;
 
     let address_id = current?.address_id ?? null;
     if (use_same_address_as_company) {
@@ -368,7 +367,7 @@ exports.updateBranch = async (zodu_id, branch_id, fields) => {
     if (use_same_bank_as_company) {
       // Point branch to company's bank row
       if (current?.company_bank_details_id) { bank_details_id = current.company_bank_details_id; branchFields.bank_details_id = bank_details_id; }
-    } else if (Object.keys(bankFields).length > 0) {
+    } else if (Object.keys(bankFields).length > 0 && bankFields.account_number) {
       if (bank_details_id && !isBankShared) {
         // Branch owns its own bank row — safe to update in place
         const keys = Object.keys(bankFields), vals = Object.values(bankFields);
@@ -382,7 +381,7 @@ exports.updateBranch = async (zodu_id, branch_id, fields) => {
           `INSERT INTO tbl_bank_details (zodu_id,bank_name,bank_branch,holder_name,account_number,account_type,ifsc_code)
            VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
           [zodu_id, bankFields.bank_name??null, bankFields.bank_branch??null,
-           bankFields.holder_name??null, bankFields.account_number??null,
+           bankFields.holder_name??null, bankFields.account_number,
            bankFields.account_type??null, bankFields.ifsc_code??null]
         );
         bank_details_id = r.rows[0].id; branchFields.bank_details_id = bank_details_id;

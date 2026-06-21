@@ -19,15 +19,17 @@ exports.updateMenuItem = async (menuId, data) => {
         menu_image = $11,
         menu_code = $12,
         menu_unit = $13,
-        favorites = $14
-      WHERE menu_id = $15
+        favorites = $14,
+        opening_stock = $15,
+        alert_stock = $16
+      WHERE menu_id = $17
       RETURNING *;
     `;
     const values = [
       data.menu_category_id, data.menu_name, data.menu_type, data.food_type,
       JSON.stringify(data.variants), data.sell_price, data.purchase_price,
       data.hsn_code, data.gst_tax, data.tax_include_or_exclude,
-      data.menu_image, data.menu_code, data.menu_unit, data.favorites ?? null,
+      data.menu_image, data.menu_code, data.menu_unit, data.favorites ?? null,data.opening_stock, data.alert_stock,
       menuId
     ];
     const result = await conn.query(query, values);
@@ -41,8 +43,8 @@ exports.updateMenuItem = async (menuId, data) => {
       if (invCheck.rows.length > 0) {
         await conn.query(
           `UPDATE tbl_inventory SET item_name=$1, purchase_price=$2, selling_price=$3, item_unit=$4,
-           stock_qty=stock_qty+$5, stock_alert=$6, updated_at=NOW() WHERE item_id=$7`,
-          [updatedMenu.menu_name, updatedMenu.purchase_price, updatedMenu.sell_price, updatedMenu.menu_unit, stockQty, stockAlert, menuId]
+           stock_qty=$5, stock_alert=$6, updated_at=NOW(),category_id=$7 WHERE item_id=$8`,
+          [updatedMenu.menu_name, updatedMenu.purchase_price, updatedMenu.sell_price, updatedMenu.menu_unit, stockQty, stockAlert, updatedMenu.menu_category_id, menuId]
         );
       } else {
         await conn.query(

@@ -2182,7 +2182,7 @@ exports.deleteGST = async (id) => {
 };
 
 
-exports.get_pos_data = async (branch_id) => {
+exports.get_pos_data = async (branch_id,zodu_id) => {
   return await conn.query(
     `
     SELECT
@@ -2219,7 +2219,7 @@ exports.get_pos_data = async (branch_id) => {
     JOIN tbl_menu_items m 
       ON c.id = m.menu_category_id 
      AND m.active = true
-     AND m.branch_id = $1
+     AND m.branch_id = $1 and m.zodu_id = $2
 
     LEFT JOIN tbl_qr_code q 
       ON q.id = m.qr_code_id
@@ -2233,7 +2233,7 @@ exports.get_pos_data = async (branch_id) => {
     GROUP BY c.id, c.name
     ORDER BY c.name ASC;
     `,
-    [branch_id]
+    [branch_id, zodu_id]
   );
 };
 
@@ -3333,15 +3333,16 @@ exports.getSalesHistory = async (filters) => {
     order_type,
     search,
     customer_search,
+    cancelled_order,
     page  = 1,
     limit = 20,
   } = filters;
 
   const searchTerm = search || customer_search;
 
-  const conditions = ["s.zodu_id = $1", "s.branch_id = $2"];
-  const values     = [zodu_id, branch_id];
-  let   idx        = 3;
+  const conditions = ["s.zodu_id = $1", "s.branch_id = $2", "s.cancelled_order = $3"];
+  const values     = [zodu_id, branch_id, cancelled_order];
+  let   idx        = 4;
 
   if (from_date) { conditions.push(`s.order_date >= $${idx++}`); values.push(from_date); }
   if (to_date)   { conditions.push(`s.order_date <= $${idx++}`); values.push(to_date); }
@@ -3362,33 +3363,49 @@ exports.getSalesHistory = async (filters) => {
 
   const { rows } = await conn.query(
     `SELECT
-        s.api_order_id,
-        s.public_order_no,
-        s.zodu_id,
-        s.branch_id,
-        s.order_type,
-        s.table_no,
-        s.no_of_items,
-        s.subtotal,
-        s.total_tax,
-        s.discount_type,
-        s.discount_value,
-        s.discount_amount,
-        s.total_amt,
-        s.payment_type,
-        TO_CHAR(s.order_date, 'DD Mon YYYY')             AS sale_date_fmt,
-        TO_CHAR(s.order_time, 'HH12:MI AM')              AS sale_time_fmt,
-        TO_CHAR(s.created_at, 'DD Mon YYYY, HH12:MI AM') AS created_at_fmt,
+        sub.*,
         COUNT(*) OVER() AS total_count
-     FROM tbl_orders s
-     WHERE ${where}
-     ORDER BY s.order_date DESC, s.created_at DESC
+     FROM (
+       SELECT
+           s.api_order_id,
+           s.public_order_no,
+           s.zodu_id,
+           s.branch_id,
+           s.order_type,
+           s.table_no,
+           s.no_of_items,
+           s.subtotal,
+           s.total_tax,
+           s.discount_type,
+           s.discount_value,
+           s.discount_amount,
+           s.total_amt,
+           s.payment_type,
+           s.cancelled_order,
+           TO_CHAR(s.order_date, 'DD Mon YYYY')             AS sale_date_fmt,
+           TO_CHAR(s.order_time, 'HH12:MI AM')              AS sale_time_fmt,
+           TO_CHAR(s.created_at, 'DD Mon YYYY, HH12:MI AM') AS created_at_fmt,
+           s.order_date,
+           s.created_at,
+           COALESCE(
+             JSON_AGG(JSON_BUILD_OBJECT('item_id', toi.item_id, 'qty', toi.qty)) FILTER (WHERE toi.item_id IS NOT NULL),
+             '[]'::json
+           ) AS items
+        FROM tbl_orders s
+        LEFT JOIN tbl_ordered_items toi ON toi.api_order_id = s.api_order_id
+        WHERE ${where}
+        GROUP BY s.api_order_id, s.public_order_no, s.zodu_id, s.branch_id,
+                 s.order_type, s.table_no, s.no_of_items, s.subtotal, s.total_tax,
+                 s.discount_type, s.discount_value, s.discount_amount, s.total_amt,
+                 s.payment_type, s.cancelled_order, s.order_date, s.order_time, s.created_at
+     ) sub
+     ORDER BY sub.order_date DESC, sub.created_at DESC
      LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
     [...values, limit, offset]
   );
 
   const total = rows.length > 0 ? parseInt(rows[0].total_count, 10) : 0;
-  const data  = rows.map(({ total_count, ...rest }) => rest);
+  const data  = rows.map(({ total_count, order_date, created_at, ...rest }) => rest);
 
   return {
     total,
@@ -3413,13 +3430,16 @@ exports.getSalesHistorySummary = async (filters) => {
     order_type,
     search,
     customer_search,
+    cancelled_order
   } = filters;
+  console.log("getSalesHistorySummary called with filters:",
+    filters.cancelled_order, typeof filters.cancelled_order);
 
   const searchTerm = search || customer_search;
 
-  const conditions = ["s.zodu_id = $1", "s.branch_id = $2"];
-  const values     = [zodu_id, branch_id];
-  let   idx        = 3;
+  const conditions = ["s.zodu_id = $1", "s.branch_id = $2", "s.cancelled_order = $3"];
+  const values     = [zodu_id, branch_id, cancelled_order];
+  let   idx        = 4;
 
   if (from_date) { conditions.push(`s.order_date >= $${idx++}`); values.push(from_date); }
   if (to_date)   { conditions.push(`s.order_date <= $${idx++}`); values.push(to_date); }
@@ -3456,435 +3476,234 @@ exports.getSalesHistorySummary = async (filters) => {
   };
 };
 
-exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
-  
-  console.log(sale_id,zodu_id,branch_id)
+exports.getSaleById = async (api_order_id, zodu_id, branch_id) => {
+
+  console.log(api_order_id, zodu_id, branch_id);
   const saleResult = await conn.query(
     `SELECT
-        s.sale_uuid,
-        s.sale_id,
+        s.api_order_id,
+        s.public_order_no,
         s.zodu_id,
         s.branch_id,
-        s.sale_type,
-        s.customer_uuid,
-        s.total_items,
+        s.order_type,
+        s.no_of_items,
         s.subtotal,
         s.total_tax,
         s.discount_type,
         s.discount_value,
         s.discount_amount,
-        s.total_amount,
-        s.paid_amount,
-        s.balance_amount,
-        s.payment_status,
-        s.notes,
-        TO_CHAR(s.sale_date,  'DD Mon YYYY')             AS sale_date_fmt,
-        TO_CHAR(s.sale_time,  'HH12:MI AM')              AS sale_time_fmt,
+        s.total_amt,
+        s.payment_type,
+        s.final_payment,
+        TO_CHAR(s.order_date,  'DD Mon YYYY')             AS sale_date_fmt,
+        TO_CHAR(s.order_time,  'HH12:MI AM')              AS sale_time_fmt,
         TO_CHAR(s.created_at, 'DD Mon YYYY, HH12:MI AM') AS created_at_fmt,
- 
-        c.cust_uuid,
-        c.cust_id AS customer_id,
-        c.cust_name,
-        c.cpy_name,
-        c.mobile_no->>0    AS customer_mobile,
-        c.mobile_no        AS customer_all_mobiles,
-        c.email_id->>0     AS customer_email,
-        c.email_id         AS customer_all_emails,
-        c.gst              AS customer_gst,
-        c.address_line1    AS customer_address_line1,
-        c.address_line2    AS customer_address_line2,
-        c.city             AS customer_city,
-        c.state            AS customer_state,
-        c.pincode          AS customer_pincode
- 
-     FROM tbl_sales s
-     LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid AND c.branch_id = s.branch_id
-     WHERE s.sale_id   = $1
+        s.customer_name,
+        s.customer_phone
+
+     FROM tbl_orders s
+     WHERE s.api_order_id  = $1
        AND s.zodu_id   = $2
        AND s.branch_id = $3
      LIMIT 1`,
-    [sale_id, zodu_id, branch_id]
+    [api_order_id, zodu_id, branch_id]
   );
- 
-  if (saleResult.rows.length === 0) return null;
- 
-  const row       = saleResult.rows[0];
-  const sale_uuid = row.sale_uuid;
 
- 
+  if (saleResult.rows.length === 0) return null;
+  const row = saleResult.rows[0];
+
   const sale = {
-    sale_uuid:       row.sale_uuid,
-    sale_id:         row.sale_id,
+    sale_uuid:       row.api_order_id,
+    sale_id:         row.public_order_no,
     zodu_id:         row.zodu_id,
     branch_id:       row.branch_id,
-    sale_type:       row.sale_type,
-    customer_id:     row.customer_id,
-    total_items:     row.total_items,
+    sale_type:       row.order_type,
+    customer_name:   row.customer_name,
+    customer_phone:  row.customer_phone,
+    total_items:     row.no_of_items,
     subtotal:        row.subtotal,
     total_tax:       row.total_tax,
     discount_type:   row.discount_type,
     discount_value:  row.discount_value,
     discount_amount: row.discount_amount,
-    total_amount:    row.total_amount,
-    paid_amount:     row.paid_amount,
-    balance_amount:  row.balance_amount,
-    payment_status:  row.payment_status,
-    notes:           row.notes,
+    total_amount:    row.total_amt,
+    payment_status: row.final_payment,
+    payment_type:  row.payment_type,
     sale_date_fmt:   row.sale_date_fmt,
     sale_time_fmt:   row.sale_time_fmt,
     created_at_fmt:  row.created_at_fmt,
   };
- 
-  const customer = row.cust_uuid
-    ? {
-        cust_uuid:     row.cust_uuid,
-        cust_id:       row.cust_id,
-        cust_name:     row.cust_name,
-        cpy_name:      row.cpy_name,
-        mobile:        row.customer_mobile,
-        all_mobiles:   row.customer_all_mobiles,
-        email:         row.customer_email,
-        all_emails:    row.customer_all_emails,
-        gst:           row.customer_gst,
-        address_line1: row.customer_address_line1,
-        address_line2: row.customer_address_line2,
-        city:          row.customer_city,
-        state:         row.customer_state,
-        pincode:       row.customer_pincode,
-      }
-    : null;
- 
+
   // Items
   const itemsResult = await conn.query(
     `SELECT
         si.id,
-        si.sale_uuid,
-        si.sale_id,
+        si.api_order_id,
         si.item_id,
         m.item_uuid,
-        m.tax_incl_type AS tax_inclusive,
+        m.tax_include_or_exclude AS tax_inclusive,
+        m.hsn_code,
         si.item_name,
         si.variant_id,
         si.variant_name,
-        si.unit,
-        si.quantity,
+        si.item_unit,
+        si.qty,
         si.price,
-        si.mrp,
-        si.discount,
-        si.hsn_code,
         si.gst_percentage,
         si.tax_amount,
         si.cgst,
         si.sgst,
-        si.tax_inclusive,
         si.total_amount,
- 
-        -- ✅ how much of this line item has already been returned
-        COALESCE(ri_totals.returned_qty, 0)    AS returned_qty,
-        COALESCE(ri_totals.returnable_qty,
-                 si.quantity)                  AS returnable_qty,
- 
+
         TO_CHAR(si.created_at, 'DD Mon YYYY')  AS created_at_fmt
- 
-     FROM tbl_sale_items si
-     LEFT JOIN tbl_menu_items m ON m.item_id = si.item_id AND m.branch_id = $3 AND m.zodu_id = $2
- 
-     -- ✅ sum returned qty per original line item across all returns
-     LEFT JOIN LATERAL (
-       SELECT
-         SUM(ri.return_qty)                        AS returned_qty,
-         GREATEST(si.quantity - SUM(ri.return_qty), 0) AS returnable_qty
-       FROM tbl_sale_return_items ri
-       WHERE ri.original_item_id = si.id
-     ) ri_totals ON true
- 
-     WHERE si.sale_uuid = $1
+
+     FROM tbl_ordered_items si
+     LEFT JOIN tbl_menu_items m ON m.menu_id = si.item_id AND m.branch_id = $3 AND m.zodu_id = $2
+
+     WHERE si.api_order_id = $1
      ORDER BY si.id ASC`,
-    [sale_uuid,zodu_id,branch_id]
+    [api_order_id, zodu_id, branch_id]
   );
- 
-  // Payment history
-  const paymentResult = await conn.query(
+
+  // HSN-wise tax summary grouped by hsn_code
+  // taxable_value = base amount before tax (strips tax when tax_inclusive=true), no discount applied
+  const hsnResult = await conn.query(
     `SELECT
-        sp.id              AS payment_row_id,
-        sp.payment_id      AS payment_uuid,
-        sp.sale_id,
-        sp.zodu_id,
-        sp.branch_id,
-        sp.paid_amount,
-        sp.transaction_type,
-        sp.transaction_id,
-        sp.status,
-        TO_CHAR(sp.payment_date, 'DD Mon YYYY')            AS payment_date_fmt,
-        TO_CHAR(sp.created_at,   'DD Mon YYYY HH12:MI AM') AS created_at_fmt
-     FROM tbl_sale_payment sp
-     WHERE sp.sale_id   = $1
-       AND sp.zodu_id   = $2
-       AND sp.branch_id = $3
-     ORDER BY sp.created_at DESC, sp.id DESC`,
-    [sale_id, zodu_id, branch_id]
+        m.hsn_code,
+        TRUNC(SUM(
+          CASE
+            WHEN m.tax_include_or_exclude = true
+            THEN (si.price * si.qty) / (1 + si.gst_percentage / 100.0)
+            ELSE  si.price * si.qty
+          END
+        )::numeric, 2)                        AS taxable_value,
+        TRUNC((si.gst_percentage / 2)::numeric, 2)    AS cgst_percent,
+        TRUNC(SUM(si.cgst)::numeric, 2)               AS cgst_amount,
+        TRUNC((si.gst_percentage / 2)::numeric, 2)    AS sgst_percent,
+        TRUNC(SUM(si.sgst)::numeric, 2)               AS sgst_amount,
+        TRUNC(SUM(si.tax_amount)::numeric, 2)         AS total_tax
+     FROM tbl_ordered_items si
+     LEFT JOIN tbl_menu_items m ON m.menu_id = si.item_id AND m.branch_id = $3 AND m.zodu_id = $2
+     WHERE si.api_order_id = $1
+       AND m.hsn_code IS NOT NULL
+       AND m.hsn_code <> ''
+       AND si.gst_percentage IS NOT NULL
+       AND si.gst_percentage <> 0
+     GROUP BY m.hsn_code, si.gst_percentage
+     ORDER BY m.hsn_code`,
+    [api_order_id, zodu_id, branch_id]
   );
- 
-  // ✅ Return history for this sale
- const returnResult = await conn.query(
-  `SELECT
-      r.return_uuid,
-      r.return_id,
-      r.total_items,
-      r.subtotal,
-      r.total_tax,
-      r.return_amount,
-      r.refund_type,
-      r.return_reason,
-      r.notes,
-      TO_CHAR(r.return_date,  'DD Mon YYYY')             AS return_date_fmt,
-      TO_CHAR(r.return_time,  'HH12:MI AM')              AS return_time_fmt,
-      TO_CHAR(r.created_at,   'DD Mon YYYY, HH12:MI AM') AS created_at_fmt,
 
-      COALESCE(
-        json_agg(
-          json_build_object(
-            'id', i.id,
-            'item_id', i.item_id,
-            'item_name', i.item_name,
-            'unit', i.unit,
-            'return_qty', i.return_qty,
-            'original_qty', i.original_qty,
-            'price', i.price,
-            'tax_amount', i.tax_amount,
-            'gst_percentage', i.gst_percentage,
-            'hsn_code', i.hsn_code,
-            'total_amount', i.total_amount
-          )
-        ) FILTER (WHERE i.id IS NOT NULL), '[]'
-      ) AS items
-
-   FROM tbl_sale_returns r
-   LEFT JOIN tbl_sale_return_items i 
-     ON r.return_uuid = i.return_uuid
-
-   WHERE r.original_sale_uuid = $1
-   GROUP BY r.return_uuid
-   ORDER BY r.created_at DESC`,
-  [sale_uuid]
-);
-
-console.log("test",sale,customer,itemsResult.rows,paymentResult.rows,returnResult.rows)
- 
   return {
     sale,
-    customer,
-    items:           itemsResult.rows,
-    payment_history: paymentResult.rows,
-    return_history:  returnResult.rows,   // ✅ all returns for this sale
+    items:        itemsResult.rows,
+    hsn_wise_tax: hsnResult.rows,
   };
 };
 
-exports.deleteSale = async (sale_id, zodu_id, branch_id) => {
-  const client = await conn.connect();
-
+exports.deleteSale = async (api_order_id, zodu_id, branch_id, items = []) => {
   try {
-    await client.query("BEGIN");
-
-    const saleResult = await client.query(
-      `SELECT sale_uuid, sale_id, sale_type
-       FROM tbl_sales
-       WHERE sale_id = $1
-         AND zodu_id = $2
-         AND branch_id = $3
-       FOR UPDATE`,
-      [sale_id, zodu_id, branch_id]
+    await conn.query("BEGIN");
+    console.log("deleted sale items:", items);
+    // 1. Cancel the order
+    const result = await conn.query(
+      `UPDATE tbl_orders
+          SET cancelled_order = true
+        WHERE api_order_id = $1
+          AND zodu_id      = $2
+          AND branch_id    = $3
+        RETURNING *`,
+      [api_order_id, zodu_id, branch_id]
     );
 
-    if (!saleResult.rows.length) {
-      await client.query("ROLLBACK");
+    if (result.rowCount === 0) {
+      await conn.query("ROLLBACK");
       return null;
     }
 
-    const sale = saleResult.rows[0];
+    // 2. Process stock reversal only for items provided
+    if (items.length > 0) {
+      const itemIds = items.map((i) => i.item_id);
 
-    const soldItemsResult = await client.query(
-      `SELECT
-          si.item_id,
-          COALESCE(mi.item_uuid, inv.item_uuid) AS item_uuid,
-          COALESCE(mi.item_name, inv.item_name, MAX(si.item_name)) AS item_name,
-          SUM(COALESCE(si.quantity, 0))::numeric AS sold_qty
-       FROM tbl_sale_items si
-       LEFT JOIN tbl_menu_items mi
-         ON mi.item_id = si.item_id
-        AND mi.branch_id = $3
-        AND mi.zodu_id = $2
-       LEFT JOIN tbl_inventory inv
-         ON inv.item_id = si.item_id
-        AND inv.branch_id = $3
-        AND inv.zodu_id = $2
-       WHERE si.sale_uuid = $1
-       GROUP BY si.item_id, mi.item_uuid, inv.item_uuid, mi.item_name, inv.item_name`,
-      [sale.sale_uuid, zodu_id, branch_id]
-    );
-
-    const returnItemsResult = await client.query(
-      `SELECT
-          sri.item_id,
-          COALESCE(mi.item_uuid, inv.item_uuid) AS item_uuid,
-          COALESCE(mi.item_name, inv.item_name, MAX(sri.item_name)) AS item_name,
-          SUM(COALESCE(sri.return_qty, 0))::numeric AS return_qty
-       FROM tbl_sale_return_items sri
-       INNER JOIN tbl_sale_returns sr
-         ON sr.return_uuid = sri.return_uuid
-       LEFT JOIN tbl_menu_items mi
-         ON mi.item_id = sri.item_id
-        AND mi.branch_id = $3
-        AND mi.zodu_id = $2
-       LEFT JOIN tbl_inventory inv
-         ON inv.item_id = sri.item_id
-        AND inv.branch_id = $3
-        AND inv.zodu_id = $2
-       WHERE sr.original_sale_uuid = $1
-       GROUP BY sri.item_id, mi.item_uuid, inv.item_uuid, mi.item_name, inv.item_name`,
-      [sale.sale_uuid, zodu_id, branch_id]
-    );
-
-    const netQtyByItem = new Map();
-
-    for (const row of soldItemsResult.rows) {
-      netQtyByItem.set(String(row.item_id), {
-        item_id: row.item_id,
-        item_uuid: row.item_uuid,
-        item_name: row.item_name,
-        net_qty: Number(row.sold_qty || 0),
-      });
-    }
-
-    for (const row of returnItemsResult.rows) {
-      const key = String(row.item_id);
-      const existing = netQtyByItem.get(key) || {
-        item_id: row.item_id,
-        item_uuid: row.item_uuid,
-        item_name: row.item_name,
-        net_qty: 0,
-      };
-
-      existing.item_uuid = existing.item_uuid || row.item_uuid;
-      existing.item_name = existing.item_name || row.item_name;
-      existing.net_qty -= Number(row.return_qty || 0);
-      netQtyByItem.set(key, existing);
-    }
-
-    for (const item of netQtyByItem.values()) {
-      if (!item.item_id || item.net_qty === 0) continue;
-
-      const inventoryResult = await client.query(
-        `SELECT inventory_uuid, item_uuid, item_name, available_qty
-         FROM tbl_inventory
-         WHERE item_id = $1
-           AND zodu_id = $2
-           AND branch_id = $3
-         FOR UPDATE`,
-        [item.item_id, zodu_id, branch_id]
+      // Fetch menu info (item_uuid, item_name, menu_type)
+      const menuRes = await conn.query(
+        `SELECT menu_id, item_uuid, menu_name, menu_type FROM tbl_menu_items WHERE menu_id = ANY($1)`,
+        [itemIds]
       );
+      const menuMap = {};
+      for (const row of menuRes.rows) menuMap[row.menu_id] = row;
 
-      if (!inventoryResult.rows.length) continue;
-
-      const inventory = inventoryResult.rows[0];
-      const stockBefore = Number(inventory.available_qty || 0);
-      const stockAfter = stockBefore + Number(item.net_qty);
-
-      await client.query(
-        `UPDATE tbl_inventory
-         SET available_qty = $1,
-             last_stock_update = CURRENT_TIMESTAMP
-         WHERE inventory_uuid = $2`,
-        [stockAfter, inventory.inventory_uuid]
+      // Fetch current inventory stock
+      const invRes = await conn.query(
+        `SELECT item_id, stock_qty FROM tbl_inventory WHERE item_id = ANY($1)`,
+        [itemIds]
       );
+      const invMap = {};
+      for (const row of invRes.rows) invMap[row.item_id] = row;
 
-      await client.query(
-        `INSERT INTO tbl_stock_ledger (
-          item_uuid, item_id, zodu_id, branch_id,
-          item_name, transaction_type,
-          reference_id, qty_change,
-          stock_before, stock_after, notes
-        )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-        [
-          inventory.item_uuid,
+      const ledgerValues = [];
+      const ledgerParams = [];
+      const invUpdates   = [];
+      let idx = 1;
+
+      for (const item of items) {
+        const menu = menuMap[item.item_id];
+        console.log("Processing item:", item, "Menu info:", menu);
+        if (!menu || menu.menu_type !== "Product") continue;
+        console.log("Item is a Product. Proceeding with stock reversal.");
+
+
+        const qty_change   = Number(item.qty);                          // positive — restoring stock
+        const stock_before = Number(invMap[item.item_id]?.stock_qty ?? 0);
+        const stock_after  = stock_before + qty_change;
+
+        ledgerValues.push(
+          `($${idx++},$${idx++},$${idx++},$${idx++},$${idx++},'sale_cancel',$${idx++},$${idx++},$${idx++},$${idx++},'Sale Cancelled')`
+        );
+        ledgerParams.push(
+          menu.item_uuid,
           item.item_id,
           zodu_id,
           branch_id,
-          item.item_name,
-          "sale_deleted",
-          sale.sale_uuid,
-          Number(item.net_qty),
-          stockBefore,
-          stockAfter,
-          `Stock reversed on deletion of sale ${sale.sale_id}`,
-        ]
-      );
+          menu.menu_name,
+          api_order_id,
+          qty_change,
+          stock_before,
+          stock_after
+        );
+
+        invUpdates.push({ stock_after, item_id: item.item_id });
+      }
+
+      // 3. Bulk insert ledger rows
+      if (ledgerValues.length > 0) {
+        await conn.query(
+          `INSERT INTO tbl_stock_ledger (
+            item_uuid, item_id, zodu_id, branch_id, item_name,
+            transaction_type, reference_id, qty_change, stock_before, stock_after, notes
+          ) VALUES ${ledgerValues.join(",")}`,
+          ledgerParams
+        );
+      }
+
+      // 4. Bulk update inventory — add qty back
+      if (invUpdates.length > 0) {
+        const stockAfterArr = invUpdates.map((u) => u.stock_after);
+        const itemIdArr     = invUpdates.map((u) => u.item_id);
+        await conn.query(
+          `UPDATE tbl_inventory SET stock_qty = v.stock_after
+           FROM unnest($1::numeric[], $2::text[]) AS v(stock_after, item_id)
+           WHERE tbl_inventory.item_id = v.item_id`,
+          [stockAfterArr, itemIdArr]
+        );
+      }
     }
 
-    const returnIdsResult = await client.query(
-      `SELECT return_uuid
-       FROM tbl_sale_returns
-       WHERE original_sale_uuid = $1`,
-      [sale.sale_uuid]
-    );
-
-    const returnUuids = returnIdsResult.rows.map((row) => row.return_uuid);
-    const stockLedgerRefIds = [...returnUuids];
-
-    if (stockLedgerRefIds.length > 0) {
-      await client.query(
-        `DELETE FROM tbl_stock_ledger
-         WHERE reference_id = ANY($1::uuid[])`,
-        [stockLedgerRefIds]
-      );
-    }
-
-    await client.query(
-      `DELETE FROM tbl_sale_return_items
-       WHERE return_uuid IN (
-         SELECT return_uuid
-         FROM tbl_sale_returns
-         WHERE original_sale_uuid = $1
-       )`,
-      [sale.sale_uuid]
-    );
-
-    await client.query(
-      `DELETE FROM tbl_sale_returns
-       WHERE original_sale_uuid = $1`,
-      [sale.sale_uuid]
-    );
-
-    await client.query(
-      `DELETE FROM tbl_sale_payment
-       WHERE sale_id = $1
-         AND zodu_id = $2
-         AND branch_id = $3`,
-      [sale.sale_id, zodu_id, branch_id]
-    );
-
-    await client.query(
-      `DELETE FROM tbl_sale_items
-       WHERE sale_uuid = $1`,
-      [sale.sale_uuid]
-    );
-
-    const deletedSaleResult = await client.query(
-      `DELETE FROM tbl_sales
-       WHERE sale_uuid = $1
-       RETURNING *`,
-      [sale.sale_uuid]
-    );
-
-    await client.query("COMMIT");
-
-    return deletedSaleResult.rows[0] ?? null;
+    await conn.query("COMMIT");
+    return result.rows[0];
   } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
+    await conn.query("ROLLBACK");
+    throw new Error("Unable to cancel sale: " + err.message);
   }
 };
 

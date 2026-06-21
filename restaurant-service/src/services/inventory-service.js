@@ -45,6 +45,7 @@ async function adjustStock({
   adjustment_qty,
   reason,
   notes,
+  stock_alert
 }) {
   if (!["add", "subtract"].includes(adjustment_type)) {
     return { success: false, message: 'adjustment_type must be "add" or "subtract"' };
@@ -87,6 +88,7 @@ async function adjustStock({
       adjustment_qty: qty,
       reason: reason || null,
       notes: notes || null,
+      stock_alert: stock_alert,
     });
 
     const stock_after = Number(updated.stock_qty);

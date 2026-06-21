@@ -104,6 +104,7 @@ router.post('/adjust', async (req, res) => {
       adjustment_qty,
       reason,
       notes,
+      stock_alert
     } = req.body;
  
     // Basic validation
@@ -128,6 +129,7 @@ router.post('/adjust', async (req, res) => {
       adjustment_qty: Number(adjustment_qty),
       reason,
       notes,
+      stock_alert
     });
     if (!result.success) {
       return res.status(400).json({ success: false, message: result.message });

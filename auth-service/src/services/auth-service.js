@@ -390,6 +390,7 @@ async function EditCompany(userInputs, user_id) {
     zodu_id,
     phone_number,
     email,
+    type,
     ...rest
   } = userInputs;
 
@@ -405,6 +406,7 @@ async function EditCompany(userInputs, user_id) {
       ...rest,
       ...(phone_number !== undefined ? { mobile_no: phone_number } : {}),
       ...(email !== undefined ? { mail_id: email } : {}),
+      ...(type !== undefined ? { type } : {}),
     });
 
     return FormateData({

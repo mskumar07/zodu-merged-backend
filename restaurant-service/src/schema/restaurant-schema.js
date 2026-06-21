@@ -30,6 +30,7 @@ const update_company = Joi.object({
   mobile_no: Joi.string().pattern(/^[0-9]{10,15}$/),
   mail_id: Joi.string().email().max(100),
   gst_no: Joi.string().max(50).allow(null, ''),
+  type: Joi.string().max(50).allow(null, ''),
   pincode: Joi.string().pattern(/^[0-9]{5,10}$/).allow(null, ''),
   city: Joi.string().max(50).allow(null, ''),
   district: Joi.string().max(50).allow(null, ''),
@@ -593,24 +594,29 @@ const sales_history_query = Joi.object({
   payment_status:  Joi.string().valid("fully_paid", "partially_paid", "unpaid").optional(),
   order_type:       Joi.string().optional(),
   customer_phone:  Joi.string().optional(),
-  invoice_no:      Joi.string().optional(),
+  invoice_no: Joi.string().optional(),
+  cancelled_order: Joi.boolean().required(),
   search:    Joi.string().optional(),
   page:            Joi.number().integer().min(1).optional().default(1),
   limit:           Joi.number().integer().min(1).max(100).optional().default(20),
 });
  
 const sales_history_summary_query = Joi.object({
-  zodu_id:        Joi.string().required(),
-  branch_id:      Joi.string().required(),
-  from_date:      Joi.string().isoDate().optional(),
-  to_date:        Joi.string().isoDate().optional(),
-  payment_status: Joi.string().valid("fully_paid", "partially_paid", "unpaid").optional(),
-  order_type:       Joi.string().optional(),
-  search:         Joi.string().optional(),
+  zodu_id:         Joi.string().required(),
+  branch_id:       Joi.string().required(),
+  from_date:       Joi.string().isoDate().optional(),
+  to_date:         Joi.string().isoDate().optional(),
+  payment_status:  Joi.string().valid("fully_paid", "partially_paid", "unpaid").optional(),
+  order_type:      Joi.string().optional(),
+  search:          Joi.string().optional(),
+  customer_search: Joi.string().optional(),
+  cancelled_order: Joi.boolean().required(),
+  page:            Joi.number().integer().min(1).optional().default(1),
+  limit:           Joi.number().integer().min(1).max(100).optional().default(20),
 });
 
 const sale_by_id_params = Joi.object({
-  sale_id:   Joi.string().required(),
+  api_order_id:   Joi.string().required(),
   zodu_id:   Joi.string().required(),
   branch_id: Joi.string().required(),
 });

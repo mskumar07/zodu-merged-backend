@@ -9,11 +9,14 @@ const ITEM_SELECT = `
   c.name        AS category_name,
   u.name        AS unit_name,
   u.short_name  AS unit_short_name,
-  g.gst_rate    AS gst_rate
+  g.gst_rate    AS gst_rate,
+  i.available_qty,
+  i.reorder_level
 FROM tbl_menu_items m
-LEFT JOIN tbl_category c ON c.id = m.category_id and c.active = true
-LEFT JOIN tbl_units    u ON u.id = m.unit
-LEFT JOIN tbl_gst      g ON g.id = m.gst_type
+LEFT JOIN tbl_category  c ON c.id = m.category_id AND c.active = true
+LEFT JOIN tbl_units     u ON u.id = m.unit
+LEFT JOIN tbl_gst       g ON g.id = m.gst_type
+LEFT JOIN tbl_inventory i ON i.item_id = m.item_id AND i.zodu_id = m.zodu_id AND i.branch_id = m.branch_id
 `;
 
 /**
@@ -151,7 +154,9 @@ exports.getMenuItemByUuid = async (client, item_uuid) => {
         u.id   AS unit,
         u.short_name AS unit_name,
 
-        g.gst_rate AS gst_rate
+        g.gst_rate AS gst_rate,
+        i.available_qty,
+        i.reorder_level
 
 
      FROM tbl_menu_items m
@@ -165,6 +170,8 @@ exports.getMenuItemByUuid = async (client, item_uuid) => {
       LEFT JOIN tbl_gst g 
        ON m.gst_type = g.id
 
+      LEFT JOIN tbl_inventory i 
+       ON m.item_id = i.item_id AND m.zodu_id = i.zodu_id AND m.branch_id = i.branch_id
 
      WHERE m.item_uuid = $1`,
     [item_uuid]
@@ -223,8 +230,6 @@ exports.getMenuItems = async (client, { zodu_id, branch_id, search, category_ids
     [...values, limit, offset]
   );
 
-  console.log("test",rows)
- 
   return { rows, total };
 };
  
@@ -463,7 +468,7 @@ exports.getInventoryByItemUuid = async (client, item_uuid) => {
 // ─────────────────────────────────────────────────────────────
 exports.adjustStock = async (
   client,
-  { inventory_uuid, adjustment_type, adjustment_qty }
+  { inventory_uuid, adjustment_type, adjustment_qty, stock_alert }
 ) => {
   const qty = round(Math.abs(adjustment_qty));
  
@@ -473,10 +478,11 @@ exports.adjustStock = async (
     `UPDATE tbl_inventory
      SET
        available_qty      = available_qty ${operator} $1,
+       reorder_level        = $3,
        last_stock_update  = NOW()
      WHERE inventory_uuid = $2
      RETURNING *`,
-    [qty, inventory_uuid]
+    [qty, inventory_uuid, stock_alert]
   );
  
   if (rows.length === 0) throw new Error('Inventory record not found');

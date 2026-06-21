@@ -382,9 +382,95 @@ exports.deletePurchase = async (purchase_id) => {
     await client.query("BEGIN");
 
     const purchase = await repo.getPurchaseByIdForUpdate(client, purchase_id);
+    console.log(purchase,"--------------------------------")
     if (!purchase) {
       await client.query("ROLLBACK");
       return { success: false, message: "Purchase not found" };
+    }
+
+    const items = purchase.items || [];
+
+    // Stock reversal: subtract purchased qty from inventory and log ledger entry
+    const productItems = items.filter(
+      (i) => i.menu_type && i.menu_type.toLowerCase() === "product" && i.item_id
+    );
+
+    if (productItems.length > 0) {
+      const itemIds = productItems.map((i) => i.item_id);
+
+      const { rows: invRows } = await client.query(
+        `SELECT item_id, stock_qty FROM tbl_inventory WHERE item_id = ANY($1::text[])`,
+        [itemIds]
+      );
+      const invMap = {};
+      for (const row of invRows) invMap[row.item_id] = Number(row.stock_qty);
+
+      // Build arrays for bulk operations
+      const stockAfterArr   = [];
+      const invItemIdArr    = [];
+      const ledgerUuids     = [];
+      const ledgerItemIds   = [];
+      const ledgerZoduIds   = [];
+      const ledgerBranchIds = [];
+      const ledgerNames     = [];
+      const ledgerRefIds    = [];
+      const ledgerQtyChange = [];
+      const ledgerBefore    = [];
+      const ledgerAfter     = [];
+
+      for (const item of productItems) {
+        const qty_change   = Number(item.qty);
+        const stock_before = invMap[item.item_id] ?? 0;
+        const stock_after  = Math.max(0, stock_before - qty_change);
+        const item_uuid    = item.item_uuid || item.menu_item_uuid;
+
+        stockAfterArr.push(stock_after);
+        invItemIdArr.push(item.item_id);
+
+        ledgerUuids.push(item_uuid);
+        ledgerItemIds.push(item.item_id);
+        ledgerZoduIds.push(purchase.zodu_id);
+        ledgerBranchIds.push(purchase.branch_id);
+        ledgerNames.push(item.item_name || item.menu_name);
+        ledgerRefIds.push(purchase.id);  // uuid from tbl_purchase.id
+        ledgerQtyChange.push(-qty_change);
+        ledgerBefore.push(stock_before);
+        ledgerAfter.push(stock_after);
+      }
+
+      // Bulk update inventory using unnest
+      await client.query(
+        `UPDATE tbl_inventory
+            SET stock_qty  = v.stock_after::numeric,
+                updated_at = NOW()
+           FROM unnest($1::numeric[], $2::text[]) AS v(stock_after, item_id)
+          WHERE tbl_inventory.item_id = v.item_id`,
+        [stockAfterArr, invItemIdArr]
+      );
+
+      // Bulk insert ledger rows using unnest — reference_id = purchase_item_id (uuid)
+      await client.query(
+        `INSERT INTO tbl_stock_ledger (
+           item_uuid, item_id, zodu_id, branch_id,
+           item_name, transaction_type,
+           reference_id, qty_change, stock_before, stock_after, notes
+         )
+         SELECT
+           u.item_uuid, u.item_id, u.zodu_id, u.branch_id,
+           u.item_name, 'purchase_cancel',
+           u.reference_id, u.qty_change, u.stock_before, u.stock_after, 'Purchase Deleted'
+         FROM unnest(
+           $1::uuid[], $2::text[], $3::text[], $4::text[],
+           $5::text[], $6::uuid[], $7::numeric[], $8::numeric[], $9::numeric[]
+         ) AS u(
+           item_uuid, item_id, zodu_id, branch_id,
+           item_name, reference_id, qty_change, stock_before, stock_after
+         )`,
+        [
+          ledgerUuids, ledgerItemIds, ledgerZoduIds, ledgerBranchIds,
+          ledgerNames, ledgerRefIds, ledgerQtyChange, ledgerBefore, ledgerAfter,
+        ]
+      );
     }
 
     // Delete children before parent to satisfy FK constraints
@@ -395,7 +481,7 @@ exports.deletePurchase = async (purchase_id) => {
     await client.query("COMMIT");
     return {
       success: true,
-      message: "Deleted successfully. Inventory was not reversed.",
+      message: "Deleted successfully. Inventory stock reversed.",
     };
   } catch (err) {
     await client.query("ROLLBACK");
