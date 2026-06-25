@@ -1,29 +1,12 @@
-const { AuthorizeError, NotFoundError, ValidationError } = require('./errors');
 const { logger } = require('../logger');
 
 const HandleErrorWithLogger = (error, req, res, next) => {
-  let reportError = true;
-  let status = 500;
-  let data = error.message;
+  let status = error.status || 500;
+  let data   = error.message || 'Internal server error';
 
-  // skip common / known errors
-  [NotFoundError, ValidationError, AuthorizeError].forEach((typeOfError) => {
-    if (error instanceof typeOfError) {
-      reportError = false;
-      status = error.status;
-      data = error.message;
-    }
-  });
+  logger.error(error);
 
-  if (reportError) {
-    // send to monitoring tool (e.g., Cloudwatch, Sentry)
-    logger.error(error);
-  } else {
-    // common/expected errors (e.g., user mistakes)
-    logger.warn(error);
-  }
-
-  return res.status(status).json({ message: data });
+  return res.status(status).json({ success: false, error: data });
 };
 
 const HandleUnCaughtException = async (error) => {

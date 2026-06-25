@@ -36,12 +36,18 @@ app.use('/retail', createProxyMiddleware({
 app.use('/employee', createProxyMiddleware({
   target: EMPLOYEE_SERVICE_URL,
   changeOrigin: true,
+  secure: false,
+  autoRewrite: true,
+  encodePathChars: false,
   on: { error: proxyError('employee-service') }
 }));
 
 app.use('/restaurant', createProxyMiddleware({
   target: RESTAURANT_SERVICE_URL,
   changeOrigin: true,
+  secure: false,
+  autoRewrite: true,
+  encodePathChars: false,
   on: { error: proxyError('restaurant-service') }
 }));
 

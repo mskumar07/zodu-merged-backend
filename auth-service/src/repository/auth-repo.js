@@ -45,8 +45,8 @@ async function AccountCreationQuery({ zodu_id, phone_number, email, password_has
 
     // 3. Default "Owner" role
     const roleResult = await client.query(
-      `INSERT INTO tbl_roles (zodu_id, role_name, description)
-       VALUES ($1, 'Owner', 'Full access — auto-created on registration')
+      `INSERT INTO tbl_roles (zodu_id, branch_id, role_name, description)
+       VALUES ($1, NULL, 'Owner', 'Full access — auto-created on registration')
        RETURNING role_id`,
       [zodu_id]
     );
@@ -59,13 +59,13 @@ async function AccountCreationQuery({ zodu_id, phone_number, email, password_has
 
     if (modules.length > 0) {
       const placeholders = modules.map((_, i) =>
-        `(NULL, $${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3}, true, true, true, true)`
+        `($${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3}, true, true, true, true)`
       ).join(', ');
       const params = modules.flatMap(m => [role_id, zodu_id, m.module_id]);
 
       await client.query(
         `INSERT INTO tbl_access_control
-           (user_id, role_id, zodu_id, module_id,
+           (role_id, zodu_id, module_id,
             can_read, can_create, can_edit, can_delete)
          VALUES ${placeholders}`,
         params
@@ -194,8 +194,8 @@ async function createDefaultRoleForCompany({ user_id, zodu_id }) {
 
     // Create a default "Admin" role for the new company
     const roleResult = await client.query(
-      `INSERT INTO tbl_roles (zodu_id, role_name, description)
-       VALUES ($1, 'Admin', 'Full access — auto-created for new company')
+      `INSERT INTO tbl_roles (zodu_id, branch_id, role_name, description)
+       VALUES ($1, NULL, 'Admin', 'Full access — auto-created for new company')
        RETURNING role_id`,
       [zodu_id]
     );
@@ -208,13 +208,13 @@ async function createDefaultRoleForCompany({ user_id, zodu_id }) {
 
     if (modules.length > 0) {
       const placeholders = modules.map((_, i) =>
-        `(NULL, $${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3}, true, true, true, true)`
+        `($${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3}, true, true, true, true)`
       ).join(', ');
       const params = modules.flatMap(m => [role_id, zodu_id, m.module_id]);
 
       await client.query(
         `INSERT INTO tbl_access_control
-           (user_id, role_id, zodu_id, module_id,
+           (role_id, zodu_id, module_id,
             can_read, can_create, can_edit, can_delete)
          VALUES ${placeholders}`,
         params

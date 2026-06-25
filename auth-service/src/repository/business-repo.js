@@ -169,7 +169,7 @@ exports.getCompany = async (zodu_id) => {
      WHERE b.zodu_id = $1`,
     [zodu_id]
   );
-  console.log("Company query result:", r);
+  // console.log("Company query result:", r);
   return r.rows[0] || null;
 };
 

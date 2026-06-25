@@ -53,7 +53,7 @@ services:
       DB_PORT: 5432
       DB_USERNAME: zoduprod
       DB_PASSWORD: zodu@2025
-      DB_NAME: employee_service
+      DB_NAME: employee-service
       MINIO_HOST: 72.60.206.59
       MINIO_PORT: 9000
       MINIO_ACCESSKEY: zoduminio
