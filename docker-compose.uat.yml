@@ -32,7 +32,7 @@ services:
       DB_PORT: 5432
       DB_USERNAME: zodudb
       DB_PASSWORD: zodu@2025
-      DB_Name: retail_restaurant_service
+      DB_NAME: retail_restaurant_service
       MINIO_HOST: 72.60.206.59
       MINIO_PORT: 9000
       MINIO_ACCESSKEY: zoduminio
@@ -74,7 +74,7 @@ services:
       DB_PORT: 5432
       DB_USERNAME: zodudb
       DB_PASSWORD: zodu@2025
-      DB_Name: restaurant-service
+      DB_NAME: restaurant-service
       MINIO_HOST: 72.60.206.59
       MINIO_PORT: 9000
       MINIO_ACCESSKEY: zoduminio
@@ -98,6 +98,26 @@ services:
       DB_PASSWORD: zodu@2025
       DB_NAME: payroll-service
 
+  checklist-service:
+    image: vicky0015/zodu-backend-checklist-service:uat
+    container_name: uat-checklist-service-latest
+    restart: always
+    expose:
+      - "4005"
+    environment:
+      NODE_ENV: production
+      PORT: 4005
+      DB_HOSTNAME: 72.60.206.59
+      DB_PORT: 5432
+      DB_USERNAME: zodudb
+      DB_PASSWORD: zodu@2025
+      DB_NAME: checklist-service
+      MINIO_HOST: 72.60.206.59
+      MINIO_PORT: 9000
+      MINIO_ACCESSKEY: zoduminio
+      MINIO_SECRETKEY: zodu@2025
+      MINIO_BUCKET_NAME: zodu
+
   # API Gateway
   apigateway:
     image: vicky0015/zodu-backend-apigateway:uat
@@ -112,12 +132,14 @@ services:
       EMPLOYEE_SERVICE_URL: http://employee-service:4002
       RESTAURANT_SERVICE_URL: http://restaurant-service:4003
       PAYROLL_SERVICE_URL: http://payroll-service:4004
+      CHECKLIST_SERVICE_URL: http://checklist-service:4005
     depends_on:
       - auth-service
       - retail-service
       - employee-service
       - restaurant-service
       - payroll-service
+      - checklist-service
 
 
 

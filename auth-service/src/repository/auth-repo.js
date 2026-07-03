@@ -12,22 +12,26 @@ async function findEmailExist({ email }) {
     `SELECT u.user_id, u.email, u.phone, u.password_hash, u.user_type, u.is_active, u.is_deleted,
             uc.zodu_id, uc.is_primary
      FROM tbl_users u
-     JOIN tbl_user_companies uc ON uc.user_id = u.user_id AND uc.is_primary = true
+     JOIN tbl_user_companies uc ON uc.user_id = u.user_id 
      WHERE u.email = $1`,
     [email]
   );
 }
+
+// AND uc.is_primary = true
 
 async function findPhnExist({ phone_number }) {
   return conn.query(
     `SELECT u.user_id, u.email, u.phone, u.password_hash, u.user_type, u.is_active, u.is_deleted,
             uc.zodu_id, uc.is_primary
      FROM tbl_users u
-     JOIN tbl_user_companies uc ON uc.user_id = u.user_id AND uc.is_primary = true
+     JOIN tbl_user_companies uc ON uc.user_id = u.user_id 
      WHERE u.phone = $1`,
     [phone_number]
   );
 }
+// AND uc.is_primary = true
+
 
 async function AccountCreationQuery({ zodu_id, phone_number, email, password_hash }) {
   const client = await conn.connect();

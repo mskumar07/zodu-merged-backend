@@ -10,7 +10,8 @@
     "start:employee": "npm start --prefix employee-service",
     "start:retail": "npm start --prefix retail-service",
     "start:payroll": "npm start --prefix payroll-service",
-    "start": "concurrently \"npm run start:auth\" \"npm run start:restaurant\" \"npm run start:gateway\" \"npm run start:employee\" \"npm run start:retail\" \"npm run start:payroll\""
+    "start:checklist": "npm start --prefix checklist-service",
+    "start": "concurrently \"npm run start:auth\" \"npm run start:restaurant\" \"npm run start:gateway\" \"npm run start:employee\" \"npm run start:retail\" \"npm run start:payroll\" \"npm run start:checklist\""
   },
   "keywords": [],
   "author": "",

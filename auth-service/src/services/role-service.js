@@ -125,7 +125,7 @@ exports.getModules = async () => {
 
 exports.createEmployeeUser = async ({ email, phone, zodu_id, branch_id, role_id, access_level, reporting_manager_id, password }) => {
   const user_id = await withTransaction(async (client) => {
-    const emailExists = await repo.checkEmailExists(client, email);
+    const emailExists = email ? await repo.checkEmailExists(client, email) : false;
     if (emailExists) throw new Error('Email already registered');
 
     const phoneExists = await repo.checkPhoneExists(client, phone);

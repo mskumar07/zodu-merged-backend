@@ -126,17 +126,19 @@ exports.updateEmployee = async (employee_id, data, updated_by) => {
     if (!current) throw new Error('Employee not found');
 
     // Check email + phone duplicate in tbl_users (auth-service) excluding current user
-    if (data.email || data.phone) {
+    const emailToCheck = data.email || null;
+    const phoneToCheck = data.phone || null;
+    if (emailToCheck || phoneToCheck) {
       const { data: dupCheck } = await axios.post(
         `${AUTH_SERVICE_URL}/internal/employee/check-duplicate`,
-        { email: data.email, phone: data.phone, exclude_user_id: current.user_id }
+        { email: emailToCheck, phone: phoneToCheck, exclude_user_id: current.user_id }
       );
       if (dupCheck.email_taken) throw new Error('Email already used by another employee');
       if (dupCheck.phone_taken) throw new Error('Phone already used by another employee');
     }
 
     // Sync email, phone, password to tbl_users in auth-service (blocking)
-    if (data.email || data.phone || data.password) {
+    if (emailToCheck || phoneToCheck || data.password) {
       try {
         await axios.put(
           `${AUTH_SERVICE_URL}/internal/employee/${current.user_id}/update-user`,

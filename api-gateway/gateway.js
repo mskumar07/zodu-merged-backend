@@ -15,6 +15,7 @@ const AUTH_SERVICE_URL       = process.env.AUTH_SERVICE_URL       || 'http://aut
 const RETAIL_SERVICE_URL     = process.env.RETAIL_SERVICE_URL     || 'http://retail-service:4001';
 const EMPLOYEE_SERVICE_URL   = process.env.EMPLOYEE_SERVICE_URL   || 'http://employee-service:4002';
 const RESTAURANT_SERVICE_URL = process.env.RESTAURANT_SERVICE_URL || 'http://restaurant-service:4003';
+const CHECKLIST_SERVICE_URL = process.env.CHECKLIST_SERVICE_URL || 'http://checklist-service:3006';
 
 const proxyError = (serviceName) => (err, req, res) => {
   console.error(`[${serviceName}] proxy error:`, err.message);
@@ -31,6 +32,12 @@ app.use('/retail', createProxyMiddleware({
   target: RETAIL_SERVICE_URL,
   changeOrigin: true,
   on: { error: proxyError('retail-service') }
+}));
+
+app.use('/checklist', createProxyMiddleware({
+  target: CHECKLIST_SERVICE_URL,
+  changeOrigin: true,
+  on: { error: proxyError('checklist-service') }
 }));
 
 app.use('/employee', createProxyMiddleware({

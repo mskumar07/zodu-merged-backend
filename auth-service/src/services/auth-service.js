@@ -10,7 +10,7 @@ const repository = require('../repository/auth-repo');
 const businessRepo = require('../repository/business-repo');
 const axios = require('axios');
 const jwt = require('jsonwebtoken');
-const { APP_SECRET, RESTAURANT_SERVICE_URL } = require('../config');
+const { APP_SECRET, RESTAURANT_SERVICE_URL, EMPLOYEE_SERVICE_URL } = require('../config');
 
 const REFRESH_SECRET  = APP_SECRET;
 const REFRESH_EXPIRY_DAYS = 7;
@@ -99,6 +99,15 @@ console.log(same_for_branch)
     }
   }
 
+  // Seed Admin employee in employee-service (non-blocking — failure must not break signup)
+  axios.post(`${EMPLOYEE_SERVICE_URL}/internal/employee/create-admin`, {
+    zodu_id,
+    branch_id: 'B1',
+    user_id:   createdData.user_id,
+    phone:     phone_number || null,
+    email:     email        || null,
+  }).catch(err => console.error('[employee-service] create-admin failed (non-fatal):', err.message));
+
   return FormateData({ insertData: { user_id: createdData.user_id } });
 }
 
@@ -162,6 +171,19 @@ async function AccountLogin(userInputs, meta = {}) {
   // 5. Fetch all companies the user belongs to
   const userCompanies = await repository.getUserCompanies({ user_id: user.user_id });
 
+  // 5a. Fetch employee_id + employee_code from employee-service (non-fatal)
+  let employeeInfo = null;
+  try {
+    const primaryCompany = userCompanies.find(c => c.is_primary) || userCompanies[0];
+    if (primaryCompany) {
+      const { data: empRes } = await axios.get(
+        `${EMPLOYEE_SERVICE_URL}/internal/employee/by-user`,
+        { params: { user_id: user.user_id, zodu_id: primaryCompany.zodu_id, branch_id: 'B1' } }
+      );
+      if (empRes.success) employeeInfo = empRes.data;
+    }
+  } catch (_) {}
+
   // 6. For each company, fetch company details + branches from own DB
   const companies = await Promise.all(
     userCompanies.map(async (uc) => {
@@ -197,11 +219,14 @@ async function AccountLogin(userInputs, meta = {}) {
     access_token:  accessToken,
     refresh_token: refreshToken,
     user: {
-      user_id:   user.user_id,
-      zodu_id:   user.zodu_id,
-      email:     user.email,
-      phone:     user.phone,
-      user_type: user.user_type,
+      user_id:       user.user_id,
+      zodu_id:       user.zodu_id,
+      email:         user.email,
+      phone:         user.phone,
+      user_type:     user.user_type,
+      employee_id:   employeeInfo?.employee_id   ?? null,
+      employee_code: employeeInfo?.employee_code ?? null,
+      employee_name: employeeInfo?.employee_name ?? null,
     },
     companies,
   });

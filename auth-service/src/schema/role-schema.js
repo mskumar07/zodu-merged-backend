@@ -25,7 +25,7 @@ exports.updateRole = Joi.object({
 }).min(3); // zodu_id + branch_id + at least one field
 
 exports.createEmployeeUser = Joi.object({
-  email:                Joi.string().email().required(),
+  email:                Joi.string().email().allow(null, ''),
   phone:                Joi.string().pattern(/^[0-9]{10,15}$/).required(),
   zodu_id:              Joi.string().required(),
   branch_id:            Joi.string().required(),
