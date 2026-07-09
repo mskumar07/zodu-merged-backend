@@ -12,9 +12,10 @@ app.use(cors());
 app.use(httpLogger);
 app.set('router options', { strict: false });
 
-app.use('/api/employees', require('./api/employee-controller'));
-app.use('/file',          require('./api/file-controller'));
-app.use('/internal',      require('./api/internal-controller'));
+app.use('/api/employees',   require('./api/employee-controller'));
+app.use('/api/attendance',  require('./api/attendance-controller'));
+app.use('/file',            require('./api/file-controller'));
+app.use('/internal',        require('./api/internal-controller'));
 
 app.use(HandleErrorWithLogger);
 
