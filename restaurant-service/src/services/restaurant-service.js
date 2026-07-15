@@ -1245,9 +1245,9 @@ async function get_menuItem_data(branch_id, page, limit, search) {
 }
 
 
-async function get_pos_data(branch_id, zodu_id) {
+async function get_pos_data(branch_id, zodu_id, search) {
   try {
-    const posData = await repository.get_pos_data(branch_id, zodu_id);
+    const posData = await repository.get_pos_data(branch_id, zodu_id, search);
     return {
       success: true,
       data: posData.rows,

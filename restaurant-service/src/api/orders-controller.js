@@ -77,6 +77,7 @@ router.get("/api/report/orders", async (req, res) => {
         datewise_summary: result.datewise_summary,
         totalAmount: result.totalAmount,
         totalItems: result.totalItems,
+        totalOrders: result.totalOrders,
         pagination: result.pagination,
       };
     } else if (filtered_type === "month_year_wise") {
@@ -85,6 +86,7 @@ router.get("/api/report/orders", async (req, res) => {
         monthly_summary: result.monthly_summary,
         totalAmount: result.totalAmount,
         totalItems: result.totalItems,
+        totalOrders: result.totalOrders,
       };
     } else {
       response = {
@@ -92,6 +94,7 @@ router.get("/api/report/orders", async (req, res) => {
         all_orders: result.data,
         totalAmount: result.totalAmount,
         totalItems: result.totalItems,
+        totalOrders: result.totalOrders,
         pagination: result.pagination,
       };
     }
@@ -105,8 +108,8 @@ router.get("/api/report/orders", async (req, res) => {
 
 router.get("/get/report/order-category", async (req, res) => {
   try {
-    const { zodu_id, branch_id, page = 1, limit = 10, search = "" } = req.query;
-    const data = await service.getReportCategory(zodu_id, branch_id, Number(page), Number(limit), search);
+    const { zodu_id, branch_id, page = 1, limit = 10, search = "", from_date = "", to_date = "" } = req.query;
+    const data = await service.getReportCategory(zodu_id, branch_id, Number(page), Number(limit), search, from_date, to_date);
     if (!data.success) return res.status(400).json({ message: data.message });
     return res.status(200).json({
       message: "Data Get Successfully",

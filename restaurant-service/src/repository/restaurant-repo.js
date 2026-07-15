@@ -2182,7 +2182,15 @@ exports.deleteGST = async (id) => {
 };
 
 
-exports.get_pos_data = async (branch_id,zodu_id) => {
+exports.get_pos_data = async (branch_id, zodu_id, search) => {
+  const params = [branch_id, zodu_id];
+  let searchClause = "";
+
+  if (search) {
+    params.push(`%${search.toLowerCase()}%`);
+    searchClause = `AND LOWER(m.menu_name) LIKE $${params.length}`;
+  }
+
   return await conn.query(
     `
     SELECT
@@ -2216,15 +2224,16 @@ exports.get_pos_data = async (branch_id,zodu_id) => {
         ORDER BY m.menu_name
       ) AS items
     FROM tbl_category c
-    JOIN tbl_menu_items m 
-      ON c.id = m.menu_category_id 
+    JOIN tbl_menu_items m
+      ON c.id = m.menu_category_id
      AND m.active = true
      AND m.branch_id = $1 and m.zodu_id = $2
+     ${searchClause}
 
-    LEFT JOIN tbl_qr_code q 
+    LEFT JOIN tbl_qr_code q
       ON q.id = m.qr_code_id
 
-    LEFT JOIN tbl_gst g 
+    LEFT JOIN tbl_gst g
       ON g.id = m.gst_tax   -- correct column
 
     LEFT JOIN tbl_units u
@@ -2233,7 +2242,7 @@ exports.get_pos_data = async (branch_id,zodu_id) => {
     GROUP BY c.id, c.name
     ORDER BY c.name ASC;
     `,
-    [branch_id, zodu_id]
+    params
   );
 };
 

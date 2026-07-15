@@ -1,8 +1,8 @@
 const repository = require("../repository/orders-repo");
 
-async function getReportCategory(zodu_id, branch_id, page = 1, limit = 10, search = "") {
+async function getReportCategory(zodu_id, branch_id, page = 1, limit = 10, search = "", from_date = "", to_date = "") {
   try {
-    const reportData = await repository.get_category_item_wise_report(zodu_id, branch_id, page, limit, search);
+    const reportData = await repository.get_category_item_wise_report(zodu_id, branch_id, page, limit, search, from_date, to_date);
     if (!reportData) return { success: false, message: "Category Report Data Not Found" };
     return {
       success: true,
@@ -35,6 +35,7 @@ async function getReportServices(zodu_id, branch_id, page, limit, filtered_type,
       monthly_summary: ReportData.monthly_summary || [],
       totalAmount: Number(ReportData.totals?.all_total_amount || 0),
       totalItems: Number(ReportData.totals?.all_items_total || 0),
+      totalOrders: Number(ReportData.totals?.all_orders_total || 0),
       pagination: { page, limit, totalRecords: totalCount, totalPages },
     };
   } catch (err) {

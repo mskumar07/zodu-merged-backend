@@ -1509,7 +1509,8 @@ router.get("/get/vendor/:branch_id", async (req, res) => {
 router.get("/get/pos_data/:branch_id/:zodu_id", async (req, res) => {
   try {
     const { branch_id, zodu_id } = req.params;
-    const getPosData = await service.get_pos_data(branch_id, zodu_id);
+    const { search } = req.query;
+    const getPosData = await service.get_pos_data(branch_id, zodu_id, search);
     if (!getPosData.success) return res.status(400).json({ message: getPosData.message });
     return res.status(201).json({ message: "Data Get Successfully", Data: getPosData.data });
   } catch (error) {

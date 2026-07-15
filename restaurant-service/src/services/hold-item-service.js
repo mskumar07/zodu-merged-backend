@@ -24,9 +24,7 @@ async function addHoldMenu(data) {
     );
 
     // 2️⃣ Insert all hold items
-    for (const item of items) {
-      await repository.insertHoldItem(hold_id, zodu_id, branch_id, item);
-    }
+    await repository.bulkInsertHoldItems(hold_id, zodu_id, branch_id, items);
 
 
     return {

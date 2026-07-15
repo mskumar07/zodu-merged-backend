@@ -245,7 +245,7 @@ exports.get_all_report_data = async (zodu_id, branch_id, page = 1, limit = 10, f
             COALESCE(SUM(SUM(total_amt)) OVER(),0) AS all_total_amount,
             COALESCE(SUM(SUM(no_of_items)) OVER(),0) AS all_items_total
            FROM tbl_orders WHERE zodu_id = $1 AND branch_id = $2 AND final_payment = true
-            AND EXTRACT(YEAR FROM created_at)::int = $3
+            AND EXTRACT(YEAR FROM created_at)::int = $3 AND cancelled_order = false
            GROUP BY month_number ORDER BY month_number`,
           [zodu_id, branch_id, parsedYear]
         );
@@ -254,7 +254,7 @@ exports.get_all_report_data = async (zodu_id, branch_id, page = 1, limit = 10, f
         rows.forEach(r => { monthMap[r.month_number] = r; yearTotalOrders += Number(r.total_orders); yearTotalAmount += Number(r.total_amount); });
         return {
           rows: [],
-          totals: rows.length ? { total_count: rows[0].total_count, all_total_amount: rows[0].all_total_amount, all_items_total: rows[0].all_items_total } : { total_count: 0, all_total_amount: 0, all_items_total: 0 },
+          totals: { total_count: yearTotalOrders, all_total_amount: rows.length ? rows[0].all_total_amount : 0, all_items_total: rows.length ? rows[0].all_items_total : 0, all_orders_total: yearTotalOrders },
           monthly_summary: [{ year: parsedYear, total_orders: yearTotalOrders, total_amount: yearTotalAmount, months: monthNames.map((m, i) => ({ month_number: i + 1, month: m, total_orders: Number(monthMap[i + 1]?.total_orders || 0), total_amount: Number(monthMap[i + 1]?.total_amount || 0) })) }]
         };
       }
@@ -265,20 +265,22 @@ exports.get_all_report_data = async (zodu_id, branch_id, page = 1, limit = 10, f
           SUM(COUNT(*)) OVER() AS total_count,
           COALESCE(SUM(SUM(total_amt)) OVER(),0) AS all_total_amount,
           COALESCE(SUM(SUM(no_of_items)) OVER(),0) AS all_items_total
-         FROM tbl_orders WHERE zodu_id = $1 AND branch_id = $2 AND final_payment = true
+         FROM tbl_orders WHERE zodu_id = $1 AND branch_id = $2 AND final_payment = true AND cancelled_order = false
          GROUP BY year, month_number ORDER BY year, month_number`,
         [zodu_id, branch_id]
       );
       const yearMap = {};
+      let allYearsTotalOrders = 0;
       rows.forEach(r => {
         if (!yearMap[r.year]) yearMap[r.year] = { total_orders: 0, total_amount: 0, months: {} };
         yearMap[r.year].months[r.month_number] = r;
         yearMap[r.year].total_orders += Number(r.total_orders);
         yearMap[r.year].total_amount += Number(r.total_amount);
+        allYearsTotalOrders += Number(r.total_orders);
       });
       return {
         rows: [],
-        totals: rows.length ? { total_count: rows[0].total_count, all_total_amount: rows[0].all_total_amount, all_items_total: rows[0].all_items_total } : { total_count: 0, all_total_amount: 0, all_items_total: 0 },
+        totals: { total_count: allYearsTotalOrders, all_total_amount: rows.length ? rows[0].all_total_amount : 0, all_items_total: rows.length ? rows[0].all_items_total : 0, all_orders_total: allYearsTotalOrders },
         monthly_summary: Object.keys(yearMap).sort((a, b) => a - b).map(y => ({ year: Number(y), total_orders: yearMap[y].total_orders, total_amount: yearMap[y].total_amount, months: monthNames.map((m, i) => ({ month_number: i + 1, month: m, total_orders: Number(yearMap[y].months[i + 1]?.total_orders || 0), total_amount: Number(yearMap[y].months[i + 1]?.total_amount || 0) })) }))
       };
     }
@@ -302,7 +304,7 @@ exports.get_all_report_data = async (zodu_id, branch_id, page = 1, limit = 10, f
     const cteQuery = `
       WITH filtered AS (
         SELECT public_order_no, api_order_id, created_at, order_type, no_of_items, total_tax, total_amt, payment_type
-        FROM tbl_orders WHERE zodu_id = $1 AND branch_id = $2 AND final_payment = true ${whereSQL}
+        FROM tbl_orders WHERE zodu_id = $1 AND branch_id = $2 AND cancelled_order = false AND final_payment = true ${whereSQL}
       ),
       totals AS (SELECT COUNT(*) AS total_count, SUM(total_amt) AS all_total_amount, SUM(no_of_items) AS all_items_total FROM filtered)
       SELECT TO_CHAR(f.created_at,'DD Mon YYYY, HH12:MI AM (Dy)') AS created_at,
@@ -317,10 +319,10 @@ exports.get_all_report_data = async (zodu_id, branch_id, page = 1, limit = 10, f
     if (isDateWise) {
       const datewiseQuery = hasDateFilter
         ? `SELECT to_char(created_at::date,'DD-Mon-YYYY') AS created_at, COUNT(*) AS total_orders, SUM(total_amt) AS all_total_amount
-           FROM tbl_orders WHERE zodu_id = $1 AND branch_id = $2 AND final_payment = true AND created_at::date BETWEEN $3 AND $4
+           FROM tbl_orders WHERE zodu_id = $1 AND branch_id = $2 AND cancelled_order = false AND final_payment = true AND created_at::date BETWEEN $3 AND $4
            GROUP BY created_at::date ORDER BY created_at::date DESC LIMIT $5 OFFSET $6`
         : `SELECT to_char(created_at::date,'DD-Mon-YYYY') AS created_at, COUNT(*) AS total_orders, SUM(total_amt) AS all_total_amount
-           FROM tbl_orders WHERE zodu_id = $1 AND branch_id = $2 AND final_payment = true
+           FROM tbl_orders WHERE zodu_id = $1 AND branch_id = $2 AND cancelled_order = false AND final_payment = true
            GROUP BY created_at::date ORDER BY created_at::date DESC LIMIT $3 OFFSET $4`;
       queries.push(hasDateFilter
         ? conn.query(datewiseQuery, [zodu_id, branch_id, start_date, end_date, limit, offset])
@@ -331,8 +333,8 @@ exports.get_all_report_data = async (zodu_id, branch_id, page = 1, limit = 10, f
     const results = await Promise.all(queries);
     const listRows = results[0].rows;
     const totals = listRows.length
-      ? { total_count: listRows[0].total_count, all_total_amount: listRows[0].all_total_amount, all_items_total: listRows[0].all_items_total }
-      : { total_count: 0, all_total_amount: 0, all_items_total: 0 };
+      ? { total_count: listRows[0].total_count, all_total_amount: listRows[0].all_total_amount, all_items_total: listRows[0].all_items_total, all_orders_total: Number(listRows[0].total_count) }
+      : { total_count: 0, all_total_amount: 0, all_items_total: 0, all_orders_total: 0 };
     const rows = listRows.map(({ total_count, all_total_amount, all_items_total, ...r }) => r);
 
     return { rows, totals, datewise_summary: isDateWise ? results[1]?.rows || [] : [] };
@@ -341,34 +343,66 @@ exports.get_all_report_data = async (zodu_id, branch_id, page = 1, limit = 10, f
   }
 };
 
-exports.get_category_item_wise_report = async (zodu_id, branch_id, page = 1, limit = 10, search = "") => {
+exports.get_category_item_wise_report = async (zodu_id, branch_id, page = 1, limit = 10, search = "", from_date = "", to_date = "") => {
   try {
     const offset = (page - 1) * limit;
     const params = [zodu_id, branch_id];
     let searchFilter = "";
+    let dateFilter = "";
+
+    const hasDateFilter = from_date && to_date && from_date !== "null" && to_date !== "null";
+    if (hasDateFilter) {
+      params.push(from_date, to_date);
+      dateFilter = `AND o.created_at::date BETWEEN $${params.length - 1} AND $${params.length}`;
+    }
 
     if (search && search.trim() !== "") {
       params.push(`%${search}%`);
-      searchFilter = `AND (c.name ILIKE $3 OR oi.item_name ILIKE $3)`;
+      searchFilter = `AND (c.name ILIKE $${params.length} OR oi.item_name ILIKE $${params.length})`;
     }
 
     const countQuery = `
-      SELECT COUNT(DISTINCT c.id)::int AS total_count
-      FROM tbl_ordered_items oi
-      JOIN tbl_menu_items mi ON mi.menu_id = oi.item_id AND mi.zodu_id = oi.zodu_id AND mi.branch_id = oi.branch_id
-      JOIN tbl_category c ON c.id = mi.menu_category_id
-      WHERE oi.zodu_id = $1 AND oi.branch_id = $2 ${searchFilter}
+      WITH filtered_orders AS (
+        SELECT DISTINCT api_order_id FROM tbl_orders o
+        WHERE o.zodu_id = $1 AND o.branch_id = $2 AND o.cancelled_order = false AND o.final_payment = true ${dateFilter}
+      ),
+      item_totals AS (
+        SELECT oi.item_id, oi.item_name,
+          SUM(oi.qty)::numeric(10,2) AS total_qty,
+          SUM(oi.total_amount + oi.tax_amount)::numeric(10,2) AS total_amount
+        FROM tbl_ordered_items oi
+        JOIN filtered_orders fo ON fo.api_order_id = oi.api_order_id
+        WHERE oi.zodu_id = $1 AND oi.branch_id = $2
+        GROUP BY oi.item_id, oi.item_name
+      )
+      SELECT COUNT(DISTINCT COALESCE(c.id, -1))::int AS total_count
+      FROM item_totals it
+      LEFT JOIN tbl_menu_items mi ON mi.menu_id = it.item_id AND mi.zodu_id = $1 AND mi.branch_id = $2
+      LEFT JOIN tbl_category c ON c.id = mi.menu_category_id
+      WHERE 1=1 ${searchFilter}
     `;
     const dataQuery = `
-      WITH aggregated AS (
-        SELECT c.id AS category_id, c.name AS category_name, mi.menu_id AS item_id, oi.item_name,
-          SUM(oi.qty)::numeric(10,2) AS total_qty, SUM(oi.total_amount)::numeric(10,2) AS total_amount,
-          ROUND(SUM(oi.total_amount) / NULLIF(SUM(oi.qty), 0), 2)   AS price
+      WITH filtered_orders AS (
+        SELECT DISTINCT api_order_id FROM tbl_orders o
+        WHERE o.zodu_id = $1 AND o.branch_id = $2 AND o.cancelled_order = false AND o.final_payment = true ${dateFilter}
+      ),
+      item_totals AS (
+        SELECT oi.item_id, oi.item_name,
+          SUM(oi.qty)::numeric(10,2) AS total_qty,
+          SUM(oi.total_amount + oi.tax_amount)::numeric(10,2) AS total_amount
         FROM tbl_ordered_items oi
-        JOIN tbl_menu_items mi ON mi.menu_id = oi.item_id AND mi.zodu_id = oi.zodu_id AND mi.branch_id = oi.branch_id
-        JOIN tbl_category c ON c.id = mi.menu_category_id
-        WHERE oi.zodu_id = $1 AND oi.branch_id = $2 ${searchFilter}
-        GROUP BY c.id, c.name, mi.menu_id, oi.item_name
+        JOIN filtered_orders fo ON fo.api_order_id = oi.api_order_id
+        WHERE oi.zodu_id = $1 AND oi.branch_id = $2
+        GROUP BY oi.item_id, oi.item_name
+      ),
+      aggregated AS (
+        SELECT COALESCE(c.id, -1) AS category_id, COALESCE(c.name, 'Uncategorized') AS category_name,
+          it.item_id, it.item_name, it.total_qty, it.total_amount,
+          ROUND(it.total_amount / NULLIF(it.total_qty, 0), 2) AS price
+        FROM item_totals it
+        LEFT JOIN tbl_menu_items mi ON mi.menu_id = it.item_id AND mi.zodu_id = $1 AND mi.branch_id = $2
+        LEFT JOIN tbl_category c ON c.id = mi.menu_category_id
+        WHERE 1=1 ${searchFilter}
       ),
       paged_categories AS (
         SELECT DISTINCT category_id, category_name FROM aggregated ORDER BY category_name
@@ -378,13 +412,16 @@ exports.get_category_item_wise_report = async (zodu_id, branch_id, page = 1, lim
       ORDER BY a.category_name ASC, a.item_name ASC
     `;
     const summaryQuery = `
-      SELECT COUNT(DISTINCT oi.api_order_id)::int AS total_orders,
+      WITH filtered_orders AS (
+        SELECT DISTINCT api_order_id FROM tbl_orders o
+        WHERE o.zodu_id = $1 AND o.branch_id = $2 AND o.cancelled_order = false AND o.final_payment = true ${dateFilter}
+      )
+      SELECT COUNT(DISTINCT fo.api_order_id)::int AS total_orders,
         COALESCE(SUM(oi.qty),0)::numeric AS total_qty,
-        COALESCE(SUM(oi.total_amount),0)::numeric AS total_amount
-      FROM tbl_ordered_items oi
-      JOIN tbl_menu_items mi ON mi.menu_id = oi.item_id AND mi.zodu_id = oi.zodu_id AND mi.branch_id = oi.branch_id
-      JOIN tbl_category c ON c.id = mi.menu_category_id
-      WHERE oi.zodu_id = $1 AND oi.branch_id = $2 ${searchFilter}
+        COALESCE(SUM(oi.total_amount + oi.tax_amount),0)::numeric AS total_amount
+      FROM filtered_orders fo
+      JOIN tbl_ordered_items oi ON oi.api_order_id = fo.api_order_id
+      WHERE oi.zodu_id = $1 AND oi.branch_id = $2
     `;
 
     const [countRes, dataRes, summaryRes] = await Promise.all([
@@ -405,7 +442,11 @@ exports.get_category_item_wise_report = async (zodu_id, branch_id, page = 1, lim
 
     const totalRecords = Number(countRes.rows[0].total_count);
     return {
-      overall_summary: { total_orders: Number(summaryRes.rows[0].total_orders), total_qty: Number(summaryRes.rows[0].total_qty), total_amount: Number(summaryRes.rows[0].total_amount) },
+      overall_summary: {
+        total_orders: Number(summaryRes.rows[0].total_orders),
+        total_qty: Number(summaryRes.rows[0].total_qty),
+        total_amount: Number(summaryRes.rows[0].total_amount)
+      },
       rows: Object.values(categoryMap),
       pagination: { page, limit, totalRecords, totalPages: Math.ceil(totalRecords / limit) }
     };

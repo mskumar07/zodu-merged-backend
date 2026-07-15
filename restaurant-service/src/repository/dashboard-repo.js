@@ -180,7 +180,7 @@ async function getDashboardOrders(zodu_id, branch_id, { page, limit, sortOrder }
       TO_CHAR(o.created_at, 'DD Mon YYYY, HH12:MI AM (Dy)') AS formatted_date
     FROM tbl_orders o
     WHERE o.zodu_id = $1 AND o.branch_id = $2
-      AND o.final_payment = true
+      AND o.final_payment = true AND cancelled_order = false
     ORDER BY o.created_at ${order}
     LIMIT $3 OFFSET $4
   `;
@@ -189,7 +189,7 @@ async function getDashboardOrders(zodu_id, branch_id, { page, limit, sortOrder }
     SELECT COUNT(*) AS total
     FROM tbl_orders o
     WHERE o.zodu_id = $1 AND o.branch_id = $2
-      AND o.final_payment = true
+      AND o.final_payment = true AND cancelled_order = false
   `;
 
   const [dataRes, countRes] = await Promise.all([
