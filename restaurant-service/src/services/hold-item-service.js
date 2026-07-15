@@ -44,6 +44,51 @@ async function addHoldMenu(data) {
   }
 }
 
+async function updateHoldMenu(data) {
+  try {
+    const {
+      hold_id,
+      zodu_id,
+      branch_id,
+      orderType,
+      table_no,
+      customerName,
+      customerPhone,
+      items
+    } = data;
+
+    await repository.updateHold(
+      hold_id,
+      orderType,
+      table_no,
+      customerName,
+      customerPhone
+    );
+
+    const itemsToUpdate = items.filter((item) => item.id);
+    const itemsToInsert = items.filter((item) => !item.id);
+    const keepIds = itemsToUpdate.map((item) => item.id);
+
+    await Promise.all([
+      repository.deleteHoldItemsExcept(hold_id, keepIds),
+      repository.bulkUpdateHoldItems(hold_id, itemsToUpdate),
+      repository.bulkInsertHoldItems(hold_id, zodu_id, branch_id, itemsToInsert),
+    ]);
+
+    return {
+      success: true,
+      message: "Hold updated successfully",
+      hold_id,
+    };
+  } catch (error) {
+    console.error("❌ Hold Update Failed:", error);
+    return {
+      success: false,
+      message: error.message,
+    };
+  }
+}
+
 async function deleteHoldMenu(hold_id) {
 
   try {
@@ -78,4 +123,4 @@ async function getHoldData(branch_id, zodu_id) {
   }
 }
 
-module.exports = { addHoldMenu, deleteHoldMenu, getHoldData };
+module.exports = { addHoldMenu, updateHoldMenu, deleteHoldMenu, getHoldData };

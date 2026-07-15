@@ -216,7 +216,7 @@ sale_time: Joi.string()
 
   discount_gst_mode: Joi.string().valid("before", "after").default("after"),
 
-  roundoff: Joi.number().precision(2).optional().allow(null),
+  round_off: Joi.number().precision(2).optional().allow(null),
 
   due_date: Joi.date().iso().optional().allow(null, ""),
 
@@ -690,6 +690,12 @@ const update_customer = Joi.object({
   pincode:      Joi.string().pattern(/^[0-9]{6}$/).optional().allow(null, ""),
 });
 
+const check_category_name = Joi.object({
+  zodu_id:       Joi.string().required(),
+  branch_id:     Joi.string().required(),
+  category_name: Joi.string().trim().min(1).max(255).required(),
+});
+
 const createSchema = Joi.object({
   zodu_id:        Joi.string().required(),
   branch_id:      Joi.string().required(),
@@ -746,6 +752,7 @@ const ledgerSchema = Joi.object({
 }).options({ allowUnknown: true });
 
 module.exports = {
+  check_category_name,
   company_create,
   branch_create,
   update_branch,

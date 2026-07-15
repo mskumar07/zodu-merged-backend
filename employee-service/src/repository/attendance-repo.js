@@ -27,6 +27,32 @@ exports.upsertAttendance = async (client, d) => {
   return rows[0];
 };
 
+// ── EMPLOYEES FOR MARK ATTENDANCE MODAL  (per zodu_id/branch_id/date) ─────────
+// One row per active employee, left-joined to that date's attendance row (if any)
+// so the modal can prefill check-in/check-out/status when re-opened for a date
+// that was already marked.
+
+exports.findEmployeesForMarking = async ({ zodu_id, branch_id, attendance_date, limit, offset }) => {
+  const { rows } = await db.query(
+    `SELECT
+       e.employee_id,
+       e.employee_code,
+       e.name AS employee_name,
+       TO_CHAR(a.check_in_time  AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI:SS') AS check_in_time,
+       TO_CHAR(a.check_out_time AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI:SS') AS check_out_time,
+       a.status,
+       COUNT(*) OVER()::int AS total
+     FROM tbl_employees e
+     LEFT JOIN tbl_attendance a
+       ON a.employee_id = e.employee_id AND a.attendance_date = $3::date
+     WHERE e.zodu_id = $1 AND e.branch_id = $2 AND e.status = 'active'
+     ORDER BY e.name
+     LIMIT $4 OFFSET $5`,
+    [zodu_id, branch_id, attendance_date, limit, offset]
+  );
+  return rows;
+};
+
 // ── TEAM ATTENDANCE  (grid + summary in one query — "Team Attendance — July 2026") ──
 // Aggregates per-employee days into JSON server-side (jsonb_object_agg), so Postgres
 // returns one row per employee instead of one row per (employee, date). Cuts row

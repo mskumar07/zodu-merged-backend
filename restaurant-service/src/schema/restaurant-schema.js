@@ -585,6 +585,31 @@ const holdSchema = Joi.object({
     .required()
 });
 
+const holdUpdateSchema = Joi.object({
+  hold_id: Joi.string().max(100).required(),
+  zodu_id: Joi.string().max(100).required(),
+  branch_id: Joi.string().max(100).required(),
+  orderType: Joi.string().max(100).required(),
+  table_no: Joi.string().max(20).allow(null, ""),
+  customerName: Joi.string().max(150).allow(null, ""),
+  customerPhone: Joi.string().max(13).allow(null, ""),
+  items: Joi.array()
+    .items(
+      Joi.object({
+        id: Joi.number().integer().optional(),
+        item_name: Joi.string().max(100).required(),
+        item_id: Joi.string().max(100).required(),
+        item_unit: Joi.string().max(20).allow(null, ""),
+        qty: Joi.number().precision(2).min(0).required(),
+        price: Joi.number().precision(2).min(0).required(),
+        variant_name: Joi.string().max(100).allow(null, ""),
+        variant_id: Joi.string().max(100).allow(null, "")
+      })
+    )
+    .min(1)
+    .required()
+});
+
 
 const sales_history_query = Joi.object({
   zodu_id:         Joi.string().required(),
@@ -771,6 +796,7 @@ module.exports = {
   reportSchema,
   Inventory,
   holdSchema,
+  holdUpdateSchema,
   expense_item,
   edit_vendor_create,
   sales_history_query,

@@ -1277,7 +1277,10 @@ router.get("/get/category/:zodu_id/:branch_id", async (req, res) => {
       ? (Array.isArray(rawType) ? rawType : [rawType]).map(t => t.trim()).filter(Boolean)
       : [];
 
-    const getCategoryData = await service.getAllCategoryData(types, branch_id, zodu_id, page, limit);
+    // active is optional: only filter by it when the frontend explicitly passes it
+    const active = req.query.active === undefined ? undefined : req.query.active === 'true';
+
+    const getCategoryData = await service.getAllCategoryData(types, branch_id, zodu_id, page, limit, active);
     if (!getCategoryData.success) return res.status(400).json({ message: getCategoryData.message });
 
     return res.status(200).json({
@@ -1289,6 +1292,24 @@ router.get("/get/category/:zodu_id/:branch_id", async (req, res) => {
         limit,
       },
       Data: getCategoryData.data,
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.post("/check/category-name", async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(schema.check_category_name, req.body);
+    if (errors) return res.status(400).json({ errors });
+
+    const data = await service.checkCategoryNameExists(input.zodu_id, input.branch_id, input.category_name);
+    if (!data.success) return res.status(400).json({ message: data.message });
+
+    return res.status(200).json({
+      exists: data.exists,
+      message: data.exists ? "Category name already exists" : "Category name is available",
     });
   } catch (error) {
     console.error(error);

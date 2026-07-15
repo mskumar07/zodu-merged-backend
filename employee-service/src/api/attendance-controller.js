@@ -1,6 +1,8 @@
 const express = require('express');
 const router  = express.Router();
-const service = require('../services/attendance-service');
+const service  = require('../services/attendance-service');
+const RequestValidator = require('../utils/requestValidator');
+const schema  = require('../schema/attendance-schema');
 
 const currentMonthYear = () => {
   const now = new Date();
@@ -12,18 +14,26 @@ const currentMonthYear = () => {
 //         records: [{ employee_id, status, check_in_time, check_out_time, remarks }] }
 router.post('/', async (req, res) => {
   try {
-    const { zodu_id, branch_id, attendance_date, marked_by, marked_by_name, records } = req.body;
-    if (!zodu_id)         return res.status(400).json({ success: false, error: 'zodu_id is required' });
-    if (!branch_id)       return res.status(400).json({ success: false, error: 'branch_id is required' });
-    if (!attendance_date) return res.status(400).json({ success: false, error: 'attendance_date is required' });
-    if (!marked_by)       return res.status(400).json({ success: false, error: 'marked_by is required' });
-    if (!Array.isArray(records) || !records.length)
-      return res.status(400).json({ success: false, error: 'records must be a non-empty array' });
+    const { errors, input } = await RequestValidator(schema.attendance_mark_save, req.body);
+    if (errors) return res.status(400).json({ success: false, errors });
 
-    const result = await service.markAttendance({
-      zodu_id, branch_id, attendance_date, marked_by, marked_by_name, records,
-    });
+    const result = await service.markAttendance(input);
     return res.status(201).json(result);
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── EMPLOYEES FOR MARK ATTENDANCE MODAL  GET /api/attendance/mark?zodu_id=&branch_id=&attendance_date=&page=&limit= ─
+// Active employees for the branch, left-joined to that date's attendance row (if
+// already marked) so the modal can prefill check-in/check-out/status.
+router.get('/mark', async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(schema.attendance_mark_list, req.query);
+    if (errors) return res.status(400).json({ success: false, errors });
+
+    const result = await service.getEmployeesForMarking(input);
+    return res.status(200).json(result);
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -35,16 +45,14 @@ router.post('/', async (req, res) => {
 // month/year default to current.
 router.get('/team', async (req, res) => {
   try {
-    const { zodu_id, branch_id, employee_id } = req.query;
-    if (!zodu_id)     return res.status(400).json({ success: false, error: 'zodu_id is required' });
-    if (!branch_id)   return res.status(400).json({ success: false, error: 'branch_id is required' });
-    if (!employee_id) return res.status(400).json({ success: false, error: 'employee_id is required' });
+    const { errors, input } = await RequestValidator(schema.attendance_team, req.query);
+    if (errors) return res.status(400).json({ success: false, errors });
 
     const { month: defMonth, year: defYear } = currentMonthYear();
-    const month = parseInt(req.query.month, 10) || defMonth;
-    const year  = parseInt(req.query.year, 10)  || defYear;
+    const month = input.month || defMonth;
+    const year  = input.year  || defYear;
 
-    const result = await service.getTeamAttendance({ zodu_id, branch_id, employee_id, month, year });
+    const result = await service.getTeamAttendance({ ...input, month, year });
     return res.status(200).json(result);
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
@@ -55,16 +63,14 @@ router.get('/team', async (req, res) => {
 // "My Attendance" personal daily view + summary cards.
 router.get('/my', async (req, res) => {
   try {
-    const { zodu_id, branch_id, employee_id } = req.query;
-    if (!zodu_id)     return res.status(400).json({ success: false, error: 'zodu_id is required' });
-    if (!branch_id)   return res.status(400).json({ success: false, error: 'branch_id is required' });
-    if (!employee_id) return res.status(400).json({ success: false, error: 'employee_id is required' });
+    const { errors, input } = await RequestValidator(schema.attendance_my, req.query);
+    if (errors) return res.status(400).json({ success: false, errors });
 
     const { month: defMonth, year: defYear } = currentMonthYear();
-    const month = parseInt(req.query.month, 10) || defMonth;
-    const year  = parseInt(req.query.year, 10)  || defYear;
+    const month = input.month || defMonth;
+    const year  = input.year  || defYear;
 
-    const result = await service.getMyAttendance({ employee_id, zodu_id, branch_id, month, year });
+    const result = await service.getMyAttendance({ ...input, month, year });
     return res.status(200).json(result);
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });

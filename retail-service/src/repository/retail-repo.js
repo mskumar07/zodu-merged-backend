@@ -300,60 +300,50 @@ exports.get_category_data = async (type, branch_id, zodu_id, page = 1, limit = 1
   }
 }
 
-exports.get_all_category_data = async (types, branch_id, zodu_id, page = 1, limit = 10) => {
+exports.get_all_category_data = async (types, branch_id, zodu_id, page = 1, limit = 10, active) => {
   try {
     const offset = (page - 1) * limit;
 
-    // types is an array e.g. ['S','M']. If empty, return all types.
-    const typeFilter = types && types.length > 0 ? `AND type = ANY($1)` : "";
-    const baseParams = types && types.length > 0
-      ? [types, branch_id, zodu_id]
-      : [branch_id, zodu_id];
-    const branchIdx  = types && types.length > 0 ? 2 : 1;
-    const zoduIdx    = types && types.length > 0 ? 3 : 2;
-    const limitIdx   = baseParams.length + 1;
-    const offsetIdx  = baseParams.length + 2;
+    const params  = [branch_id, zodu_id];
+    let filters = "";
 
-    const dataQuery = `
+    if (types && types.length > 0) {
+      params.push(types);
+      filters += ` AND type = ANY($${params.length})`;
+    }
+    if (active !== undefined) {
+      params.push(active);
+      filters += ` AND active = $${params.length}`;
+    }
+
+    params.push(limit, offset);
+
+    const query = `
       SELECT
-        id,
-        zodu_id,
-        branch_id,
-        name,
-        active,
-        created_at,
-        updated_at,
+        id, zodu_id, branch_id, name, active, created_at, updated_at,
         type AS type_code,
         CASE type
           WHEN 'S' THEN 'Sellable'
           WHEN 'E' THEN 'Expense'
           WHEN 'M' THEN 'Service'
           ELSE type
-        END AS type
+        END AS type,
+        COUNT(*) OVER()::int AS total_count
       FROM tbl_category
-      WHERE branch_id = $${branchIdx} AND zodu_id = $${zoduIdx}
-        ${typeFilter}
+      WHERE branch_id = $1 AND zodu_id = $2
+        ${filters}
       ORDER BY active DESC, id DESC
-      LIMIT $${limitIdx} OFFSET $${offsetIdx}
+      LIMIT $${params.length - 1} OFFSET $${params.length}
     `;
 
-    const countQuery = `
-      SELECT COUNT(*)::int AS total_count
-      FROM tbl_category
-      WHERE branch_id = $${branchIdx} AND zodu_id = $${zoduIdx}
-        ${typeFilter}
-    `;
+    const result = await conn.query(query, params);
 
-    const [dataResult, countResult] = await Promise.all([
-      conn.query(dataQuery,  [...baseParams, limit, offset]),
-      conn.query(countQuery, baseParams),
-    ]);
-
-    const total_count = countResult.rows[0].total_count;
-    const total_pages = Math.ceil(total_count / limit);
+    const total_count = result.rows[0]?.total_count ?? 0;
+    const total_pages  = Math.ceil(total_count / limit);
+    const rows = result.rows.map(({ total_count, ...row }) => row);
 
     return {
-      rows:        dataResult.rows,
+      rows,
       total_count,
       total_pages,
     };
@@ -2627,6 +2617,16 @@ exports.createQRCode = async (qr_code) => {
   }
 }
 
+exports.checkCategoryNameExists = async (zodu_id, branch_id, name) => {
+  const query = `
+    SELECT id, name FROM tbl_category
+    WHERE zodu_id = $1 AND branch_id = $2 AND LOWER(name) = LOWER($3)
+    LIMIT 1;
+  `;
+  const result = await conn.query(query, [zodu_id, branch_id, name]);
+  return result.rows[0] || null;
+};
+
 exports.createCategory = async (zodu_id, branch_id, name, type) => {
   try {
     // 1️⃣ Check if category already exists in this branch
@@ -2716,13 +2716,16 @@ exports.InactivateCategory = async (id, zodu_id, branch_id, active, page_expense
 
 exports.deleteCategory = async (id, branch_id, zodu_id, page_expense) => {
   try {
-    if (!page_expense) {
+    const isExpensePage = page_expense === true || page_expense === "true";
+    console.log("page_expense value:", page_expense);
+    if (!isExpensePage) {
       const usageRes = await conn.query(
         `SELECT
           EXISTS (SELECT 1 FROM tbl_menu_items WHERE category_id = $1 AND branch_id = $2 AND zodu_id = $3) AS in_menu,
           EXISTS (SELECT 1 FROM tbl_inventory ti JOIN tbl_menu_items ie ON ie.item_id = ti.item_id WHERE ie.category_id = $1 AND ie.branch_id = $2 AND ie.zodu_id = $3) AS in_inventory`,
         [id, branch_id, zodu_id]
       );
+      console.log("Category usage check result:", usageRes.rows[0]);
       const { in_menu, in_inventory } = usageRes.rows[0];
       if (in_menu) throw new Error("Category cannot be deleted. This category is used in menu items.");
       if (in_inventory) throw new Error("Category cannot be deleted. This category is used in inventory items.");
@@ -2735,6 +2738,7 @@ exports.deleteCategory = async (id, branch_id, zodu_id, page_expense) => {
         ) AS in_expense`,
         [id, branch_id, zodu_id]
       );
+      console.log("Expense category usage check result:", usageRes.rows[0]);
       if (usageRes.rows[0].in_expense) throw new Error("Category cannot be deleted. This category is used in expense items.");
     }
 
@@ -3223,7 +3227,7 @@ exports.createOrder = async (orderData, client) => {
         total_items, subtotal, total_tax,
         discount_type, discount_value, discount_amount,
         total_amount, paid_amount, balance_amount,
-        payment_status, notes, sale_date, sale_time,due_date
+        payment_status, notes, sale_date, sale_time,due_date,round_off
      )
      VALUES (
         $1,$2,$3,
@@ -3232,7 +3236,7 @@ exports.createOrder = async (orderData, client) => {
         $6,$7,$8,
         $9,$10,$11,
         $12,$13,$14,
-        $15,$16,$17,$18,$19
+        $15,$16,$17,$18,$19,$20
      )
      RETURNING *`,
     [
@@ -3259,7 +3263,8 @@ exports.createOrder = async (orderData, client) => {
       orderData.notes     ?? null,
       sale_date,
       orderData.sale_time ?? null,
-      orderData.due_date  ?? null,
+      orderData.due_date ?? null,
+      orderData.round_off ?? 0
     ]
   );
  
@@ -3474,6 +3479,7 @@ exports.getSalesHistory = async (filters) => {
         s.balance_amount,
         s.payment_status,
         s.notes,
+        s.round_off,
  
         TO_CHAR(s.sale_date,  'DD Mon YYYY')             AS sale_date_fmt,
         TO_CHAR(s.sale_time,  'HH12:MI AM')              AS sale_time_fmt,
@@ -3582,6 +3588,7 @@ exports.getSalesHistorySummary = async (filters) => {
 };
 
 exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
+  console.log("Fetching sale by ID-------------:", sale_id, zodu_id, branch_id);
   
   console.log(sale_id,zodu_id,branch_id)
   const saleResult = await conn.query(
@@ -3606,6 +3613,7 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
         TO_CHAR(s.sale_date,  'DD Mon YYYY')             AS sale_date_fmt,
         TO_CHAR(s.sale_time,  'HH12:MI AM')              AS sale_time_fmt,
         TO_CHAR(s.created_at, 'DD Mon YYYY, HH12:MI AM') AS created_at_fmt,
+        s.round_off,
  
         c.cust_uuid,
         c.cust_id AS customer_id,
@@ -3657,7 +3665,8 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
     notes:           row.notes,
     sale_date_fmt:   row.sale_date_fmt,
     sale_time_fmt:   row.sale_time_fmt,
-    created_at_fmt:  row.created_at_fmt,
+    created_at_fmt: row.created_at_fmt,
+    round_off: row.round_off,
   };
  
   const customer = row.cust_uuid

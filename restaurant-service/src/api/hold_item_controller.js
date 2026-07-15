@@ -28,6 +28,28 @@ router.post("/add/hold_menu", async (req, res) => {
   }
 });
 
+router.put("/update/hold-menu", async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(
+      schema.holdUpdateSchema,
+      req.body
+    );
+    if (errors) {
+      return res.status(400).json({ success: false, error: errors });
+    }
+    const data = await service.updateHoldMenu(input);
+
+    if (!data.success) {
+      return res.status(400).json({ message: data.message });
+    }
+
+    return res.status(200).json({ data });
+  } catch (error) {
+    console.error("Error updating hold:", error);
+    res.status(500).json({ error: "Failed to update hold" });
+  }
+});
+
 router.delete("/delete/hold-menu/:id", async (req, res) => {
   try {
     const { id } = req.params;

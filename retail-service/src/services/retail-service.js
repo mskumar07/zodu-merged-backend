@@ -482,9 +482,9 @@ async function getCategoryData(type, branch_id, zodu_id, page = 1, limit = 10) {
   }
 }
 
-async function getAllCategoryData(types, branch_id, zodu_id, page = 1, limit = 10) {
+async function getAllCategoryData(types, branch_id, zodu_id, page = 1, limit = 10, active) {
   try {
-    const result = await repository.get_all_category_data(types, branch_id, zodu_id, page, limit);
+    const result = await repository.get_all_category_data(types, branch_id, zodu_id, page, limit, active);
 
     return {
       success:     true,
@@ -494,6 +494,23 @@ async function getAllCategoryData(types, branch_id, zodu_id, page = 1, limit = 1
     };
   } catch (error) {
     console.error("Category Data getting Error", error);
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+}
+
+async function checkCategoryNameExists(zodu_id, branch_id, name) {
+  try {
+    const existing = await repository.checkCategoryNameExists(zodu_id, branch_id, name);
+    return {
+      success: true,
+      exists: !!existing,
+      data: existing,
+    };
+  } catch (error) {
+    console.error("Category Name check Error", error);
     return {
       success: false,
       message: error.message
@@ -2831,6 +2848,7 @@ module.exports = {
   deleteMenuItem,
   replaceUnit,
   addCategoryData,
+  checkCategoryNameExists,
   updateCategoryData,
   InactivateCategory,
   deleteCategoryData,

@@ -37,6 +37,24 @@ exports.markAttendance = async (data) => {
   }
 };
 
+// ── EMPLOYEES FOR MARK ATTENDANCE MODAL  ──────────────────────────────────────
+
+exports.getEmployeesForMarking = async ({ zodu_id, branch_id, attendance_date, page = 1, limit = 10 }) => {
+  const parsedLimit  = Math.min(parseInt(limit, 10) || 10, 100);
+  const parsedOffset = (Math.max(parseInt(page, 10) || 1, 1) - 1) * parsedLimit;
+
+  const rows  = await repo.findEmployeesForMarking({
+    zodu_id, branch_id, attendance_date, limit: parsedLimit, offset: parsedOffset,
+  });
+  const total = rows[0]?.total || 0;
+
+  return {
+    success: true,
+    data: rows,
+    pagination: { total, page: +page, limit: parsedLimit, pages: Math.ceil(total / parsedLimit) },
+  };
+};
+
 // ── TEAM ATTENDANCE  ("My Team Attendance" grid + summary cards) ──────────────
 
 exports.getTeamAttendance = async ({ zodu_id, branch_id, employee_id, month, year }) => {
