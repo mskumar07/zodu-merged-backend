@@ -2219,13 +2219,15 @@ exports.get_pos_data = async (branch_id, zodu_id, search) => {
           'count', 10,
           'menu_image', m.menu_image,
           'menu_type', m.menu_type,
-          'favorites', m.favorites
+          'favorites', m.favorites,
+          'stock_qty', i.stock_qty,
+          'stock_alert', i.stock_alert
         )
         ORDER BY m.menu_name
       ) AS items
     FROM tbl_category c
     JOIN tbl_menu_items m
-      ON c.id = m.menu_category_id
+      ON m.menu_category_id = c.id
      AND m.active = true
      AND m.branch_id = $1 and m.zodu_id = $2
      ${searchClause}
@@ -2238,6 +2240,9 @@ exports.get_pos_data = async (branch_id, zodu_id, search) => {
 
     LEFT JOIN tbl_units u
       ON u.id = m.menu_unit -- correct column
+
+    LEFT JOIN tbl_inventory i
+      ON i.item_id = m.menu_id
 
     GROUP BY c.id, c.name
     ORDER BY c.name ASC;

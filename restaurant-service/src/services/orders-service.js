@@ -85,4 +85,21 @@ async function createOrder(orderData) {
   }
 }
 
-module.exports = { getReportCategory, getReportServices, getSingleOrder, get_ordered_data, createOrder };
+async function updateOrder(orderData) {
+  try {
+    if (orderData.order_type !== "Dine-In") {
+      return { success: false, message: "Only Dine-In orders can be updated" };
+    }
+
+    const tmpOrder = await repository.updatetmpOrder(orderData);
+    orderData.legacy_order_ref = tmpOrder.legacy_order_ref;
+    await repository.reconciletmpOrderedItems(orderData);
+    await repository.updateKOT(orderData);
+    return { success: true, message: "Running order updated", order: tmpOrder };
+  } catch (err) {
+    console.error("Order Update Error:", err);
+    return { success: false, message: err.message };
+  }
+}
+
+module.exports = { getReportCategory, getReportServices, getSingleOrder, get_ordered_data, createOrder, updateOrder };

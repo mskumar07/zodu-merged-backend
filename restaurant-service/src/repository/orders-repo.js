@@ -549,6 +549,119 @@ exports.createtmpOrder = async (orderData) => {
   }
 };
 
+exports.updatetmpOrder = async (orderData) => {
+  try {
+    await conn.query("BEGIN");
+
+    const result = await conn.query(
+      `UPDATE tbl_tmp_orders SET
+        table_no = $1, no_of_items = $2, customer_name = $3, customer_phone = $4,
+        subtotal = $5, total_tax = $6, total_amt = $7, payment_type = $8,
+        order_date = $9, order_time = $10, discount_type = $11, discount_value = $12,
+        discount_amount = $13
+       WHERE api_order_id = $14 AND branch_id = $15 AND zodu_id = $16 AND final_payment = false
+       RETURNING *`,
+      [
+        orderData.table_no || null, orderData.no_of_items, orderData.customer_name || null,
+        orderData.customer_phone || null, orderData.subtotal || 0, orderData.tax_amount || 0,
+        orderData.total_amt, orderData.payment_type || null, orderData.order_date, orderData.order_time,
+        orderData.discount_type || null, orderData.discount_value || 0, orderData.discount_amount || 0,
+        orderData.api_order_id, orderData.branch_id, orderData.zodu_id
+      ]
+    );
+
+    if (result.rowCount === 0) {
+      throw new Error("Running order not found or already finalized");
+    }
+
+    await conn.query("COMMIT");
+    return result.rows[0];
+  } catch (err) {
+    await conn.query("ROLLBACK");
+    throw new Error("Unable to update tmp order: " + err.message);
+  }
+};
+
+exports.reconciletmpOrderedItems = async (orderData) => {
+  try {
+    await conn.query("BEGIN");
+    const items = orderData.items;
+    if (!Array.isArray(items) || items.length === 0) throw new Error("Items array is empty or invalid");
+
+    const updatedItems = [];
+    const keptKeys = [];
+
+    for (const item of items) {
+      const hasVariant = !!item.variant_id;
+
+      const checkQuery = hasVariant
+        ? `SELECT id FROM tbl_tmp_ordered_items WHERE api_order_id = $1 AND item_id = $2 AND variant_id = $3`
+        : `SELECT id FROM tbl_tmp_ordered_items WHERE api_order_id = $1 AND item_id = $2 AND variant_id IS NULL`;
+      const checkValues = hasVariant
+        ? [orderData.api_order_id, item.menu_id, item.variant_id]
+        : [orderData.api_order_id, item.menu_id];
+
+      const existingItem = await conn.query(checkQuery, checkValues);
+
+      if (existingItem.rowCount > 0) {
+        const updateQuery = hasVariant
+          ? `UPDATE tbl_tmp_ordered_items SET qty=$1, price=$2, item_unit=$3, gst_percentage=$4, tax_amount=$5, cgst=$6, sgst=$7, tax_inclusive=$8 WHERE api_order_id=$9 AND item_id=$10 AND variant_id=$11 RETURNING *`
+          : `UPDATE tbl_tmp_ordered_items SET qty=$1, price=$2, item_unit=$3, gst_percentage=$4, tax_amount=$5, cgst=$6, sgst=$7, tax_inclusive=$8 WHERE api_order_id=$9 AND item_id=$10 AND variant_id IS NULL RETURNING *`;
+        const updateValues = hasVariant
+          ? [item.qty, item.price, item.menu_unit, item.gst_percentage, item.tax, item.cgst, item.sgst, item.tax_inclusive ?? false, orderData.api_order_id, item.menu_id, item.variant_id]
+          : [item.qty, item.price, item.menu_unit, item.gst_percentage, item.tax, item.cgst, item.sgst, item.tax_inclusive ?? false, orderData.api_order_id, item.menu_id];
+        const result = await conn.query(updateQuery, updateValues);
+        updatedItems.push(result.rows[0]);
+      } else {
+        const result = await conn.query(
+          `INSERT INTO tbl_tmp_ordered_items (
+            zodu_id, branch_id, api_order_id, item_id, item_name,
+            qty, price, item_unit, variant_id, variant_name,
+            gst_percentage, tax_amount, cgst, sgst, tax_inclusive
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+          [
+            orderData.zodu_id, orderData.branch_id, orderData.api_order_id,
+            item.menu_id, item.name, item.qty, item.price, item.menu_unit,
+            hasVariant ? item.variant_id : null, hasVariant ? item.variant_name : null,
+            item.gst_percentage, item.tax, item.cgst, item.sgst, item.tax_inclusive ?? false
+          ]
+        );
+        updatedItems.push(result.rows[0]);
+      }
+
+      keptKeys.push({ item_id: item.menu_id, variant_id: hasVariant ? item.variant_id : null });
+    }
+
+    // Remove rows for items that existed on the order but were dropped from the incoming cart
+    const existingRows = await conn.query(
+      `SELECT item_id, variant_id FROM tbl_tmp_ordered_items WHERE api_order_id = $1`,
+      [orderData.api_order_id]
+    );
+    const keptSet = new Set(keptKeys.map(k => `${k.item_id}::${k.variant_id || ""}`));
+    const toRemove = existingRows.rows.filter(row => !keptSet.has(`${row.item_id}::${row.variant_id || ""}`));
+
+    for (const row of toRemove) {
+      if (row.variant_id) {
+        await conn.query(
+          `DELETE FROM tbl_tmp_ordered_items WHERE api_order_id = $1 AND item_id = $2 AND variant_id = $3`,
+          [orderData.api_order_id, row.item_id, row.variant_id]
+        );
+      } else {
+        await conn.query(
+          `DELETE FROM tbl_tmp_ordered_items WHERE api_order_id = $1 AND item_id = $2 AND variant_id IS NULL`,
+          [orderData.api_order_id, row.item_id]
+        );
+      }
+    }
+
+    await conn.query("COMMIT");
+    return updatedItems;
+  } catch (err) {
+    await conn.query("ROLLBACK");
+    throw new Error("Unable to update tmp ordered items: " + err.message);
+  }
+};
+
 exports.createtmpOrderedItems = async (orderData) => {
   try {
     await conn.query("BEGIN");
@@ -600,6 +713,42 @@ exports.createtmpOrderedItems = async (orderData) => {
   } catch (err) {
     await conn.query("ROLLBACK");
     throw new Error("Unable to create or update tmp ordered items: " + err.message);
+  }
+};
+
+exports.updateKOT = async (orderData) => {
+  try {
+    await conn.query("BEGIN");
+    const items = orderData.items;
+    if (!Array.isArray(items) || items.length === 0) throw new Error("Items array is empty or invalid");
+
+    await conn.query(`DELETE FROM tbl_kot_list WHERE api_order_id = $1`, [orderData.api_order_id]);
+
+    const columnsPerRow = 9;
+    const values = [];
+    const placeholders = items.map((item, idx) => {
+      const itemName = item.variant_name && item.variant_name.trim() !== "" ? item.variant_name : item.name;
+      values.push(
+        orderData.zodu_id, orderData.branch_id, orderData.api_order_id,
+        orderData.legacy_order_ref, orderData.kot_no, orderData.table_no,
+        item.menu_id, itemName, item.qty
+      );
+      const base = idx * columnsPerRow;
+      const rowPlaceholders = Array.from({ length: columnsPerRow }, (_, i) => `$${base + i + 1}`).join(",");
+      return `(${rowPlaceholders})`;
+    }).join(",");
+
+    const result = await conn.query(
+      `INSERT INTO tbl_kot_list (zodu_id, branch_id, api_order_id, legacy_order_ref, kot_no, table_no, item_id, item_name, qty)
+       VALUES ${placeholders} RETURNING *`,
+      values
+    );
+
+    await conn.query("COMMIT");
+    return result.rows;
+  } catch (err) {
+    await conn.query("ROLLBACK");
+    throw new Error("Unable to update KOT: " + err.message);
   }
 };
 

@@ -21,6 +21,23 @@ router.post("/add/orders", async (req, res) => {
   }
 });
 
+router.put("/update/orders", async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(schema.order_update, req.body);
+    if (errors) {
+      return res.status(400).json({ errors });
+    }
+    const data = await service.updateOrder(input);
+    if (!data.success) {
+      return res.status(400).json({ message: data.message });
+    }
+    return res.status(200).json(data);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 router.get("/get/orders/:branch_id/:zodu_id", async (req, res) => {
   try {
     const { branch_id, zodu_id } = req.params;
