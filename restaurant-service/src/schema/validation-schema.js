@@ -29,6 +29,12 @@ const category_create = Joi.object({
   type: Joi.string().max(50).required(),
 });
 
+const category_name_check = Joi.object({
+  ...zodu_branch,
+  name: Joi.string().max(100).required(),
+  type: Joi.string().max(50).required(),
+});
+
 const category_update = Joi.object({
   name:      Joi.string().max(100).required(),
   type:      Joi.string().max(50).required(),
@@ -397,6 +403,7 @@ const order_category_report_query = Joi.object({
 module.exports = {
   // Category
   category_create,
+  category_name_check,
   category_update,
   category_inactivate,
 

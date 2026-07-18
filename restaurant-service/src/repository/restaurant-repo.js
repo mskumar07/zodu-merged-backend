@@ -2555,20 +2555,33 @@ exports.createQRCode = async (qr_code) => {
   }
 }
 
+exports.checkCategoryNameExists = async (zodu_id, branch_id, name, type) => {
+  try {
+    const checkQuery = `
+      SELECT * FROM tbl_category
+      WHERE zodu_id = $1 AND branch_id = $2 AND LOWER(name) = LOWER($3) AND type = $4
+      LIMIT 1;
+    `;
+    const checkResult = await conn.query(checkQuery, [zodu_id, branch_id, name, type]);
+    return checkResult.rows[0] || null;
+  } catch (err) {
+    throw new Error("Unable to check Category name: " + err.message);
+  }
+}
+
 exports.createCategory = async (zodu_id, branch_id, name, type) => {
   try {
     // 1️⃣ Check if category already exists in this branch
     const checkQuery = `
       SELECT * FROM tbl_category
-      WHERE zodu_id = $1 AND branch_id = $2 AND name = $3 AND type = $4
+      WHERE zodu_id = $1 AND branch_id = $2 AND LOWER(name) = LOWER($3) AND type = $4
       LIMIT 1;
     `;
     const checkValues = [zodu_id, branch_id, name, type];
     const checkResult = await conn.query(checkQuery, checkValues);
 
     if (checkResult.rows.length > 0) {
-      // ✅ Category already exists → return existing
-      return checkResult.rows[0];
+      throw new Error("Category name already exists");
     }
 
     // 2️⃣ Otherwise, insert new category

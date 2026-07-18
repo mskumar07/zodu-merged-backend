@@ -254,6 +254,7 @@ async function getDashboardTopItems(zodu_id, branch_id, { limit, offset }) {
     WHERE o.zodu_id = $1
       AND o.branch_id = $2
       AND o.final_payment = true
+      AND o.cancelled_order = false
     GROUP BY m.menu_name, c.name, u.short_name
     ORDER BY total_qty DESC
     LIMIT $3 OFFSET $4
@@ -266,6 +267,7 @@ async function getDashboardTopItems(zodu_id, branch_id, { limit, offset }) {
     WHERE o.zodu_id = $1
       AND o.branch_id = $2
       AND o.final_payment = true
+      AND o.cancelled_order = false
   `;
 
   const [dataRes, countRes] = await Promise.all([

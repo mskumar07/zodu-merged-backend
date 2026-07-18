@@ -632,7 +632,8 @@ const sales_history_query = Joi.object({
   sale_type:       Joi.string().optional(),
   customer_phone:  Joi.string().optional(),
   invoice_no:      Joi.string().optional(),
-  search:    Joi.string().optional(),
+  search: Joi.string().optional(),
+  cancelled_order:       Joi.boolean().required(),
   page:            Joi.number().integer().min(1).optional().default(1),
   limit:           Joi.number().integer().min(1).max(100).optional().default(20),
 });
@@ -641,7 +642,8 @@ const sales_history_summary_query = Joi.object({
   zodu_id:        Joi.string().required(),
   branch_id:      Joi.string().required(),
   from_date:      Joi.string().isoDate().optional(),
-  to_date:        Joi.string().isoDate().optional(),
+  to_date: Joi.string().isoDate().optional(),
+  cancelled_order: Joi.boolean().required(),
   payment_status: Joi.string().valid("fully_paid", "partially_paid", "unpaid").optional(),
   search:         Joi.string().optional(),
 });

@@ -23,7 +23,7 @@ exports.createEmployee = async (data, created_by) => {
         {
           email: data.email, phone: data.phone,
           zodu_id: data.zodu_id, branch_id: data.branch_id,
-          role_id: data.role_id, access_level: data.access_level,
+          role_id: data.role_id,
           reporting_manager_id: data.reporting_manager_id || null,
           password: data.password || null,
         }
@@ -167,9 +167,9 @@ exports.updateEmployee = async (employee_id, data, updated_by) => {
     await client.query('COMMIT');
 
     // Sync role to tbl_user_roles in auth-service (non-blocking)
-    if (data.role_id || data.access_level) {
+    if (data.role_id) {
       axios.put(`${AUTH_SERVICE_URL}/internal/employee/${result.user_id}/role`, {
-        role_id: data.role_id, access_level: data.access_level,
+        role_id: data.role_id,
         zodu_id: data.zodu_id, branch_id: data.branch_id,
       }).catch(err => console.error('[auth] role update failed:', err.message));
     }

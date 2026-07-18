@@ -501,6 +501,23 @@ async function getAllCategoryData(types, branch_id, zodu_id, page = 1, limit = 1
   }
 }
 
+async function checkCategoryNameExists(zodu_id, branch_id, name, type) {
+  try {
+    const existing = await repository.checkCategoryNameExists(zodu_id, branch_id, name, type);
+    return {
+      success: true,
+      exists: !!existing,
+      data: existing,
+    };
+  } catch (error) {
+    console.error("Category name check Error", error);
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+}
+
 async function addCategoryData(zodu_id, branch_id, name, type) {
   try {
     const addedCategory = await repository.createCategory(zodu_id, branch_id, name, type);
@@ -2787,6 +2804,7 @@ module.exports = {
   createDefaultBranchService,
   createProduct,
   getCategoryData,
+  checkCategoryNameExists,
   get_menuItem_data,
   updateCompanyService,
   uploadImg,

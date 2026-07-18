@@ -3331,10 +3331,127 @@ exports.createSaleItems = async (orderData, sale, client) => {
  
     insertedItems.push(result.rows[0]);
   }
- 
+
   return insertedItems;
 };
- 
+
+// Reconciles tbl_sale_items with the edited items list using a single
+// set-based UPSERT (by sale_uuid + item_id) instead of delete-all/insert-all,
+// so existing row ids survive and tbl_sale_return_items.original_item_id
+// (fk_return_items_original) never gets orphaned by an edit.
+exports.syncSaleItems = async (orderData, sale, client) => {
+  const db = client ?? conn;
+  const items = orderData.items;
+
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error('Items array is empty or invalid');
+  }
+
+  const rows = items.map((item) => {
+    const taxData = calculateItemTax(item);
+    return {
+      item_id:         item.item_id,
+      item_name:       item.item_name    ?? null,
+      variant_id:      item.variant_id   ?? null,
+      variant_name:    item.variant_name ?? null,
+      unit:            item.unit         ?? null,
+      quantity:        item.quantity,
+      price:           item.price,
+      discount:        Number(item.discount ?? 0),
+      gst_percentage:  taxData.gst_percentage,
+      tax_amount:      taxData.tax_amount,
+      cgst:            taxData.cgst,
+      sgst:            taxData.sgst,
+      tax_inclusive:   taxData.tax_inclusive,
+      hsn_code:        item.hsn_code ?? null,
+      mrp:             item.mrp      ?? null,
+    };
+  });
+
+  // Items still referenced by a return but dropped from the edited list
+  // can't be deleted without violating fk_return_items_original — block
+  // with a clear message instead of letting Postgres raise the raw FK error.
+  const blockedResult = await db.query(
+    `SELECT DISTINCT si.item_id, si.item_name
+     FROM tbl_sale_items si
+     JOIN tbl_sale_return_items sri ON sri.original_item_id = si.id
+     WHERE si.sale_uuid = $1
+       AND si.item_id <> ALL($2::text[])`,
+    [sale.sale_uuid, rows.map(r => r.item_id)]
+  );
+
+  if (blockedResult.rows.length > 0) {
+    const names = blockedResult.rows.map(r => r.item_name || r.item_id).join(', ');
+    throw new Error(`Cannot remove item(s) with existing returns: ${names}`);
+  }
+
+  const result = await db.query(
+    `WITH incoming AS (
+       SELECT *
+       FROM jsonb_to_recordset($3::jsonb) AS t(
+         item_id text, item_name text,
+         variant_id text, variant_name text,
+         unit text, quantity numeric, price numeric,
+         discount numeric, gst_percentage numeric,
+         tax_amount numeric, cgst numeric, sgst numeric,
+         tax_inclusive boolean, hsn_code text, mrp numeric
+       )
+     ),
+     updated AS (
+       UPDATE tbl_sale_items si
+       SET item_name      = i.item_name,
+           variant_id     = i.variant_id,
+           variant_name   = i.variant_name,
+           unit           = i.unit,
+           quantity       = i.quantity,
+           price          = i.price,
+           discount       = i.discount,
+           gst_percentage = i.gst_percentage,
+           tax_amount     = i.tax_amount,
+           cgst           = i.cgst,
+           sgst           = i.sgst,
+           tax_inclusive  = i.tax_inclusive,
+           hsn_code       = i.hsn_code,
+           mrp            = i.mrp,
+           sale_id        = $2
+       FROM incoming i
+       WHERE si.sale_uuid = $1 AND si.item_id = i.item_id
+       RETURNING si.item_id
+     ),
+     inserted AS (
+       INSERT INTO tbl_sale_items (
+         sale_uuid, sale_id,
+         item_id, item_name,
+         variant_id, variant_name,
+         unit, quantity, price,
+         discount, gst_percentage,
+         tax_amount, cgst, sgst,
+         tax_inclusive, hsn_code, mrp
+       )
+       SELECT $1, $2,
+              i.item_id, i.item_name,
+              i.variant_id, i.variant_name,
+              i.unit, i.quantity, i.price,
+              i.discount, i.gst_percentage,
+              i.tax_amount, i.cgst, i.sgst,
+              i.tax_inclusive, i.hsn_code, i.mrp
+       FROM incoming i
+       WHERE i.item_id NOT IN (SELECT item_id FROM updated)
+       RETURNING *
+     ),
+     deleted AS (
+       DELETE FROM tbl_sale_items si
+       WHERE si.sale_uuid = $1
+         AND si.item_id <> ALL($4::text[])
+       RETURNING si.item_id
+     )
+     SELECT * FROM inserted`,
+    [sale.sale_uuid, sale.sale_id, JSON.stringify(rows), rows.map(r => r.item_id)]
+  );
+
+  return result.rows;
+};
+
 exports.createSalesPayment = async (orderData, sale, client) => {
   const db = client ?? conn;
   const paid_amount  = round(Number(orderData.paid_amount  ?? sale.total_amount));
@@ -3422,15 +3539,16 @@ exports.getSalesHistory = async (filters) => {
     sale_type,
     search,
     customer_search,
+    cancelled_order,
     page  = 1,
     limit = 20,
   } = filters;
  
   const searchTerm = search || customer_search;
  
-  const conditions = ["s.zodu_id = $1", "s.branch_id = $2"];
-  const values     = [zodu_id, branch_id];
-  let   idx        = 3;
+  const conditions = ["s.zodu_id = $1", "s.branch_id = $2", "s.cancelled_inv = $3"];
+  const values     = [zodu_id, branch_id, cancelled_order];
+  let   idx        = 4;
  
   if (from_date)      { conditions.push(`s.sale_date >= $${idx++}`); values.push(from_date); }
   if (to_date)        { conditions.push(`s.sale_date <= $${idx++}`); values.push(to_date); }
@@ -3475,6 +3593,7 @@ exports.getSalesHistory = async (filters) => {
         s.discount_value,
         s.discount_amount,
         s.total_amount,
+        TO_CHAR(s.due_date,  'DD Mon YYYY') AS due_date,
         s.paid_amount,
         s.balance_amount,
         s.payment_status,
@@ -3544,13 +3663,14 @@ exports.getSalesHistorySummary = async (filters) => {
     payment_status,
     search,
     customer_search,
+    cancelled_order
   } = filters;
 
   const searchTerm = search || customer_search;
 
-  const conditions = ["s.zodu_id = $1", "s.branch_id = $2"];
-  const values     = [zodu_id, branch_id];
-  let   idx        = 3;
+  const conditions = ["s.zodu_id = $1", "s.branch_id = $2", "s.cancelled_inv = $3"];
+  const values     = [zodu_id, branch_id, cancelled_order];
+  let   idx        = 4;
 
   if (from_date)      { conditions.push(`s.sale_date >= $${idx++}`); values.push(from_date); }
   if (to_date)        { conditions.push(`s.sale_date <= $${idx++}`); values.push(to_date); }
@@ -3844,7 +3964,7 @@ exports.deleteSale = async (sale_id, zodu_id, branch_id) => {
     await client.query("BEGIN");
 
     const saleResult = await client.query(
-      `SELECT sale_uuid, sale_id, sale_type
+      `SELECT sale_uuid, sale_id, sale_type, cancelled_inv
        FROM tbl_sales
        WHERE sale_id = $1
          AND zodu_id = $2
@@ -3859,6 +3979,11 @@ exports.deleteSale = async (sale_id, zodu_id, branch_id) => {
     }
 
     const sale = saleResult.rows[0];
+
+    if (sale.cancelled_inv) {
+      await client.query("ROLLBACK");
+      return { alreadyCancelled: true, ...sale };
+    }
 
     const soldItemsResult = await client.query(
       `SELECT
@@ -3928,107 +4053,106 @@ exports.deleteSale = async (sale_id, zodu_id, branch_id) => {
       netQtyByItem.set(key, existing);
     }
 
-    for (const item of netQtyByItem.values()) {
-      if (!item.item_id || item.net_qty === 0) continue;
+    const itemsToReverse = [...netQtyByItem.values()].filter(
+      (item) => item.item_id && item.net_qty !== 0
+    );
 
-      const inventoryResult = await client.query(
-        `SELECT inventory_uuid, item_uuid, item_name, available_qty
+    if (itemsToReverse.length > 0) {
+      const inventoryRowsResult = await client.query(
+        `SELECT inventory_uuid, item_uuid, item_id, item_name, available_qty
          FROM tbl_inventory
-         WHERE item_id = $1
+         WHERE item_id = ANY($1::text[])
            AND zodu_id = $2
            AND branch_id = $3
          FOR UPDATE`,
-        [item.item_id, zodu_id, branch_id]
+        [itemsToReverse.map((item) => item.item_id), zodu_id, branch_id]
       );
 
-      if (!inventoryResult.rows.length) continue;
-
-      const inventory = inventoryResult.rows[0];
-      const stockBefore = Number(inventory.available_qty || 0);
-      const stockAfter = stockBefore + Number(item.net_qty);
-
-      await client.query(
-        `UPDATE tbl_inventory
-         SET available_qty = $1,
-             last_stock_update = CURRENT_TIMESTAMP
-         WHERE inventory_uuid = $2`,
-        [stockAfter, inventory.inventory_uuid]
+      const inventoryByItemId = new Map(
+        inventoryRowsResult.rows.map((row) => [String(row.item_id), row])
       );
 
-      await client.query(
-        `INSERT INTO tbl_stock_ledger (
-          item_uuid, item_id, zodu_id, branch_id,
-          item_name, transaction_type,
-          reference_id, qty_change,
-          stock_before, stock_after, notes
-        )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-        [
-          inventory.item_uuid,
-          item.item_id,
-          zodu_id,
-          branch_id,
-          item.item_name,
-          "sale_deleted",
-          sale.sale_uuid,
-          Number(item.net_qty),
-          stockBefore,
-          stockAfter,
-          `Stock reversed on deletion of sale ${sale.sale_id}`,
-        ]
-      );
+      const inventoryUuids = [];
+      const stockAfters = [];
+      const ledgerItemUuids = [];
+      const ledgerItemIds = [];
+      const ledgerItemNames = [];
+      const ledgerQtyChanges = [];
+      const ledgerStockBefores = [];
+      const ledgerStockAfters = [];
+
+      for (const item of itemsToReverse) {
+        const inventory = inventoryByItemId.get(String(item.item_id));
+        if (!inventory) continue;
+
+        const stockBefore = Number(inventory.available_qty || 0);
+        const stockAfter = stockBefore + Number(item.net_qty);
+
+        inventoryUuids.push(inventory.inventory_uuid);
+        stockAfters.push(stockAfter);
+
+        ledgerItemUuids.push(inventory.item_uuid);
+        ledgerItemIds.push(item.item_id);
+        ledgerItemNames.push(item.item_name);
+        ledgerQtyChanges.push(Number(item.net_qty));
+        ledgerStockBefores.push(stockBefore);
+        ledgerStockAfters.push(stockAfter);
+      }
+
+      if (inventoryUuids.length > 0) {
+        await client.query(
+          `UPDATE tbl_inventory AS inv
+           SET available_qty = data.stock_after,
+               last_stock_update = CURRENT_TIMESTAMP
+           FROM (
+             SELECT UNNEST($1::uuid[]) AS inventory_uuid,
+                    UNNEST($2::numeric[]) AS stock_after
+           ) AS data
+           WHERE inv.inventory_uuid = data.inventory_uuid`,
+          [inventoryUuids, stockAfters]
+        );
+
+        await client.query(
+          `INSERT INTO tbl_stock_ledger (
+            item_uuid, item_id, zodu_id, branch_id,
+            item_name, transaction_type,
+            reference_id, qty_change,
+            stock_before, stock_after, notes
+          )
+          SELECT
+            data.item_uuid, data.item_id, $1, $2,
+            data.item_name, 'sale_deleted',
+            $3, data.qty_change,
+            data.stock_before, data.stock_after,
+            $4
+          FROM (
+            SELECT
+              UNNEST($5::uuid[]) AS item_uuid,
+              UNNEST($6::text[]) AS item_id,
+              UNNEST($7::text[]) AS item_name,
+              UNNEST($8::numeric[]) AS qty_change,
+              UNNEST($9::numeric[]) AS stock_before,
+              UNNEST($10::numeric[]) AS stock_after
+          ) AS data`,
+          [
+            zodu_id,
+            branch_id,
+            sale.sale_uuid,
+            `Stock reversed on deletion of sale ${sale.sale_id}`,
+            ledgerItemUuids,
+            ledgerItemIds,
+            ledgerItemNames,
+            ledgerQtyChanges,
+            ledgerStockBefores,
+            ledgerStockAfters,
+          ]
+        );
+      }
     }
 
-    const returnIdsResult = await client.query(
-      `SELECT return_uuid
-       FROM tbl_sale_returns
-       WHERE original_sale_uuid = $1`,
-      [sale.sale_uuid]
-    );
-
-    const returnUuids = returnIdsResult.rows.map((row) => row.return_uuid);
-    const stockLedgerRefIds = [...returnUuids];
-
-    if (stockLedgerRefIds.length > 0) {
-      await client.query(
-        `DELETE FROM tbl_stock_ledger
-         WHERE reference_id = ANY($1::uuid[])`,
-        [stockLedgerRefIds]
-      );
-    }
-
-    await client.query(
-      `DELETE FROM tbl_sale_return_items
-       WHERE return_uuid IN (
-         SELECT return_uuid
-         FROM tbl_sale_returns
-         WHERE original_sale_uuid = $1
-       )`,
-      [sale.sale_uuid]
-    );
-
-    await client.query(
-      `DELETE FROM tbl_sale_returns
-       WHERE original_sale_uuid = $1`,
-      [sale.sale_uuid]
-    );
-
-    await client.query(
-      `DELETE FROM tbl_sale_payment
-       WHERE sale_id = $1
-         AND zodu_id = $2
-         AND branch_id = $3`,
-      [sale.sale_id, zodu_id, branch_id]
-    );
-
-    await client.query(
-      `DELETE FROM tbl_sale_items
-       WHERE sale_uuid = $1`,
-      [sale.sale_uuid]
-    );
-
-    const deletedSaleResult = await client.query(
-      `DELETE FROM tbl_sales
+    const cancelledSaleResult = await client.query(
+      `UPDATE tbl_sales
+       SET cancelled_inv = true
        WHERE sale_uuid = $1
        RETURNING *`,
       [sale.sale_uuid]
@@ -4036,7 +4160,7 @@ exports.deleteSale = async (sale_id, zodu_id, branch_id) => {
 
     await client.query("COMMIT");
 
-    return deletedSaleResult.rows[0] ?? null;
+    return cancelledSaleResult.rows[0] ?? null;
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;

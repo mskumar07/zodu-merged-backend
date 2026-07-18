@@ -1555,6 +1555,95 @@ if (!isQuotation) {
 
 
 
+// Applies a batch of { item_uuid, item_id, item_name, qty_change, transaction_type?, notes? }
+// adjustments to tbl_inventory + tbl_stock_ledger in three bulk statements
+// (lock+read, update, ledger insert) instead of one round trip per item.
+async function applyStockAdjustments(client, {
+  adjustments,
+  zodu_id,
+  branch_id,
+  reference_id,
+  transaction_type: defaultTransactionType,
+  notes: defaultNotes,
+}) {
+  if (!adjustments.length) return;
+
+  const itemUuids = adjustments.map(a => a.item_uuid);
+
+  const invRes = await client.query(
+    `SELECT item_uuid, available_qty
+     FROM tbl_inventory
+     WHERE item_uuid = ANY($1::uuid[])
+     FOR UPDATE`,
+    [itemUuids]
+  );
+
+  const stockBeforeMap = new Map(
+    invRes.rows.map(r => [r.item_uuid, Number(r.available_qty)])
+  );
+
+  const ledgerRows = adjustments.map(adj => {
+    const stock_before = stockBeforeMap.get(adj.item_uuid);
+    if (stock_before === undefined) {
+      throw new Error(`Inventory not found for ${adj.item_name}`);
+    }
+
+    const stock_after = stock_before + adj.qty_change;
+    if (stock_after < 0) {
+      throw new Error(`Insufficient stock for ${adj.item_name}`);
+    }
+
+    // reflect this adjustment for any later item sharing the same item_uuid
+    stockBeforeMap.set(adj.item_uuid, stock_after);
+
+    return {
+      item_uuid:        adj.item_uuid,
+      item_id:          adj.item_id,
+      zodu_id,
+      branch_id,
+      item_name:        adj.item_name,
+      transaction_type: adj.transaction_type ?? defaultTransactionType,
+      reference_id,
+      qty_change:       adj.qty_change,
+      stock_before,
+      stock_after,
+      notes:            adj.notes ?? defaultNotes,
+    };
+  });
+
+  await client.query(
+    `UPDATE tbl_inventory inv
+     SET available_qty = inv.available_qty + v.qty_change
+     FROM (
+       SELECT item_uuid, SUM(qty_change) AS qty_change
+       FROM jsonb_to_recordset($1::jsonb) AS t(item_uuid uuid, qty_change numeric)
+       GROUP BY item_uuid
+     ) v
+     WHERE inv.item_uuid = v.item_uuid`,
+    [JSON.stringify(adjustments.map(a => ({ item_uuid: a.item_uuid, qty_change: a.qty_change })))]
+  );
+
+  await client.query(
+    `INSERT INTO tbl_stock_ledger (
+       item_uuid, item_id, zodu_id, branch_id,
+       item_name, transaction_type,
+       reference_id, qty_change,
+       stock_before, stock_after, notes
+     )
+     SELECT item_uuid, item_id, zodu_id, branch_id,
+            item_name, transaction_type,
+            reference_id::uuid, qty_change,
+            stock_before, stock_after, notes
+     FROM jsonb_to_recordset($1::jsonb) AS t(
+       item_uuid uuid, item_id text, zodu_id text, branch_id text,
+       item_name text, transaction_type text,
+       reference_id text, qty_change numeric,
+       stock_before numeric, stock_after numeric, notes text
+     )`,
+    [JSON.stringify(ledgerRows)]
+  );
+}
+
 async function updateOrder(orderData) {
   const client = await conn.connect();
  console.log("test",orderData)
@@ -1630,172 +1719,87 @@ async function updateOrder(orderData) {
     }
  
     // =========================================================
-    // 3️⃣  STOCK — QUOTATION → SALE  (full deduction)
+    // 3️⃣ / 4️⃣  STOCK ADJUSTMENT (bulk — single round trip per step)
     // =========================================================
     if (isConvertingToSale) {
-      for (const item of normalizedNewItems) {
-        if (!item.item_uuid) continue;
- 
-        const inv = await client.query(
-          `SELECT available_qty FROM tbl_inventory WHERE item_uuid = $1 FOR UPDATE`,
-          [item.item_uuid]
-        );
- 
-        if (!inv.rows.length) throw new Error(`Inventory not found for ${item.item_name}`);
- 
-        const stock_before = Number(inv.rows[0].available_qty);
-        if (item.quantity > stock_before) {
-          throw new Error(`Insufficient stock for ${item.item_name}`);
-        }
-        const stock_after = stock_before - item.quantity;
- 
-        await client.query(
-          `UPDATE tbl_inventory SET available_qty = $1 WHERE item_uuid = $2`,
-          [stock_after, item.item_uuid]
-        );
- 
-        await stockRepository.createStockLedger(client, {
-          item_uuid:        item.item_uuid,
-          item_id:          item.item_id,
-          zodu_id:          orderData.zodu_id,
-          branch_id:        orderData.branch_id,
-          item_name:        item.item_name,
-          transaction_type: 'quotation_converted_to_sale',
-          reference_id:     saleId,
-          qty_change:       -item.quantity,
-          stock_before,
-          stock_after,
-          notes:            'Quotation Converted to Sale',
-        });
-      }
-    }
- 
-    // =========================================================
-    // 4️⃣  STOCK — SALE EDIT  (delta adjustment + ledger)
-    // =========================================================
-    if (!isQuotation && !isConvertingToSale) {
+      // Full deduction for every item in the (now-final) sale
+      const deductions = normalizedNewItems
+        .filter(i => i.item_uuid)
+        .map(i => ({
+          item_uuid: i.item_uuid,
+          item_id:   i.item_id,
+          item_name: i.item_name,
+          qty_change: -i.quantity, // negative = deduct
+        }));
+
+      await applyStockAdjustments(client, {
+        adjustments:      deductions,
+        zodu_id:          orderData.zodu_id,
+        branch_id:        orderData.branch_id,
+        reference_id:     saleId,
+        transaction_type: 'quotation_converted_to_sale',
+        notes:            'Quotation Converted to Sale',
+      });
+
+    } else if (!isQuotation) {
       const oldItemsMap = new Map(
         normalizedOldItems.filter(i => i.item_uuid).map(i => [i.item_uuid, i])
       );
       const newItemsMap = new Map(
         normalizedNewItems.filter(i => i.item_uuid).map(i => [i.item_uuid, i])
       );
- 
-      // Items REMOVED or qty DECREASED → return stock
+
+      const adjustments = [];
+
+      // Items REMOVED or qty CHANGED → restore/adjust stock
       for (const oldItem of normalizedOldItems) {
         if (!oldItem.item_uuid) continue;
         const newItem = newItemsMap.get(oldItem.item_uuid);
- 
+
         if (!newItem) {
-          // Item removed entirely → restore full old qty
-          const inv = await client.query(
-            `SELECT available_qty FROM tbl_inventory WHERE item_uuid = $1 FOR UPDATE`,
-            [oldItem.item_uuid]
-          );
-          const stock_before = Number(inv.rows[0].available_qty);
-          const stock_after  = stock_before + oldItem.quantity;
- 
-          await client.query(
-            `UPDATE tbl_inventory SET available_qty = $1 WHERE item_uuid = $2`,
-            [stock_after, oldItem.item_uuid]
-          );
- 
-          // ✅ FIX: stock ledger was missing entirely for sale edits
-          await stockRepository.createStockLedger(client, {
-            item_uuid:        oldItem.item_uuid,
-            item_id:          oldItem.item_id,
-            zodu_id:          orderData.zodu_id,
-            branch_id:        orderData.branch_id,
-            item_name:        oldItem.item_name,
+          adjustments.push({
+            item_uuid:  oldItem.item_uuid,
+            item_id:    oldItem.item_id,
+            item_name:  oldItem.item_name,
+            qty_change: +oldItem.quantity, // fully restored
             transaction_type: 'sale_edit_item_removed',
-            reference_id:     saleId,
-            qty_change:       +oldItem.quantity,
-            stock_before,
-            stock_after,
-            notes:            'Item removed during sale edit',
+            notes:      'Item removed during sale edit',
           });
- 
         } else if (newItem.quantity !== oldItem.quantity) {
-          const diff = newItem.quantity - oldItem.quantity;  // +ve = more, -ve = less
- 
-          const inv = await client.query(
-            `SELECT available_qty FROM tbl_inventory WHERE item_uuid = $1 FOR UPDATE`,
-            [oldItem.item_uuid]
-          );
-          const stock_before = Number(inv.rows[0].available_qty);
- 
-          // ✅ FIX: insufficient stock check was missing for qty increases
-          if (diff > 0 && diff > stock_before) {
-            throw new Error(`Insufficient stock for ${oldItem.item_name}`);
-          }
- 
-          const stock_after = stock_before - diff; // diff negative → adds back
- 
-          await client.query(
-            `UPDATE tbl_inventory SET available_qty = $1 WHERE item_uuid = $2`,
-            [stock_after, oldItem.item_uuid]
-          );
- 
-          await stockRepository.createStockLedger(client, {
-            item_uuid:        oldItem.item_uuid,
-            item_id:          oldItem.item_id,
-            zodu_id:          orderData.zodu_id,
-            branch_id:        orderData.branch_id,
-            item_name:        oldItem.item_name,
+          const diff = newItem.quantity - oldItem.quantity; // +ve = more, -ve = less
+          adjustments.push({
+            item_uuid:  oldItem.item_uuid,
+            item_id:    oldItem.item_id,
+            item_name:  oldItem.item_name,
+            qty_change: -diff,
             transaction_type: 'sale_edit_qty_changed',
-            reference_id:     saleId,
-            qty_change:       -diff,
-            stock_before,
-            stock_after,
-            notes:            `Qty changed from ${oldItem.quantity} to ${newItem.quantity}`,
+            notes:      `Qty changed from ${oldItem.quantity} to ${newItem.quantity}`,
           });
         }
       }
- 
+
       // Items ADDED (new in this edit) → deduct stock
       for (const newItem of normalizedNewItems) {
         if (!newItem.item_uuid) continue;
         if (oldItemsMap.has(newItem.item_uuid)) continue; // already handled above
- 
-        const inv = await client.query(
-          `SELECT available_qty FROM tbl_inventory WHERE item_uuid = $1 FOR UPDATE`,
-          [newItem.item_uuid]
-        );
-        const stock_before = Number(inv.rows[0].available_qty);
- 
-        if (newItem.quantity > stock_before) {
-          throw new Error(`Insufficient stock for ${newItem.item_name}`);
-        }
-        const stock_after = stock_before - newItem.quantity;
- 
-        await client.query(
-          `UPDATE tbl_inventory SET available_qty = $1 WHERE item_uuid = $2`,
-          [stock_after, newItem.item_uuid]
-        );
- 
-        await stockRepository.createStockLedger(client, {
-          item_uuid:        newItem.item_uuid,
-          item_id:          newItem.item_id,
-          zodu_id:          orderData.zodu_id,
-          branch_id:        orderData.branch_id,
-          item_name:        newItem.item_name,
+
+        adjustments.push({
+          item_uuid:  newItem.item_uuid,
+          item_id:    newItem.item_id,
+          item_name:  newItem.item_name,
+          qty_change: -newItem.quantity,
           transaction_type: 'sale_edit_item_added',
-          reference_id:     saleId,
-          qty_change:       -newItem.quantity,
-          stock_before,
-          stock_after,
-          notes:            'New item added during sale edit',
+          notes:      'New item added during sale edit',
         });
       }
+
+      await applyStockAdjustments(client, {
+        adjustments,
+        zodu_id:      orderData.zodu_id,
+        branch_id:    orderData.branch_id,
+        reference_id: saleId,
+      });
     }
- 
-    // =========================================================
-    // 5️⃣  DELETE OLD ITEMS
-    // =========================================================
-    await client.query(
-      `DELETE FROM tbl_sale_items WHERE sale_uuid = $1`,
-      [saleId]
-    );
  
     // =========================================================
     // 6️⃣  COMPUTE TOTALS
@@ -1845,8 +1849,9 @@ async function updateOrder(orderData) {
          notes                 = $16,
          sale_date             = $17,
          round_off             = $18,
-         updated_at            = NOW()
-       WHERE sale_uuid = $19`,
+         updated_at            = NOW(),
+         due_date              = $19
+       WHERE sale_uuid = $20`,
       [
         newSaleId,
         normalizedSaleType,
@@ -1869,7 +1874,8 @@ async function updateOrder(orderData) {
         orderData.notes     ?? null,
         orderData.sale_date ? new Date(orderData.sale_date).toISOString().slice(0, 10) : null,
         orderData.round_off ?? null,
-        saleId,                     // WHERE sale_uuid = $19
+        orderData.due_date ? new Date(orderData.due_date).toISOString().slice(0, 10) : null,
+        saleId,                     // WHERE sale_uuid = $20,
       ]
     );
  
@@ -1883,7 +1889,7 @@ async function updateOrder(orderData) {
       total_amount: totals.total_amount,
     };
  
-    await repository.createSaleItems(orderData, updatedSale, client);
+    await repository.syncSaleItems(orderData, updatedSale, client);
  
     // =========================================================
     // 9️⃣  PAYMENT
@@ -1959,6 +1965,7 @@ async function deleteSale(sale_id, zodu_id, branch_id) {
   try {
     const result = await repository.deleteSale(sale_id, zodu_id, branch_id);
     if (!result) return { success: false, message: "Sale not found" };
+    if (result.alreadyCancelled) return { success: false, message: "Sale is already cancelled" };
     return { success: true, data: result };
   } catch (err) {
     console.error("deleteSale Error:", err);

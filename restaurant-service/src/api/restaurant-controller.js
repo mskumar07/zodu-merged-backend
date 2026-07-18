@@ -1247,6 +1247,24 @@ router.get("/get/category/:zodu_id/:branch_id", async (req, res) => {
   }
 });
 
+router.get("/category-name", async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(vSchema.category_name_check, req.query);
+    if (errors) return res.status(400).json({ errors });
+
+    const result = await service.checkCategoryNameExists(input.zodu_id, input.branch_id, input.name, input.type);
+    if (!result.success) return res.status(400).json({ message: result.message });
+
+    return res.status(200).json({
+      message: result.exists ? "Category name already exists" : "Category name is available",
+      exists: result.exists,
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 router.post("/add/category", async (req, res) => {
   try {
     const { errors, input } = await RequestValidator(vSchema.category_create, req.body);

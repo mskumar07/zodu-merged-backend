@@ -596,7 +596,9 @@ exports.getStockHistoryRepo = async ({ item_uuid, zodu_id, branch_id }) => {
 
       COALESCE(
         CASE
-          WHEN l.transaction_type IN ('sale', 'sale_update', 'sale_update_reverse', 'sale_deleted')
+          WHEN l.transaction_type = 'SALE_RETURN'
+            THEN sr.return_id::TEXT
+          WHEN l.transaction_type IN ('sale', 'sale_update', 'sale_update_reverse', 'sale_deleted', 'sale_edit_qty_changed', 'sale_edit_item_added', 'sale_edit_item_removed', 'sale_edit_item_replaced')
             THEN s.sale_id::TEXT
           WHEN l.transaction_type IN ('purchase', 'purchase_item_added', 'purchase_item_qty_updated', 'purchase_item_removed', 'purchase_delete')
             THEN p.purchase_id::TEXT
@@ -619,6 +621,7 @@ exports.getStockHistoryRepo = async ({ item_uuid, zodu_id, branch_id }) => {
 
       CASE
         WHEN l.transaction_type = 'sale_deleted' THEN 'Reverse'
+        WHEN l.transaction_type = 'SALE_RETURN' THEN 'Sale Return'
         WHEN l.transaction_type IN ('sale', 'sale_update') THEN 'Sale'
         WHEN l.transaction_type = 'sale_update_reverse' THEN 'Sale Adjust'
         WHEN l.transaction_type = 'purchase' THEN 'Purchase'
@@ -635,6 +638,9 @@ exports.getStockHistoryRepo = async ({ item_uuid, zodu_id, branch_id }) => {
 
     LEFT JOIN tbl_purchase p
       ON p.id = l.reference_id
+
+    LEFT JOIN tbl_sale_returns sr
+      ON sr.return_uuid = l.reference_id
 
     WHERE l.item_uuid = $1
       AND l.zodu_id = $2

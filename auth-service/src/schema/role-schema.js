@@ -29,7 +29,7 @@ exports.createEmployeeUser = Joi.object({
   phone:                Joi.string().pattern(/^[0-9]{10,15}$/).required(),
   zodu_id:              Joi.string().required(),
   branch_id:            Joi.string().required(),
-  role_id:              Joi.string().uuid().required(),
+  role_id:              Joi.string().uuid().allow(null, ''),
   access_level:         Joi.string().max(30).default('Full Access'),
   reporting_manager_id: Joi.string().uuid().allow(null, ''),
   password:             Joi.string().pattern(/^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{8,20}$/).allow(null, '').messages({

@@ -38,8 +38,7 @@ exports.employee_create = Joi.object({
   bank_name:           Joi.string().max(100).allow(null, ''),
   ifsc_code:           Joi.string().max(20).allow(null, ''),
 
-  role_id:      Joi.string().uuid().required(),
-  access_level: Joi.string().max(30).allow(null, ''),
+  role_id:      Joi.string().uuid().allow(null, ''),
 
   password: Joi.string().pattern(/^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{8,20}$/).allow(null, '').messages({
     'string.pattern.base': 'Password must be 8-20 chars with 1 uppercase, 1 number, 1 special char',
@@ -79,7 +78,6 @@ exports.employee_update = Joi.object({
   ifsc_code:           Joi.string().max(20).allow(null, ''),
 
   role_id:      Joi.string().uuid().allow(null, ''),
-  access_level: Joi.string().max(30),
 
   password: Joi.string().pattern(/^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{8,20}$/).allow(null, '').messages({
     'string.pattern.base': 'Password must be 8-20 chars with 1 uppercase, 1 number, 1 special char',

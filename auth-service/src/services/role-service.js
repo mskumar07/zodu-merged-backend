@@ -137,11 +137,13 @@ exports.createEmployeeUser = async ({ email, phone, zodu_id, branch_id, role_id,
 
     const id = await repo.createEmployeeUser(client, { email, phone, zodu_id, password_hash });
 
-    await repo.assignEmployeeRole(client, {
-      user_id: id, role_id, zodu_id, branch_id,
-      reporting_manager_id: reporting_manager_id || null,
-      access_level:         access_level || 'Full Access',
-    });
+    if (role_id) {
+      await repo.assignEmployeeRole(client, {
+        user_id: id, role_id, zodu_id, branch_id,
+        reporting_manager_id: reporting_manager_id || null,
+        access_level:         access_level || 'Full Access',
+      });
+    }
 
     return id;
   });
