@@ -68,18 +68,18 @@ async function getStats(zodu_id, branch_id) {
       )
 
     SELECT
-      sa.total_sales,
+      TRUNC(sa.total_sales)                                                  AS total_sales,
       sa.total_invoices,
-      sa.todays_revenue,
-      sa.sales_due_balance + pa.purchase_due_balance                         AS total_due,
+      TRUNC(sa.todays_revenue)                                               AS todays_revenue,
+      TRUNC(sa.sales_due_balance + pa.purchase_due_balance)                  AS total_due,
       sa.sales_due_count   + pa.purchase_due_count                           AS total_reminders,
       ti.top_item_name,
       ti.top_item_sold,
       it.total_sold,
       ia.out_of_stock_count,
       ia.total_alerts,
-      sa.total_due_to_receivable_amount,
-      ea.expense_payable_balance + pa.purchase_payable_balance               AS total_due_to_payable_amount
+      TRUNC(sa.total_due_to_receivable_amount)                               AS total_due_to_receivable_amount,
+      TRUNC(ea.expense_payable_balance + pa.purchase_payable_balance)        AS total_due_to_payable_amount
     FROM       sales_agg    sa
     CROSS JOIN purchase_agg pa
     CROSS JOIN top_item      ti
@@ -211,12 +211,12 @@ exports.getDashboardSummary = async (zodu_id, branch_id ) => {
        WHERE o.zodu_id = $1 AND o.branch_id = $2 AND o.final_payment = true
       ) AS total_orders,
 
-      (SELECT COALESCE(SUM(o.total_amt), 0)
+      TRUNC((SELECT COALESCE(SUM(o.total_amt), 0)
        FROM tbl_orders o
        WHERE o.zodu_id = $1 AND o.branch_id = $2 AND o.final_payment = true
-      ) AS total_sales,
+      )) AS total_sales,
 
-      (SELECT COALESCE(SUM(p.balance_amount), 0)
+      TRUNC((SELECT COALESCE(SUM(p.balance_amount), 0)
        FROM tbl_expense p
        WHERE p.zodu_id = $1 AND p.branch_id = $2
       ) +
@@ -224,7 +224,7 @@ exports.getDashboardSummary = async (zodu_id, branch_id ) => {
       (SELECT COALESCE(SUM(p.balance_amount), 0)
        FROM tbl_purchase p
        WHERE p.zodu_id = $1 AND p.branch_id = $2
-      ) AS total_due, 
+      )) AS total_due,
 
       (SELECT COUNT(*)
        FROM tbl_inventory
@@ -481,13 +481,12 @@ async function getInventoryAlerts(zodu_id, branch_id, limit, cursor) {
       i.item_id,
       i.item_name,
       c.name AS category_name,
-      i.stock_qty,
+      i.stock_qty as available_qty,
       i.stock_alert,
       i.updated_at,
       CASE
-        WHEN i.stock_qty = 0                      THEN 'out'
-        WHEN i.stock_qty <= i.stock_alert * 0.5 THEN 'critical'
-        ELSE                                               'low'
+        WHEN i.stock_qty <= 0 THEN 'Out of Stock'
+        ELSE                       'Low Stock'                                
       END AS stock_status
     FROM tbl_inventory i
     LEFT JOIN tbl_menu_items m

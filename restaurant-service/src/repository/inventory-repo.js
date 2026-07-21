@@ -261,7 +261,8 @@ exports.adjustStock = async (
        reason_for_adjustment = COALESCE($3, reason_for_adjustment),
        notes                 = COALESCE($4, notes),
        updated_at            = NOW(),
-       stock_alert           = $5
+       stock_alert           = $5,
+       last_purchase_date    = CURRENT_DATE
      WHERE inventory_uuid = $2
      RETURNING *`,
     [qty, inventory_uuid, reason || null, notes || null, stock_alert]

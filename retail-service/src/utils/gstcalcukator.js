@@ -78,7 +78,7 @@ function calculateOrderTotals(
 
   let discount_amount = 0;
   let total_amount = 0;
-
+  console.log("gst_mode", gst_mode, "discount_type", discount_type, "discount_value", discount_value);
   // 🔥 BEFORE GST
   if (gst_mode === "before") {
     if (discount_type === "percentage") {
@@ -99,7 +99,7 @@ function calculateOrderTotals(
   } else {
     // 🔥 AFTER GST
     total_tax = parsedItems.reduce((sum, i) => sum + i.tax, 0);
-
+    console.log("subtotal", subtotal, "total_tax", total_tax, "discount_type", discount_type, "discount_value", discount_value);
     const gross = subtotal + total_tax;
 
     if (discount_type === "percentage") {
@@ -108,14 +108,16 @@ function calculateOrderTotals(
       discount_amount = Number(discount_value || 0);
     }
 
+    console.log("gross", gross, "discount_amount", discount_amount);
     total_amount = gross - discount_amount;
   }
 
   // =====================================================
   // 🔥 POS ROUNDOFF
   // =====================================================
-  const rounded_total = Math.round(total_amount);
+  const rounded_total = Number(total_amount.toFixed(2));
   const roundoff = Number((rounded_total - total_amount).toFixed(2));
+  console.log("total_amount", total_amount, "rounded_total", rounded_total, "roundoff", roundoff);
 
   return {
     total_items: items.length,
@@ -125,7 +127,7 @@ function calculateOrderTotals(
 
     total_amount: total_amount, // before roundoff
     roundoff,
-    final_amount: total_amount
+    final_amount: rounded_total
            // payable
   };
 }

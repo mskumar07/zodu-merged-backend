@@ -89,6 +89,15 @@ async function editMenuItem(item_uuid, input) {
 
     const updated = await repository.updateMenuItem(client, item_uuid, input);
 
+    if ('item_id' in input || 'item_name' in input) {
+      await repository.Inventory_Item_Update(client, {
+        item_id: input.item_id,
+        item_name: input.item_name,
+        item_uuid: item_uuid
+      });
+    }
+
+
     await client.query("COMMIT");
 
     return {
@@ -197,7 +206,7 @@ async function getInventorySummary({ zodu_id, branch_id }) {
     return {
       success: true,
       data: {
-        total_stock_value:  parseFloat(summary.total_stock_value),
+        total_stock_value:  parseInt(summary.total_stock_value, 10),
         low_stock_count:    parseInt(summary.low_stock_count,    10),
         out_of_stock_count: parseInt(summary.out_of_stock_count, 10),
         total_skus:         parseInt(summary.total_skus,         10),

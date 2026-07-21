@@ -171,9 +171,9 @@ exports.getPurchaseSummary = async ({ zodu_id, branch_id }) => {
     const { rows } = await conn.query(
       `SELECT
          COUNT(*)::text                                          AS total_purchase_count,
-         COALESCE(SUM(paid_amount),    0)::text                 AS total_paid_amount,
-         COALESCE(SUM(balance_amount), 0)::text                 AS total_unpaid_amount,
-         COALESCE(SUM(total_amount), 0)::text                 AS total_amount,
+         TRUNC(COALESCE(SUM(paid_amount),    0))::text                 AS total_paid_amount,
+         TRUNC(COALESCE(SUM(balance_amount), 0))::text                 AS total_unpaid_amount,
+         TRUNC(COALESCE(SUM(total_amount), 0))::text                 AS total_amount,
          COALESCE(SUM(
            CASE
              WHEN DATE_TRUNC('month', purchase_date) = DATE_TRUNC('month', CURRENT_DATE)
@@ -361,6 +361,14 @@ exports.deletePurchase = async (purchase_id) => {
       return { success: false, message: "Purchase not found" };
     }
 
+    // Bulk-reverse inventory + write stock ledger entries for every item
+    await repo.reversePurchaseStock(client, {
+      purchase_id,
+      reference_id: purchase.id,
+      zodu_id:      purchase.zodu_id,
+      branch_id:    purchase.branch_id,
+    });
+
     // Delete children before parent to satisfy FK constraints
     await repo.deletePurchaseItems(client, purchase_id);
     await repo.deletePurchasePayments(client, purchase_id);
@@ -369,7 +377,7 @@ exports.deletePurchase = async (purchase_id) => {
     await client.query("COMMIT");
     return {
       success: true,
-      message: "Deleted successfully. Inventory was not reversed.",
+      message: "Deleted successfully. Inventory stock reversed.",
     };
   } catch (err) {
     await client.query("ROLLBACK");

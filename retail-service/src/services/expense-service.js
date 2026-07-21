@@ -106,23 +106,23 @@ exports.getExpenseSummary = async ({ zodu_id, branch_id }) => {
     const { rows } = await conn.query(
       `SELECT
          COUNT(*)::text                                           AS total_expense_count,
-         COALESCE(SUM(paid_amount),    0)::text                  AS total_paid_amount,
-         COALESCE(SUM(balance_amount), 0)::text                  AS total_unpaid_amount,
-         COALESCE(SUM(
+         TRUNC(COALESCE(SUM(paid_amount),    0))::text                  AS total_paid_amount,
+         TRUNC(COALESCE(SUM(balance_amount), 0))::text                  AS total_unpaid_amount,
+         TRUNC(COALESCE(SUM(
            CASE WHEN payment_status = 'pending' THEN total_amount ELSE 0 END
-         ), 0)::text                                             AS pending_amount,
-         COALESCE(SUM(
+         ), 0))::text                                             AS pending_amount,
+         TRUNC(COALESCE(SUM(
            CASE
              WHEN DATE_TRUNC('month', expense_date) = DATE_TRUNC('month', CURRENT_DATE)
              THEN total_amount ELSE 0
            END
-         ), 0)::text                                             AS this_month_spent,
-         COALESCE(SUM(
+         ), 0))::text                                             AS this_month_spent,
+         TRUNC(COALESCE(SUM(
            CASE
              WHEN DATE_TRUNC('month', expense_date) = DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')
              THEN total_amount ELSE 0
            END
-         ), 0)::text                                             AS last_month_spent
+         ), 0))::text                                             AS last_month_spent
        FROM tbl_expense
        WHERE zodu_id = $1 AND branch_id = $2`,
       [zodu_id, branch_id]

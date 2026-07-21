@@ -1437,6 +1437,7 @@ async function createOrder(orderData) {
       orderData.discount_value,
       orderData.discount_gst_mode || "after"
     );
+    console.log("totals", totals)
 
     // ✅ PAYMENT LOGIC
  const finalTotal = totals.final_amount;
@@ -1454,11 +1455,12 @@ const balanceAmount = round(finalTotal - paidAmount);
 orderData.balance_amount=balanceAmount;
 
    let paymentStatus = "unpaid";
-
+  console.log("paidAmount", paidAmount, "finalTotal", finalTotal, "balanceAmount", balanceAmount);
 if (!isQuotation) {
   if (paidAmount <= 0) {
     paymentStatus = "unpaid";
   } else if (paidAmount < finalTotal) {
+    console.log("paidAmount is less than finalTotal");
     paymentStatus = "partially_paid";
   } else {
     paymentStatus = "fully_paid";

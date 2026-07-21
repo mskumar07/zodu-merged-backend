@@ -721,7 +721,7 @@ const createSchema = Joi.object({
 });
  
 const editSchema = Joi.object({
-  item_id: Joi.string().max(100).required(),
+  item_id: Joi.string().max(100),
   item_name:      Joi.string().trim().max(255),
   item_type:      Joi.string().valid("product", "service", "S", "P"),
   category_id:    Joi.number().integer().allow(null),

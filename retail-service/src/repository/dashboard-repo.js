@@ -15,7 +15,7 @@ async function getStats(zodu_id, branch_id) {
           COUNT(CASE WHEN payment_status IN ('unpaid','partially_paid') THEN 1 END)    AS sales_due_count,
           COALESCE(SUM(balance_amount), 0)                                             AS total_due_to_receivable_amount
         FROM tbl_sales
-        WHERE zodu_id = $1 AND branch_id = $2 AND sale_type != 'Q'
+        WHERE zodu_id = $1 AND branch_id = $2 AND sale_type != 'Q' AND cancelled_inv = false
       ),
 
       -- Single scan of tbl_purchase: covers total_due (purchase side),
@@ -37,7 +37,7 @@ async function getStats(zodu_id, branch_id) {
           SUM(si.quantity) AS qty
         FROM tbl_sale_items si
         JOIN tbl_sales s ON s.sale_uuid = si.sale_uuid
-        WHERE s.zodu_id = $1 AND s.branch_id = $2
+        WHERE s.zodu_id = $1 AND s.branch_id = $2 AND s.sale_type != 'Q' AND s.cancelled_inv = false
         GROUP BY si.item_name
       ),
       top_item AS (
@@ -68,18 +68,18 @@ async function getStats(zodu_id, branch_id) {
       )
 
     SELECT
-      sa.total_sales,
+      TRUNC(sa.total_sales)                                                  AS total_sales,
       sa.total_invoices,
-      sa.todays_revenue,
-      sa.sales_due_balance + pa.purchase_due_balance                         AS total_due,
+      TRUNC(sa.todays_revenue)                                               AS todays_revenue,
+      TRUNC(sa.sales_due_balance + pa.purchase_due_balance)                  AS total_due,
       sa.sales_due_count   + pa.purchase_due_count                           AS total_reminders,
       ti.top_item_name,
       ti.top_item_sold,
       it.total_sold,
       ia.out_of_stock_count,
       ia.total_alerts,
-      sa.total_due_to_receivable_amount,
-      ea.expense_payable_balance + pa.purchase_payable_balance               AS total_due_to_payable_amount
+      TRUNC(sa.total_due_to_receivable_amount)                               AS total_due_to_receivable_amount,
+      TRUNC(ea.expense_payable_balance + pa.purchase_payable_balance)        AS total_due_to_payable_amount
     FROM       sales_agg    sa
     CROSS JOIN purchase_agg pa
     CROSS JOIN top_item      ti
@@ -93,7 +93,7 @@ async function getStats(zodu_id, branch_id) {
 
 async function getSales(zodu_id, branch_id, limit, cursor) {
   const values = [zodu_id, branch_id, limit];
-  let where = "s.zodu_id = $1 AND s.branch_id = $2 AND s.sale_type != 'Q'";
+  let where = "s.zodu_id = $1 AND s.branch_id = $2 AND s.sale_type != 'Q' AND s.cancelled_inv = false";
 
   if (cursor) {
     where += ` AND (
@@ -149,7 +149,7 @@ async function getTopItems(zodu_id, branch_id, limit, cursor) {
     ON m.item_id = si.item_id AND m.zodu_id = $1 AND m.branch_id = $2
   LEFT JOIN tbl_category c
     ON c.id = m.category_id AND c.zodu_id = $1 AND c.branch_id = $2
-  WHERE s.zodu_id = $1 AND s.branch_id = $2
+  WHERE s.zodu_id = $1 AND s.branch_id = $2 AND s.sale_type != 'Q' AND s.cancelled_inv = false
   GROUP BY 
     si.item_id, 
     si.item_name, 
@@ -206,7 +206,7 @@ async function getReminders(zodu_id, branch_id, limit, cursor) {
       NULL::varchar                           AS vendor_name
     FROM tbl_sales s
     LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid
-    WHERE s.zodu_id = $1 AND s.branch_id = $2 AND s.sale_type != 'Q'
+    WHERE s.zodu_id = $1 AND s.branch_id = $2 AND s.sale_type != 'Q' AND s.cancelled_inv = false
       AND s.payment_status IN ('unpaid', 'partially_paid')
 
     UNION ALL
@@ -287,9 +287,8 @@ async function getInventoryAlerts(zodu_id, branch_id, limit, cursor) {
       i.reorder_level,
       i.last_stock_update,
       CASE
-        WHEN i.available_qty = 0                      THEN 'out'
-        WHEN i.available_qty <= i.reorder_level * 0.5 THEN 'critical'
-        ELSE                                               'low'
+        WHEN i.available_qty <= 0 THEN 'Out of Stock'
+        ELSE                          'Low Stock'
       END AS stock_status
     FROM tbl_inventory i
     LEFT JOIN tbl_menu_items m

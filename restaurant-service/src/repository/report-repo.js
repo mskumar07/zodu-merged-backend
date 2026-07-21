@@ -5,7 +5,7 @@ async function getSalesSummary(zodu_id, branch_id, year) {
   const { rows } = await conn.query(
     `WITH yearly AS (
       SELECT
-        COALESCE(SUM(total_amount), 0) AS total_yearly_sales
+        TRUNC(COALESCE(SUM(total_amount), 0)) AS total_yearly_sales
       FROM tbl_sales
       WHERE zodu_id = $1 AND branch_id = $2
         AND EXTRACT(YEAR FROM sale_date) = $3
@@ -13,7 +13,7 @@ async function getSalesSummary(zodu_id, branch_id, year) {
     ),
     monthly AS (
       SELECT
-        COALESCE(SUM(total_amount), 0) AS total_monthly_sales
+        TRUNC(COALESCE(SUM(total_amount), 0)) AS total_monthly_sales
       FROM tbl_sales
       WHERE zodu_id = $1 AND branch_id = $2
         AND EXTRACT(YEAR FROM sale_date)  = $3
@@ -22,7 +22,7 @@ async function getSalesSummary(zodu_id, branch_id, year) {
     ),
     last_year AS (
       SELECT
-        COALESCE(SUM(total_amount), 0) AS total_last_year
+        TRUNC(COALESCE(SUM(total_amount), 0)) AS total_last_year
       FROM tbl_sales
       WHERE zodu_id = $1 AND branch_id = $2
         AND EXTRACT(YEAR FROM sale_date) = $3 - 1
@@ -59,9 +59,9 @@ async function getPurchaseSummary(zodu_id, branch_id, year) {
   const { rows } = await conn.query(
     `SELECT
       COUNT(*)::int                                AS total_yearly_purchase_count,
-      COALESCE(SUM(total_amount), 0)               AS total_yearly_purchase,
-      COALESCE(SUM(paid_amount), 0)                AS total_yearly_paid,
-      COALESCE(SUM(total_amount - paid_amount), 0) AS total_yearly_pending
+      TRUNC(COALESCE(SUM(total_amount), 0))               AS total_yearly_purchase,
+      TRUNC(COALESCE(SUM(paid_amount), 0))                AS total_yearly_paid,
+      TRUNC(COALESCE(SUM(total_amount - paid_amount), 0)) AS total_yearly_pending
     FROM tbl_purchase
     WHERE zodu_id = $1 AND branch_id = $2
       AND EXTRACT(YEAR FROM purchase_date) = $3`,
@@ -74,9 +74,9 @@ async function getExpenseSummary(zodu_id, branch_id, year) {
   const { rows } = await conn.query(
     `SELECT
       COUNT(*)::int                                AS total_yearly_expense_count,
-      COALESCE(SUM(total_amount), 0)               AS total_yearly_expense,
-      COALESCE(SUM(paid_amount), 0)                AS total_yearly_paid,
-      COALESCE(SUM(total_amount - paid_amount), 0) AS total_yearly_pending
+      TRUNC(COALESCE(SUM(total_amount), 0))               AS total_yearly_expense,
+      TRUNC(COALESCE(SUM(paid_amount), 0))                AS total_yearly_paid,
+      TRUNC(COALESCE(SUM(total_amount - paid_amount), 0)) AS total_yearly_pending
     FROM tbl_expense
     WHERE zodu_id = $1 AND branch_id = $2
       AND EXTRACT(YEAR FROM expense_date) = $3`,
@@ -151,15 +151,15 @@ async function getCategoryItemSalesSummary(zodu_id, branch_id, from_date, to_dat
   const { rows } = await conn.query(
     `WITH period_sales AS (
       SELECT
-        COALESCE(SUM(total_amount), 0) AS total_sales,
-        COALESCE(SUM(total_tax),    0) AS total_tax,
-        COALESCE(SUM(subtotal),     0) AS total_subtotal
+        TRUNC(COALESCE(SUM(total_amount), 0)) AS total_sales,
+        TRUNC(COALESCE(SUM(total_tax), 0)) AS total_tax,
+        TRUNC(COALESCE(SUM(subtotal), 0)) AS total_subtotal
       FROM tbl_sales
       WHERE zodu_id = $1 AND branch_id = $2
         AND sale_date BETWEEN $3 AND $4
     ),
     prev_period AS (
-      SELECT COALESCE(SUM(total_amount), 0) AS prev_total
+      SELECT TRUNC(COALESCE(SUM(total_amount), 0)) AS prev_total
       FROM tbl_sales
       WHERE zodu_id = $1 AND branch_id = $2
         AND sale_date BETWEEN $5 AND $6
@@ -354,9 +354,9 @@ async function getDatewiseSaleSummary(zodu_id, branch_id, from_date, to_date) {
      )
      SELECT
        COUNT(DISTINCT s.sale_uuid)          AS total_orders,
-       COALESCE(SUM(s.total_amount), 0)     AS total_sales,
-       COALESCE(SUM(s.total_tax), 0)        AS total_tax,
-       COALESCE(SUM(p.sale_profit), 0)      AS total_profit
+       TRUNC(COALESCE(SUM(s.total_amount), 0))     AS total_sales,
+       TRUNC(COALESCE(SUM(s.total_tax), 0))        AS total_tax,
+       TRUNC(COALESCE(SUM(p.sale_profit), 0))      AS total_profit
      FROM tbl_sales s
      LEFT JOIN profit_per_sale p ON p.sale_uuid = s.sale_uuid
      WHERE s.zodu_id = $1 AND s.branch_id = $2
@@ -444,9 +444,9 @@ async function getPurchaseDatewiseSummary(zodu_id, branch_id, from_date, to_date
   const { rows } = await conn.query(
     `SELECT
        COUNT(DISTINCT purchase_id)                        AS total_orders,
-       COALESCE(SUM(total_amount), 0)                    AS total_purchase,
-       COALESCE(SUM(paid_amount),  0)                    AS total_paid,
-       COALESCE(SUM(total_amount - paid_amount), 0)      AS total_pending
+       TRUNC(COALESCE(SUM(total_amount), 0))                    AS total_purchase,
+       TRUNC(COALESCE(SUM(paid_amount),  0))                    AS total_paid,
+       TRUNC(COALESCE(SUM(total_amount - paid_amount), 0))      AS total_pending
      FROM tbl_purchase
      WHERE zodu_id = $1 AND branch_id = $2
        AND purchase_date BETWEEN $3 AND $4`,
@@ -520,9 +520,9 @@ async function getExpenseDatewiseSummary(zodu_id, branch_id, from_date, to_date)
   const { rows } = await conn.query(
     `SELECT
        COUNT(DISTINCT id)                               AS total_entries,
-       COALESCE(SUM(total_amount), 0)                  AS total_expense,
-       COALESCE(SUM(paid_amount), 0)                   AS total_paid,
-       COALESCE(SUM(total_amount - paid_amount), 0)    AS total_pending
+       TRUNC(COALESCE(SUM(total_amount), 0))                  AS total_expense,
+       TRUNC(COALESCE(SUM(paid_amount), 0))                   AS total_paid,
+       TRUNC(COALESCE(SUM(total_amount - paid_amount), 0))    AS total_pending
      FROM tbl_expense
      WHERE zodu_id = $1 AND branch_id = $2
        AND expense_date BETWEEN $3 AND $4`,
@@ -595,12 +595,12 @@ async function getProfitByYear(zodu_id, branch_id, year) {
      SELECT
        m.month_num,
        TO_CHAR(TO_DATE(m.month_num::text, 'MM'), 'Month') AS month_name,
-       COALESCE(s.total_sales,    0) AS total_sales,
-       COALESCE(p.total_purchase, 0) AS total_purchase,
-       COALESCE(e.total_expense,  0) AS total_expense,
-       COALESCE(s.total_sales, 0)
+       TRUNC(COALESCE(s.total_sales,    0)) AS total_sales,
+       TRUNC(COALESCE(p.total_purchase, 0)) AS total_purchase,
+       TRUNC(COALESCE(e.total_expense,  0)) AS total_expense,
+       TRUNC(COALESCE(s.total_sales, 0)
          - COALESCE(p.total_purchase, 0)
-         - COALESCE(e.total_expense,  0)              AS profit
+         - COALESCE(e.total_expense,  0))              AS profit
      FROM months m
      LEFT JOIN sales_data    s ON s.month_num = m.month_num
      LEFT JOIN purchase_data p ON p.month_num = m.month_num
@@ -636,7 +636,7 @@ async function getProfitYearwise(zodu_id, branch_id, limit, offset) {
     conn.query(
       `SELECT
          y.year,
-         COALESCE(s.total_sales,    0) AS total_sales,
+        COALESCE(s.total_sales,    0) AS total_sales,
          COALESCE(p.total_purchase, 0) AS total_purchase,
          COALESCE(e.total_expense,  0) AS total_expense,
          COALESCE(s.total_sales,    0)
@@ -691,9 +691,9 @@ async function getProfitYearwise(zodu_id, branch_id, limit, offset) {
     // overall summary — all years combined
     conn.query(
       `SELECT
-         COALESCE(SUM(s.total_amt), 0) AS total_sales,
-         COALESCE(SUM(p.total_amount), 0) AS total_purchase,
-         COALESCE(SUM(e.total_amount), 0) AS total_expense
+         TRUNC(COALESCE(SUM(s.total_amt), 0)) AS total_sales,
+         TRUNC(COALESCE(SUM(p.total_amount), 0)) AS total_purchase,
+         TRUNC(COALESCE(SUM(e.total_amount), 0)) AS total_expense
        FROM
          (SELECT SUM(total_amt) AS total_amt FROM tbl_orders    WHERE zodu_id = $1 AND branch_id = $2) s,
          (SELECT SUM(total_amount) AS total_amount FROM tbl_purchase WHERE zodu_id = $1 AND branch_id = $2) p,

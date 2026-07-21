@@ -223,6 +223,83 @@ exports.deletePurchaseItems = async (client, purchase_id) => {
   );
 };
 
+// Reverses stock for every item on a purchase in one round trip, and writes
+// one tbl_stock_ledger row per item in a second round trip. Set-based instead
+// of per-item queries so an N-item purchase costs 2 queries, not 2N.
+// Quantities are pre-aggregated per item_uuid so a purchase with duplicate
+// line items for the same item still reverses the full total.
+exports.reversePurchaseStock = async (client, { purchase_id, reference_id, zodu_id, branch_id }) => {
+  const { rows: totals } = await client.query(
+    `SELECT item_uuid, SUM(qty) AS qty
+     FROM tbl_purchase_items
+     WHERE purchase_id = $1 AND item_uuid IS NOT NULL
+     GROUP BY item_uuid`,
+    [purchase_id]
+  );
+
+  if (totals.length === 0) return [];
+
+  const itemUuids = totals.map((r) => r.item_uuid);
+  const qtys      = totals.map((r) => Number(r.qty));
+
+  const { rows: updated } = await client.query(
+    `WITH deltas AS (
+       SELECT item_uuid, qty FROM unnest($1::uuid[], $2::numeric[]) AS v(item_uuid, qty)
+     ),
+     before AS (
+       SELECT i.item_uuid, i.available_qty AS stock_before
+       FROM tbl_inventory i
+       JOIN deltas d ON d.item_uuid = i.item_uuid
+     )
+     UPDATE tbl_inventory i
+     SET available_qty      = GREATEST(i.available_qty - d.qty, 0),
+         last_stock_update  = NOW()
+     FROM deltas d
+     JOIN before b ON b.item_uuid = d.item_uuid
+     WHERE i.item_uuid = d.item_uuid
+     RETURNING i.item_uuid, i.item_id, i.item_name,
+               d.qty            AS qty_change,
+               b.stock_before   AS stock_before,
+               i.available_qty  AS stock_after`,
+    [itemUuids, qtys]
+  );
+
+  if (updated.length === 0) return [];
+
+  const note = `Stock reversed on deletion of purchase ${purchase_id}`;
+
+  const { rows: ledgerRows } = await client.query(
+    `INSERT INTO tbl_stock_ledger (
+       item_uuid, item_id, zodu_id, branch_id,
+       item_name, transaction_type,
+       reference_id, qty_change,
+       stock_before, stock_after, notes
+     )
+     SELECT u.item_uuid, u.item_id, $7, $8,
+            u.item_name, 'purchase_delete',
+            $9, -u.qty_change,
+            u.stock_before, u.stock_after, $10
+     FROM unnest(
+       $1::uuid[], $2::text[], $3::text[], $4::numeric[], $5::numeric[], $6::numeric[]
+     ) AS u(item_uuid, item_id, item_name, qty_change, stock_before, stock_after)
+     RETURNING *`,
+    [
+      updated.map((r) => r.item_uuid),
+      updated.map((r) => r.item_id),
+      updated.map((r) => r.item_name),
+      updated.map((r) => r.qty_change),
+      updated.map((r) => r.stock_before),
+      updated.map((r) => r.stock_after),
+      zodu_id,
+      branch_id,
+      reference_id,
+      note,
+    ]
+  );
+
+  return ledgerRows;
+};
+
 exports.updatePurchase = async (client, purchase_id, data) => {
   const totalAmount = Number(data.total_amount) || 0;
   const paidAmount  = Number(data.paid_amount) || 0;

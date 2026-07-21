@@ -418,7 +418,7 @@ exports.get_category_item_wise_report = async (zodu_id, branch_id, page = 1, lim
       )
       SELECT COUNT(DISTINCT fo.api_order_id)::int AS total_orders,
         COALESCE(SUM(oi.qty),0)::numeric AS total_qty,
-        COALESCE(SUM(oi.total_amount + oi.tax_amount),0)::numeric AS total_amount
+        TRUNC(COALESCE(SUM(oi.total_amount + oi.tax_amount),0))::numeric AS total_amount
       FROM filtered_orders fo
       JOIN tbl_ordered_items oi ON oi.api_order_id = fo.api_order_id
       WHERE oi.zodu_id = $1 AND oi.branch_id = $2

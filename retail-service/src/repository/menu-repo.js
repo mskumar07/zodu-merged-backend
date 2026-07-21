@@ -339,7 +339,7 @@ exports.getInventorySummary = async (client, { zodu_id, branch_id }) => {
   const { rows } = await client.query(
     `SELECT
        -- Total stock value  = SUM(available_qty * purchase_price)
-       COALESCE(SUM(i.available_qty * m.purchase_price), 0)   AS total_stock_value,
+       TRUNC(COALESCE(SUM(i.available_qty * m.purchase_price), 0))   AS total_stock_value,
  
        -- Low stock items
        COUNT(*) FILTER (
@@ -485,6 +485,40 @@ exports.adjustStock = async (
     [qty, inventory_uuid, stock_alert]
   );
  
+  if (rows.length === 0) throw new Error('Inventory record not found');
+  return rows[0];
+};
+
+
+exports.Inventory_Item_Update = async (
+  client,
+  { item_id, item_name, item_uuid }
+) => {
+  const setClauses = [];
+  const values     = [];
+  let   idx        = 1;
+
+  if (item_name !== undefined) {
+    setClauses.push(`item_name = $${idx++}`);
+    values.push(item_name);
+  }
+  if (item_id !== undefined) {
+    setClauses.push(`item_id = $${idx++}`);
+    values.push(item_id);
+  }
+
+  if (setClauses.length === 0) return null;
+
+  values.push(item_uuid);
+
+  const { rows } = await client.query(
+    `UPDATE tbl_inventory
+     SET    ${setClauses.join(", ")}
+     WHERE  item_uuid = $${idx}
+     RETURNING *`,
+    values
+  );
+
   if (rows.length === 0) throw new Error('Inventory record not found');
   return rows[0];
 };
