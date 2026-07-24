@@ -749,6 +749,65 @@ router.get('/api/customers/:custUuid/ledger', async (req, res, next) => {
   }
 });
 
+// GET /api/customers/:cust_uuid/outstanding-bills?zodu_id=&branch_id=
+// Feeds the "Mark Payment" modal — every unpaid/partially-paid invoice, oldest first.
+router.get("/api/customers/:cust_uuid/outstanding-bills", async (req, res) => {
+  try {
+    const zodu_id   = req.user?.zodu_id   ?? req.query.zodu_id;
+    const branch_id = req.user?.branch_id ?? req.query.branch_id;
+    const { cust_uuid } = req.params;
+
+    if (!zodu_id || !branch_id) {
+      return res.status(400).json({ error: "branch_id and zodu_id are required (via auth token or query param)." });
+    }
+
+    const data = await service.getCustomerOutstandingBills({ cust_uuid, zodu_id, branch_id });
+    if (!data.success) return res.status(400).json({ message: data.message });
+
+    return res.status(200).json({ success: true, data: data.data });
+  } catch (error) {
+    console.error("[GET /api/customers/:cust_uuid/outstanding-bills]", error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/customers/:cust_uuid/mark-payment
+// One payment (date, mode, reference, attachments) applied across several
+// selected bills, oldest-first — each bill absorbs what it needs before the
+// remainder rolls to the next.
+router.post(
+  "/api/customers/:cust_uuid/mark-payment",
+  upload.array("attachments", 5),
+  async (req, res) => {
+    try {
+      const body = { ...req.body, cust_uuid: req.params.cust_uuid };
+
+      // multipart/form-data arrives as strings — normalise before validation
+      if (typeof body.bills === "string") body.bills = JSON.parse(body.bills);
+      if (typeof body.total_payment === "string") body.total_payment = Number(body.total_payment);
+
+      const { error, value } = schema.mark_customer_payment.validate(body, { abortEarly: false });
+      if (error) {
+        return res.status(400).json({ errors: error.details.map((d) => d.message) });
+      }
+
+      value.zodu_id   = req.user?.zodu_id   ?? value.zodu_id;
+      value.branch_id = req.user?.branch_id ?? value.branch_id;
+
+      // Upload attachments (if any) to MinIO, same pipeline as other document uploads
+      value.attachment_url = req.files?.length ? await service.uploadMultiple(req.files) : [];
+
+      const data = await service.markCustomerPayment(value);
+      if (!data.success) return res.status(400).json({ message: data.message });
+
+      return res.status(201).json(data);
+    } catch (error) {
+      console.error("[POST /api/customers/:cust_uuid/mark-payment]", error);
+      return res.status(500).json({ error: error.message });
+    }
+  }
+);
+
 router.post(
   "/api/add/vendor",
   async (req, res) => {

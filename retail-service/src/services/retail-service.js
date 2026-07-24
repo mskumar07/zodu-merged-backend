@@ -2111,7 +2111,35 @@ async function markPayment(data) {
     return { success: false, message: err.message };
   }
 }
- 
+
+async function getCustomerOutstandingBills({ cust_uuid, zodu_id, branch_id }) {
+  try {
+    const bills = await repository.getCustomerOutstandingBills({ cust_uuid, zodu_id, branch_id });
+    const total_outstanding = bills.reduce((sum, b) => sum + Number(b.balance_amount), 0);
+
+    return {
+      success: true,
+      data: {
+        bills,
+        total_outstanding: +total_outstanding.toFixed(2),
+      },
+    };
+  } catch (err) {
+    console.error("getCustomerOutstandingBills error:", err);
+    return { success: false, message: err.message };
+  }
+}
+
+async function markCustomerPayment(data) {
+  try {
+    const result = await repository.markCustomerPayment(data);
+    return { success: true, message: "Payment recorded successfully", data: result };
+  } catch (err) {
+    console.error("markCustomerPayment error:", err);
+    return { success: false, message: err.message };
+  }
+}
+
 
 async function getPurchaseListData(
   branch_id,
@@ -2886,6 +2914,8 @@ module.exports = {
   markSalePayment,
   getCustomers,
   getCustomerLedger,
+  getCustomerOutstandingBills,
+  markCustomerPayment,
   createCustomer,
   markPayment,
   updateOrder,

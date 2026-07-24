@@ -360,6 +360,10 @@ exports.deletePurchase = async (purchase_id) => {
       await client.query("ROLLBACK");
       return { success: false, message: "Purchase not found" };
     }
+    if (purchase.cancelled_purchase) {
+      await client.query("ROLLBACK");
+      return { success: false, message: "Purchase already cancelled" };
+    }
 
     // Bulk-reverse inventory + write stock ledger entries for every item
     await repo.reversePurchaseStock(client, {
@@ -369,9 +373,8 @@ exports.deletePurchase = async (purchase_id) => {
       branch_id:    purchase.branch_id,
     });
 
-    // Delete children before parent to satisfy FK constraints
-    await repo.deletePurchaseItems(client, purchase_id);
-    await repo.deletePurchasePayments(client, purchase_id);
+    // Soft-delete: mark as cancelled instead of removing rows, so stock
+    // ledger history and payment records stay intact
     await repo.deletePurchase(client, purchase_id);
 
     await client.query("COMMIT");

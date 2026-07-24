@@ -382,10 +382,13 @@ exports.deletePurchase = async (purchase_id) => {
     await client.query("BEGIN");
 
     const purchase = await repo.getPurchaseByIdForUpdate(client, purchase_id);
-    console.log(purchase,"--------------------------------")
     if (!purchase) {
       await client.query("ROLLBACK");
       return { success: false, message: "Purchase not found" };
+    }
+    if (purchase.cancelled_purchase) {
+      await client.query("ROLLBACK");
+      return { success: false, message: "Purchase already cancelled" };
     }
 
     const items = purchase.items || [];
@@ -473,15 +476,14 @@ exports.deletePurchase = async (purchase_id) => {
       );
     }
 
-    // Delete children before parent to satisfy FK constraints
-    await repo.deletePurchaseItems(client, purchase_id);
-    await repo.deletePurchasePayments(client, purchase_id);
+    // Soft-delete: mark as cancelled instead of removing rows, so stock
+    // ledger history and payment records stay intact
     await repo.deletePurchase(client, purchase_id);
 
     await client.query("COMMIT");
     return {
       success: true,
-      message: "Deleted successfully. Inventory stock reversed.",
+      message: "Purchase cancelled successfully. Inventory stock reversed.",
     };
   } catch (err) {
     await client.query("ROLLBACK");

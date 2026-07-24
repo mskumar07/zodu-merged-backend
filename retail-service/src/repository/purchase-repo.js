@@ -60,11 +60,12 @@ exports.getPurchases = async ({
   branch_id,
   vendor_id,
   payment_status,
+  cancelled_purchase,
   search,
 } = {}) => {
-  const conditions = [];
-  const values = [];
-  let idx = 1;
+  const conditions = [`p.cancelled_purchase = $1`];
+  const values = [cancelled_purchase || false];
+  let idx = 2;
 
   if (zodu_id) {
     conditions.push(`p.zodu_id = $${idx++}`);
@@ -127,7 +128,7 @@ exports.getPurchaseById = async (id, { branch_id, zodu_id } = {}) => {
  const { rows: purchaseRows } = await conn.query(
   `SELECT
      p.*,
-     TO_CHAR(p.purchase_date, 'DD Mon YYYY') AS purchase_date_formatted,
+     TO_CHAR(p.purchase_date, 'YYYY-MM-DD') AS purchase_date_formatted,
      TO_CHAR(p.due_date, 'DD Mon YYYY') AS due_date_formatted,
      v.vendor_name,
      v.company_name,
@@ -342,7 +343,7 @@ exports.deletePurchasePayments = async (client, purchase_id) => {
 
 exports.deletePurchase = async (client, purchase_id) => {
   await client.query(
-    `DELETE FROM tbl_purchase WHERE purchase_id = $1`,
+    `UPDATE tbl_purchase SET cancelled_purchase = true, updated_at = NOW() WHERE purchase_id = $1`,
     [purchase_id]
   );
 };

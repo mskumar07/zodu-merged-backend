@@ -402,6 +402,25 @@ const mark_payment = Joi.object({
   payment_date:    Joi.date().iso().optional().allow(null, ""),
 });
 
+// ── Mark Payment — multiple bills, one payment (customer ledger modal) ──
+const mark_customer_payment = Joi.object({
+  zodu_id:      Joi.string().required(),
+  branch_id:    Joi.string().required(),
+  cust_uuid:    Joi.string().required(),
+  payment_date: Joi.date().iso().required(),
+  payment_mode: Joi.string().valid("Cash", "Card", "UPI", "Bank Transfer", "Cheque", "Credit").required(),
+  reference_no: Joi.string().optional().allow(null, ""),
+  total_payment: Joi.number().positive().required(),
+  bills: Joi.array()
+    .items(
+      Joi.object({
+        sale_id: Joi.string().required(),
+      })
+    )
+    .min(1)
+    .required(),
+});
+
 const purchase_order_create = Joi.object({
   zodu_id: Joi.string().max(50).required(),
   branch_id: Joi.string().max(50).required(),
@@ -780,6 +799,7 @@ module.exports = {
   add_customer,
   update_customer,
   mark_payment,
+  mark_customer_payment,
   createSchema,
   editSchema,
   order_update,

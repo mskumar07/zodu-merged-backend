@@ -2294,7 +2294,23 @@ exports.getCustomers = async (filters) => {
         gst,
         address_line1, address_line2,
         city, state, pincode,
-        created_at
+        created_at,
+        COALESCE((
+          SELECT SUM(s.total_amount)
+          FROM tbl_sales s
+          WHERE s.customer_uuid = tbl_customer.cust_uuid
+            AND s.zodu_id       = tbl_customer.zodu_id
+            AND s.branch_id     = tbl_customer.branch_id
+            AND s.sale_type     = 'S'
+        ), 0) AS total_sale,
+        COALESCE(opening_balance, 0) + COALESCE((
+          SELECT SUM(s.balance_amount)
+          FROM tbl_sales s
+          WHERE s.customer_uuid = tbl_customer.cust_uuid
+            AND s.zodu_id       = tbl_customer.zodu_id
+            AND s.branch_id     = tbl_customer.branch_id
+            AND s.sale_type     = 'S'
+        ), 0) AS outstanding_balance
      FROM tbl_customer
      ${whereClause}
      ORDER BY created_at DESC
@@ -2632,15 +2648,15 @@ exports.createCategory = async (zodu_id, branch_id, name, type) => {
     // 1️⃣ Check if category already exists in this branch
     const checkQuery = `
       SELECT * FROM tbl_category
-      WHERE zodu_id = $1 AND branch_id = $2 AND name = $3 AND type = $4
+      WHERE zodu_id = $1 AND branch_id = $2 AND LOWER(name) = LOWER($3)
       LIMIT 1;
     `;
-    const checkValues = [zodu_id, branch_id, name, type];
+    const checkValues = [zodu_id, branch_id, name];
     const checkResult = await conn.query(checkQuery, checkValues);
 
     if (checkResult.rows.length > 0) {
       // ✅ Category already exists → return existing
-      return checkResult.rows[0];
+      throw new Error("Category name already exists");
     }
 
     // 2️⃣ Otherwise, insert new category
@@ -2664,6 +2680,19 @@ exports.createCategory = async (zodu_id, branch_id, name, type) => {
 
 exports.updateCategory = async (id, name, type, zodu_id, branch_id) => {
   try {
+    // 1️⃣ Check if another category already has this name in this branch
+    const checkQuery = `
+      SELECT id FROM tbl_category
+      WHERE zodu_id = $1 AND branch_id = $2 AND LOWER(name) = LOWER($3) AND id != $4
+      LIMIT 1;
+    `;
+    const checkResult = await conn.query(checkQuery, [zodu_id, branch_id, name, id]);
+
+    if (checkResult.rows.length > 0) {
+      throw new Error("Category name already exists");
+    }
+
+    // 2️⃣ Otherwise, update the category
     const query = `
       UPDATE tbl_category
       SET name = $1,type = $3,updated_at = CURRENT_TIMESTAMP
@@ -4377,7 +4406,179 @@ exports.markPayment = async (data) => {
     throw err;
   }
 };
- 
+
+// ── GET outstanding bills for a customer (feeds the "Mark Payment" modal) ──
+exports.getCustomerOutstandingBills = async ({ cust_uuid, zodu_id, branch_id }) => {
+  const { rows } = await conn.query(
+    `SELECT
+       sale_id,
+       sale_uuid,
+       TO_CHAR(sale_date, 'YYYY-MM-DD')         AS invoice_date,
+       TO_CHAR(due_date,  'YYYY-MM-DD')         AS due_date,
+       total_amount,
+       paid_amount,
+       balance_amount,
+       payment_status
+     FROM tbl_sales
+     WHERE customer_uuid = $1
+       AND zodu_id        = $2
+       AND branch_id      = $3
+       AND sale_type      = 'S'
+       AND balance_amount > 0
+     ORDER BY sale_date ASC, created_at ASC`,   // oldest bill first, FIFO settlement order
+    [cust_uuid, zodu_id, branch_id]
+  );
+  return rows;
+};
+
+// ── MARK PAYMENT ACROSS MULTIPLE BILLS ──────────────────────────────────────
+// NOTE: tbl_sale_payment needs these columns added manually before this runs:
+//
+//   ALTER TABLE tbl_sale_payment
+//     ADD COLUMN IF NOT EXISTS attachment_url JSONB,
+//     ADD COLUMN IF NOT EXISTS reference_no   VARCHAR(100),
+//     ADD COLUMN IF NOT EXISTS group_id       UUID;
+//
+// One payment (date/mode/reference/attachments) is split across the selected
+// bills, oldest-first (FIFO), each bill absorbing as much as it needs before
+// the remainder rolls to the next bill.
+exports.markCustomerPayment = async (data) => {
+  const client = await conn.connect();
+  try {
+    await client.query("BEGIN");
+
+    const {
+      zodu_id, branch_id, cust_uuid,
+      payment_date, payment_mode, reference_no,
+      attachment_url,
+      bills,          // [{ sale_id }, ...] — order chosen by caller, but we re-sort by sale_date to guarantee FIFO
+    } = data;
+
+    let remaining = round(Number(data.total_payment));
+    if (remaining <= 0) throw new Error("total_payment must be greater than 0");
+
+    const saleIds = bills.map((b) => b.sale_id);
+
+    // Lock the selected bills and fetch them oldest-first for deterministic FIFO allocation.
+    const { rows: sales } = await client.query(
+      `SELECT sale_id, total_amount, paid_amount, balance_amount
+       FROM tbl_sales
+       WHERE sale_id = ANY($1::text[])
+         AND zodu_id   = $2
+         AND branch_id = $3
+         AND customer_uuid = $4
+       ORDER BY sale_date ASC, created_at ASC
+       FOR UPDATE`,
+      [saleIds, zodu_id, branch_id, cust_uuid]
+    );
+
+    if (sales.length !== saleIds.length) {
+      throw new Error("One or more selected bills were not found for this customer");
+    }
+
+    const groupId = randomUUID();
+
+    // Compute FIFO allocation in memory first (no DB round-trips in the loop),
+    // then flush all sale updates and all payment inserts as two bulk statements.
+    const updatedSales = [];
+    for (const sale of sales) {
+      if (remaining <= 0) break;
+
+      const balanceDue = round(Number(sale.balance_amount));
+      if (balanceDue <= 0) continue;
+
+      const applied = round(Math.min(balanceDue, remaining));
+      remaining = round(remaining - applied);
+
+      const newPaid    = round(Number(sale.paid_amount) + applied);
+      const newBalance = round(Number(sale.total_amount) - newPaid);
+      const newStatus  =
+        newBalance <= 0    ? "fully_paid"
+        : newPaid > 0      ? "partially_paid"
+                           : "unpaid";
+
+      updatedSales.push({
+        sale_id: sale.sale_id,
+        paid_amount: newPaid,
+        balance_amount: newBalance,
+        payment_status: newStatus,
+        applied_amount: applied,
+      });
+    }
+
+    let allocations = [];
+
+    if (updatedSales.length > 0) {
+      // Bulk UPDATE: one round trip for every affected bill via VALUES join.
+      await client.query(
+        `UPDATE tbl_sales AS s
+         SET paid_amount    = v.paid_amount,
+             balance_amount = v.balance_amount,
+             payment_status = v.payment_status
+         FROM (
+           SELECT * FROM UNNEST(
+             $1::text[], $2::numeric[], $3::numeric[], $4::text[]
+           ) AS t(sale_id, paid_amount, balance_amount, payment_status)
+         ) AS v
+         WHERE s.sale_id = v.sale_id AND s.zodu_id = $5 AND s.branch_id = $6`,
+        [
+          updatedSales.map((s) => s.sale_id),
+          updatedSales.map((s) => s.paid_amount),
+          updatedSales.map((s) => s.balance_amount),
+          updatedSales.map((s) => s.payment_status),
+          zodu_id,
+          branch_id,
+        ]
+      );
+
+      // Bulk INSERT: one round trip for every payment row via UNNEST.
+      const attachmentJson = JSON.stringify(attachment_url || []);
+      const { rows: paymentRows } = await client.query(
+        `INSERT INTO tbl_sale_payment (
+            sale_id, zodu_id, branch_id,
+            paid_amount, transaction_type, transaction_id,
+            payment_date, status, attachment_url, group_id
+         )
+         SELECT
+            v.sale_id, $2, $3,
+            v.applied_amount, $4::text, $7,
+            $5::date, v.status, $6::jsonb, $8
+         FROM UNNEST(
+           $1::text[], $9::numeric[], $10::text[]
+         ) AS v(sale_id, applied_amount, status)
+         RETURNING *`,
+        [
+          updatedSales.map((s) => s.sale_id),
+          zodu_id,
+          branch_id,
+          payment_mode,
+          payment_date,
+          attachmentJson,
+          reference_no ?? null,
+          groupId,
+          updatedSales.map((s) => s.applied_amount),
+          updatedSales.map((s) => (s.payment_status === "fully_paid" ? "paid" : "partial")),
+        ]
+      );
+
+      allocations = paymentRows;
+    }
+
+    await client.query("COMMIT");
+
+    return {
+      group_id: groupId,
+      unallocated_amount: remaining, // leftover if payment exceeded total selected balance
+      bills: updatedSales,
+      payments: allocations,
+    };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+};
 
 
 

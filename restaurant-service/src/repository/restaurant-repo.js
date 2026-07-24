@@ -2574,10 +2574,10 @@ exports.createCategory = async (zodu_id, branch_id, name, type) => {
     // 1️⃣ Check if category already exists in this branch
     const checkQuery = `
       SELECT * FROM tbl_category
-      WHERE zodu_id = $1 AND branch_id = $2 AND LOWER(name) = LOWER($3) AND type = $4
+      WHERE zodu_id = $1 AND branch_id = $2 AND LOWER(name) = LOWER($3)
       LIMIT 1;
     `;
-    const checkValues = [zodu_id, branch_id, name, type];
+    const checkValues = [zodu_id, branch_id, name];
     const checkResult = await conn.query(checkQuery, checkValues);
 
     if (checkResult.rows.length > 0) {
@@ -2605,6 +2605,19 @@ exports.createCategory = async (zodu_id, branch_id, name, type) => {
 
 exports.updateCategory = async (id, name, type, zodu_id, branch_id) => {
   try {
+    // 1️⃣ Check if another category already has this name in this branch
+    const checkQuery = `
+      SELECT id FROM tbl_category
+      WHERE zodu_id = $1 AND branch_id = $2 AND LOWER(name) = LOWER($3) AND id != $4
+      LIMIT 1;
+    `;
+    const checkResult = await conn.query(checkQuery, [zodu_id, branch_id, name, id]);
+
+    if (checkResult.rows.length > 0) {
+      throw new Error("Category name already exists");
+    }
+
+    // 2️⃣ Otherwise, update the category
     const query = `
       UPDATE tbl_category
       SET name = $1,type = $3,updated_at = CURRENT_TIMESTAMP
