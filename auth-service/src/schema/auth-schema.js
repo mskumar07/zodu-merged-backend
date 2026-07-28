@@ -39,6 +39,7 @@ const schema = {
     restaurant_name: joi.string().max(100).required(),
     owner_admin_name: joi.string().max(100).allow(null, ''),
     gst_no: joi.string().max(50).allow(null, ''),
+    type: joi.string().max(50).allow(null, ''),
     phone_number:    joi.string().length(10).pattern(/^[0-9]+$/).required(),
     email:           joi.string().email().required(),
     pincode: joi.string().pattern(/^[0-9]{5,10}$/).allow(null, ''),

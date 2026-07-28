@@ -29,6 +29,7 @@ const update_company = Joi.object({
   mobile_no: Joi.string().pattern(/^[0-9]{10,15}$/),
   mail_id: Joi.string().email().max(100),
   gst_no: Joi.string().max(50).allow(null, ''),
+  type: Joi.string().max(50).allow(null, ''),
   pincode: Joi.string().pattern(/^[0-9]{5,10}$/).allow(null, ''),
   city: Joi.string().max(50).allow(null, ''),
   district: Joi.string().max(50).allow(null, ''),
@@ -381,7 +382,9 @@ const add_customer = Joi.object({
   address_line2: Joi.string().optional().allow(null, ""),
   city:         Joi.string().optional().allow(null, ""),
   state:        Joi.string().optional().allow(null, ""),
-  pincode:      Joi.string().pattern(/^[0-9]{6}$/).optional().allow(null, ""),
+  pincode: Joi.string().pattern(/^[0-9]{6}$/).optional().allow(null, ""),
+  same_as_billing_address: Joi.boolean().required().default(false),
+  shipping_address: Joi.string().optional().allow(null, ""),
 })
 .custom((value, helpers) => {
   if (!value.cust_name && !value.cpy_name) {
@@ -708,7 +711,9 @@ const update_customer = Joi.object({
   address_line2: Joi.string().optional().allow(null, ""),
   city:         Joi.string().optional().allow(null, ""),
   state:        Joi.string().optional().allow(null, ""),
-  pincode:      Joi.string().pattern(/^[0-9]{6}$/).optional().allow(null, ""),
+  shipping_address: Joi.string().optional().allow(null, ""),
+  same_as_billing_address: Joi.boolean().required().default(false),
+  pincode: Joi.string().pattern(/^[0-9]{6}$/).optional().allow(null, ""),
 });
 
 const check_category_name = Joi.object({

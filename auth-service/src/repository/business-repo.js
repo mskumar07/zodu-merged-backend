@@ -52,7 +52,7 @@ exports.createCompany = async (data) => {
        RETURNING *`,
       [data.zodu_id, data.restaurant_name || data.business_name,
        data.owner_admin_name || null, data.mobile_no || null, data.mail_id || null,
-       data.gst_no || null, data.business_type || null, address_id, bank_details_id]
+       data.gst_no || null, data.type || data.business_type || null, address_id, bank_details_id]
     );
 
     await client.query('COMMIT');

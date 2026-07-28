@@ -21,6 +21,7 @@ const company_create = Joi.object({
   account_type: Joi.string().allow(null, ''),
   ifsc_code: Joi.string().max(20).allow(null, ''),
   business_type: Joi.string().max(50).allow(null, ''),
+  type: Joi.string().max(50).allow(null, ''),
   can_use_for_branch: Joi.boolean().default(true),
 });
 

@@ -5,6 +5,7 @@ const { deleteFileFromMinIO } = require('../services/retail-service');
 // const { calculateItemTax } = require('../utils/gstcalcukator');
 const { generatePublicOrderNo } = require('./generatePublicOrderNo');
 const { calculateItemTax } = require('../utils/gstcalcukator');
+const sharp = require('sharp');
 
 
 // ========== Company Repository Functions ==========
@@ -81,8 +82,8 @@ exports.createCompany = async (companyData) => {
     // 3. Insert business
     const companyRes = await client.query(
       `INSERT INTO tbl_business
-         (zodu_id, business_name, owner_admin_name, mobile_no, mail_id, gst_no, address_id, bank_details_id, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
+         (zodu_id, business_name, owner_admin_name, mobile_no, mail_id, gst_no, address_id, bank_details_id, status,type)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true,$9)
        ON CONFLICT (zodu_id) DO UPDATE
          SET business_name    = EXCLUDED.business_name,
              owner_admin_name = EXCLUDED.owner_admin_name,
@@ -95,7 +96,7 @@ exports.createCompany = async (companyData) => {
        RETURNING *`,
       [companyData.zodu_id, companyData.restaurant_name, companyData.owner_admin_name || null,
        companyData.mobile_no, companyData.mail_id, companyData.gst_no || null,
-       address_id, bank_details_id]
+       address_id, bank_details_id, companyData.type || null]
     );
 
     if (!companyRes.rows[0]) throw new Error('Company insert returned no row');
@@ -2295,6 +2296,7 @@ exports.getCustomers = async (filters) => {
         address_line1, address_line2,
         city, state, pincode,
         created_at,
+        shipping_address, same_as_billing_address,
         COALESCE((
           SELECT SUM(s.total_amount)
           FROM tbl_sales s
@@ -2303,6 +2305,14 @@ exports.getCustomers = async (filters) => {
             AND s.branch_id     = tbl_customer.branch_id
             AND s.sale_type     = 'S'
         ), 0) AS total_sale,
+        COALESCE((
+          SELECT COUNT(*)
+          FROM tbl_sales s
+          WHERE s.customer_uuid = tbl_customer.cust_uuid
+            AND s.zodu_id       = tbl_customer.zodu_id
+            AND s.branch_id     = tbl_customer.branch_id
+            AND s.sale_type     = 'S'
+        ), 0) AS total_invoice,
         COALESCE(opening_balance, 0) + COALESCE((
           SELECT SUM(s.balance_amount)
           FROM tbl_sales s
@@ -2347,83 +2357,58 @@ exports.getCustomerById = async (cust_uuid) => {
 };
 
 // ── 3. UPDATE CUSTOMER ──────────────────────────────────────
+
+// Columns eligible for a partial update, keyed by the field name on `data`.
+// `serialize` is only needed for columns that don't map 1:1 onto their input value.
+const CUSTOMER_UPDATE_FIELDS = {
+  cust_name:      {},
+  cpy_name:       {},
+  mobile_no:      { serialize: (v) => JSON.stringify(Array.isArray(v) ? v : [v]) },
+  email_id:       { serialize: (v) => JSON.stringify(Array.isArray(v) ? v : [v]) },
+  gst:            {},
+  address_line1:  {},
+  address_line2:  {},
+  city:           {},
+  state:          {},
+  pincode: {},
+  shipping_address: {},
+  same_as_billing_address: {},
+};
+
 exports.updateCustomer = async (data) => {
-  const {
-    cust_uuid,
-    cust_name,
-    cpy_name,
-    mobile_no,
-    email_id,
-    gst,
-    address_line1,
-    address_line2,
-    city,
-    state,
-    pincode,
-  } = data;
+  const { cust_uuid } = data;
 
-  // Build dynamic update query
-  const updates = [];
+  const columns = [];
   const values = [];
-  let paramIndex = 1;
 
-  if (cust_name !== undefined) {
-    updates.push(`cust_name = $${paramIndex++}`);
-    values.push(cust_name ?? null);
-  }
-  if (cpy_name !== undefined) {
-    updates.push(`cpy_name = $${paramIndex++}`);
-    values.push(cpy_name ?? null);
-  }
-  if (mobile_no !== undefined) {
-    updates.push(`mobile_no = $${paramIndex++}`);
-    values.push(JSON.stringify(Array.isArray(mobile_no) ? mobile_no : [mobile_no]));
-  }
-  if (email_id !== undefined) {
-    updates.push(`email_id = $${paramIndex++}`);
-    values.push(JSON.stringify(Array.isArray(email_id) ? email_id : [email_id]));
-  }
-  if (gst !== undefined) {
-    updates.push(`gst = $${paramIndex++}`);
-    values.push(gst ?? null);
-  }
-  if (address_line1 !== undefined) {
-    updates.push(`address_line1 = $${paramIndex++}`);
-    values.push(address_line1 ?? null);
-  }
-  if (address_line2 !== undefined) {
-    updates.push(`address_line2 = $${paramIndex++}`);
-    values.push(address_line2 ?? null);
-  }
-  if (city !== undefined) {
-    updates.push(`city = $${paramIndex++}`);
-    values.push(city ?? null);
-  }
-  if (state !== undefined) {
-    updates.push(`state = $${paramIndex++}`);
-    values.push(state ?? null);
-  }
-  if (pincode !== undefined) {
-    updates.push(`pincode = $${paramIndex++}`);
-    values.push(pincode ?? null);
+  for (const [field, { serialize }] of Object.entries(CUSTOMER_UPDATE_FIELDS)) {
+    const value = data[field];
+    if (value === undefined) continue;
+
+    columns.push(field);
+    values.push(serialize ? serialize(value) : value ?? null);
   }
 
-  if (updates.length === 0) {
+  if (columns.length === 0) {
     throw new Error("No fields to update");
   }
 
-  updates.push(`updated_at = NOW()`);
+  const setClause = columns
+    .map((column, i) => `${column} = $${i + 1}`)
+    .concat("updated_at = NOW()")
+    .join(", ");
+
   values.push(cust_uuid);
 
-  const query = `
-    UPDATE tbl_customer
-    SET ${updates.join(", ")}
-    WHERE cust_uuid = $${paramIndex}
-    RETURNING *
-  `;
+  const { rows } = await conn.query(
+    `UPDATE tbl_customer
+        SET ${setClause}
+      WHERE cust_uuid = $${values.length}
+      RETURNING *`,
+    values
+  );
 
-  const result = await conn.query(query, values);
-  return result.rows[0] ?? null;
+  return rows[0] ?? null;
 };
 
 
@@ -3777,7 +3762,9 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
         c.address_line2    AS customer_address_line2,
         c.city             AS customer_city,
         c.state            AS customer_state,
-        c.pincode          AS customer_pincode
+        c.pincode          AS customer_pincode,
+        c.shipping_address,
+        c.same_as_billing_address
  
      FROM tbl_sales s
      LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid AND c.branch_id = s.branch_id
@@ -3833,7 +3820,9 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
         address_line2: row.customer_address_line2,
         city:          row.customer_city,
         state:         row.customer_state,
-        pincode:       row.customer_pincode,
+      pincode: row.customer_pincode,
+        shipping_address: row.shipping_address,
+        same_as_billing_address: row.same_as_billing_address,
       }
     : null;
  
@@ -4206,9 +4195,9 @@ exports.createCustomer = async (data) => {
         mobile_no, email_id,
         gst,
         address_line1, address_line2,
-        city, state, pincode
+        city, state, pincode,shipping_address,same_as_billing_address
      )
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      RETURNING *`,
     [
       data.zodu_id,
@@ -4223,92 +4212,14 @@ exports.createCustomer = async (data) => {
       data.address_line2 ?? null,
       data.city         ?? null,
       data.state        ?? null,
-      data.pincode      ?? null,
+      data.pincode ?? null,
+      data.shipping_address ?? null,
+      data.same_as_billing_address ?? null
     ]
   );
   return result.rows[0];
 };
- 
-exports.updateCustomer = async (data) => {
-  const {
-    cust_uuid,
-    cust_name,
-    cpy_name,
-    mobile_no,
-    email_id,
-    gst,
-    address_line1,
-    address_line2,
-    city,
-    state,
-    pincode,
-  } = data;
 
-  // Build dynamic update query
-  const updates = [];
-  const values = [];
-  let paramIndex = 1;
-
-  if (cust_name !== undefined) {
-    updates.push(`cust_name = $${paramIndex++}`);
-    values.push(cust_name ?? null);
-  }
-  if (cpy_name !== undefined) {
-    updates.push(`cpy_name = $${paramIndex++}`);
-    values.push(cpy_name ?? null);
-  }
-  if (mobile_no !== undefined) {
-    updates.push(`mobile_no = $${paramIndex++}`);
-    values.push(JSON.stringify(Array.isArray(mobile_no) ? mobile_no : [mobile_no]));
-  }
-  if (email_id !== undefined) {
-    updates.push(`email_id = $${paramIndex++}`);
-    values.push(JSON.stringify(Array.isArray(email_id) ? email_id : [email_id]));
-  }
-  if (gst !== undefined) {
-    updates.push(`gst = $${paramIndex++}`);
-    values.push(gst ?? null);
-  }
-  if (address_line1 !== undefined) {
-    updates.push(`address_line1 = $${paramIndex++}`);
-    values.push(address_line1 ?? null);
-  }
-  if (address_line2 !== undefined) {
-    updates.push(`address_line2 = $${paramIndex++}`);
-    values.push(address_line2 ?? null);
-  }
-  if (city !== undefined) {
-    updates.push(`city = $${paramIndex++}`);
-    values.push(city ?? null);
-  }
-  if (state !== undefined) {
-    updates.push(`state = $${paramIndex++}`);
-    values.push(state ?? null);
-  }
-  if (pincode !== undefined) {
-    updates.push(`pincode = $${paramIndex++}`);
-    values.push(pincode ?? null);
-  }
-
-  if (updates.length === 0) {
-    throw new Error("No fields to update");
-  }
-
-  updates.push(`updated_at = NOW()`);
-  values.push(cust_uuid);
-
-  const query = `
-    UPDATE tbl_customer
-    SET ${updates.join(", ")}
-    WHERE cust_uuid = $${paramIndex}
-    RETURNING *
-  `;
-
-  const result = await conn.query(query, values);
-  return result.rows[0] ?? null;
-};
-
- 
 // ============================================================
 //  payment.repository.js
 // ============================================================
@@ -4413,8 +4324,8 @@ exports.getCustomerOutstandingBills = async ({ cust_uuid, zodu_id, branch_id }) 
     `SELECT
        sale_id,
        sale_uuid,
-       TO_CHAR(sale_date, 'YYYY-MM-DD')         AS invoice_date,
-       TO_CHAR(due_date,  'YYYY-MM-DD')         AS due_date,
+       TO_CHAR(sale_date, 'DD-MM-YYYY')         AS invoice_date,
+       TO_CHAR(due_date,  'DD-MM-YYYY')         AS due_date,
        total_amount,
        paid_amount,
        balance_amount,

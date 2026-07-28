@@ -329,6 +329,7 @@ async function AddCompany(userInputs, user_id) {
     holder_name,
     bank_name,
     bank_branch,
+    type,
     same_for_branch = true,
   } = userInputs;
 
@@ -355,6 +356,7 @@ async function AddCompany(userInputs, user_id) {
       bank_name,
       bank_branch,
       can_use_for_branch: same_for_branch,
+      type
     });
   } catch (err) {
     console.error('createcompany failed:', err.message);
@@ -383,6 +385,15 @@ async function AddCompany(userInputs, user_id) {
       console.error('Default branch creation failed (non-fatal):', err.message);
     }
   }
+
+  // Seed Admin employee in employee-service (non-blocking — failure must not break company creation)
+  axios.post(`${EMPLOYEE_SERVICE_URL}/internal/employee/create-admin`, {
+    zodu_id,
+    branch_id: 'B1',
+    user_id,
+    phone:     phone_number || null,
+    email:     email        || null,
+  }).catch(err => console.error('[employee-service] create-admin failed (non-fatal):', err.message));
 
   return FormateData({ zodu_id, restaurant_name });
 }
