@@ -3613,11 +3613,10 @@ exports.getSalesHistory = async (filters) => {
         s.payment_status,
         s.notes,
         s.round_off,
- 
-        TO_CHAR(s.sale_date,  'DD Mon YYYY')             AS sale_date_fmt,
-        TO_CHAR(s.sale_time,  'HH12:MI AM')              AS sale_time_fmt,
+         TO_CHAR(s.sale_time,  'HH12:MI AM')              AS sale_time_fmt,
         TO_CHAR(s.created_at, 'DD Mon YYYY, HH12:MI AM') AS created_at_fmt,
- 
+        TO_CHAR(s.sale_date + s.created_at::time, 'DD Mon YYYY, HH12:MI AM') AS sale_date_fmt,
+
         -- customer
         c.cust_uuid,
         c.cust_id,
@@ -3748,6 +3747,7 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
         TO_CHAR(s.sale_time,  'HH12:MI AM')              AS sale_time_fmt,
         TO_CHAR(s.created_at, 'DD Mon YYYY, HH12:MI AM') AS created_at_fmt,
         s.round_off,
+        TO_CHAR(s.due_date,  'DD-Mon-YYYY')             AS due_date_fmt,
  
         c.cust_uuid,
         c.cust_id AS customer_id,
@@ -3803,6 +3803,7 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
     sale_time_fmt:   row.sale_time_fmt,
     created_at_fmt: row.created_at_fmt,
     round_off: row.round_off,
+    due_date_fmt: row.due_date_fmt,
   };
  
   const customer = row.cust_uuid
@@ -4324,8 +4325,8 @@ exports.getCustomerOutstandingBills = async ({ cust_uuid, zodu_id, branch_id }) 
     `SELECT
        sale_id,
        sale_uuid,
-       TO_CHAR(sale_date, 'DD-MM-YYYY')         AS invoice_date,
-       TO_CHAR(due_date,  'DD-MM-YYYY')         AS due_date,
+       TO_CHAR(sale_date, 'DD-MON-YYYY')         AS invoice_date,
+       TO_CHAR(due_date,  'DD-MON-YYYY')         AS due_date,
        total_amount,
        paid_amount,
        balance_amount,

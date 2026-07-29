@@ -3535,7 +3535,7 @@ exports.getSaleById = async (api_order_id, zodu_id, branch_id) => {
         s.total_amt,
         s.payment_type,
         s.final_payment,
-        TO_CHAR(s.order_date,  'DD Mon YYYY')             AS sale_date_fmt,
+        TO_CHAR(s.created_at,  'DD Mon YYYY HH12:MI AM')             AS sale_date_fmt,
         TO_CHAR(s.order_time,  'HH12:MI AM')              AS sale_time_fmt,
         TO_CHAR(s.created_at, 'DD Mon YYYY, HH12:MI AM') AS created_at_fmt,
         s.customer_name,

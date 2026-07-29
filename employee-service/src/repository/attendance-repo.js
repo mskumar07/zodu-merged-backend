@@ -45,7 +45,7 @@ exports.findEmployeesForMarking = async ({ zodu_id, branch_id, attendance_date, 
      FROM tbl_employees e
      LEFT JOIN tbl_attendance a
        ON a.employee_id = e.employee_id AND a.attendance_date = $3::date
-     WHERE e.zodu_id = $1 AND e.branch_id = $2 AND e.status = 'active'
+     WHERE e.zodu_id = $1 AND e.branch_id = $2 AND e.status = 'active' and e.name != 'Admin'
      ORDER BY e.name
      LIMIT $4 OFFSET $5`,
     [zodu_id, branch_id, attendance_date, limit, offset]
