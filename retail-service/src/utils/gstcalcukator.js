@@ -5,7 +5,7 @@ const toNumber = (value) => {
   return Number.isFinite(num) ? num : 0;
 };
 
-const round2 = (value) => Math.round((value + Number.EPSILON) * 100) / 100;
+const round2 = (value) => Math.round((value + Number.EPSILON) * 1000) / 1000;
 
 const isTaxInclusive = (value) =>
   value === true || value === "true" || value === 1 || value === "1";
@@ -76,6 +76,11 @@ function calculateOrderTotals(
 
   subtotal = parsedItems.reduce((sum, i) => sum + i.base, 0);
 
+  // Per-item discounts (tbl_sale_items.discount), summed separately from the
+  // order-level discount — matches the frontend's itemDiscountTotal, which is
+  // subtracted from grandTotalRaw after the order-level discount in both modes.
+  const itemDiscountTotal = items.reduce((sum, item) => sum + toNumber(item.discount), 0);
+
   let discount_amount = 0;
   let total_amount = 0;
   console.log("gst_mode", gst_mode, "discount_type", discount_type, "discount_value", discount_value);
@@ -95,7 +100,7 @@ function calculateOrderTotals(
       return sum + (newBase * (i.tax / i.base || 0));
     }, 0);
 
-    total_amount = discountedSubtotal + total_tax;
+    total_amount = discountedSubtotal + total_tax - itemDiscountTotal;
   } else {
     // 🔥 AFTER GST
     total_tax = parsedItems.reduce((sum, i) => sum + i.tax, 0);
@@ -109,13 +114,13 @@ function calculateOrderTotals(
     }
 
     console.log("gross", gross, "discount_amount", discount_amount);
-    total_amount = gross - discount_amount;
+    total_amount = gross - discount_amount - itemDiscountTotal;
   }
 
   // =====================================================
-  // 🔥 POS ROUNDOFF
+  // 🔥 POS ROUNDOFF — round to nearest whole rupee, matching frontend
   // =====================================================
-  const rounded_total = Number(total_amount.toFixed(2));
+  const rounded_total = Math.round(total_amount);
   const roundoff = Number((rounded_total - total_amount).toFixed(2));
   console.log("total_amount", total_amount, "rounded_total", rounded_total, "roundoff", roundoff);
 
@@ -123,6 +128,7 @@ function calculateOrderTotals(
     total_items: items.length,
     subtotal: subtotal,
     discount_amount: discount_amount,
+    item_discount_total: itemDiscountTotal,
     total_tax: total_tax,
 
     total_amount: total_amount, // before roundoff
@@ -132,8 +138,41 @@ function calculateOrderTotals(
   };
 }
 
+// Per-item tax figures that reflect the order-level discount, mirroring the
+// redistribution calculateOrderTotals does for "before" GST mode. "after" mode
+// leaves item tax untouched since that discount is a final-total rebate, not
+// a tax adjustment — matches calculateOrderTotals's own math exactly.
+function calculateItemsWithDiscount(items, discount_type, discount_value, gst_mode = "after") {
+  const parsedItems = items.map((item) => ({ item, taxData: calculateItemTax(item) }));
+  const subtotal = parsedItems.reduce((sum, i) => sum + i.taxData.base, 0);
+
+  if (gst_mode !== "before" || subtotal === 0) {
+    return parsedItems.map(({ taxData }) => taxData);
+  }
+
+  const discount_amount = discount_type === "percentage"
+    ? (subtotal * toNumber(discount_value)) / 100
+    : toNumber(discount_value);
+  const discountedSubtotal = subtotal - discount_amount;
+
+  return parsedItems.map(({ taxData }) => {
+    const ratio = taxData.base / subtotal || 0;
+    const newBase = discountedSubtotal * ratio;
+    const tax_amount = (newBase * taxData.gst_percentage) / 100;
+
+    return {
+      ...taxData,
+      base: round2(newBase),
+      tax_amount: round2(tax_amount),
+      cgst: round2(tax_amount / 2),
+      sgst: round2(tax_amount / 2),
+    };
+  });
+}
+
 module.exports = {
   calculateItemTax,
   getTaxFromItem,
-  calculateOrderTotals
+  calculateOrderTotals,
+  calculateItemsWithDiscount
 };

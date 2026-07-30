@@ -1475,6 +1475,7 @@ if (!isQuotation) {
         paid_amount: paidAmount,
         payment_status: paymentStatus,
         ...totals,
+        total_amount: finalTotal,
       },
       client
     );
@@ -1815,10 +1816,10 @@ async function updateOrder(orderData) {
  
     const paidAmount = isFinalQuotation
       ? 0
-      : Number(orderData.paid_amount ?? totals.total_amount);
- 
-    const balanceAmount = totals.total_amount - paidAmount;
- 
+      : round(orderData.paid_amount ?? totals.final_amount);
+
+    const balanceAmount = round(totals.final_amount - paidAmount);
+
     const paymentStatus = isFinalQuotation
       ? 'unpaid'
       : paidAmount <= 0
@@ -1852,7 +1853,8 @@ async function updateOrder(orderData) {
          sale_date             = $17,
          round_off             = $18,
          updated_at            = NOW(),
-         due_date              = $19
+         due_date              = $19,
+         discount_gst_mode     = $21
        WHERE sale_uuid = $20`,
       [
         newSaleId,
@@ -1866,7 +1868,7 @@ async function updateOrder(orderData) {
         orderData.discount_type   ?? null,
         Number(orderData.discount_value ?? 0),
         totals.discount_amount,
-        totals.total_amount,
+        totals.final_amount,
         paidAmount,
         balanceAmount,
         paymentStatus,
@@ -1875,9 +1877,10 @@ async function updateOrder(orderData) {
         // ✅ FIX: notes / sale_date / round_off were missing from SET
         orderData.notes     ?? null,
         orderData.sale_date ? new Date(orderData.sale_date).toISOString().slice(0, 10) : null,
-        orderData.round_off ?? null,
+        orderData.roundoff ?? orderData.round_off ?? null,
         orderData.due_date ? new Date(orderData.due_date).toISOString().slice(0, 10) : null,
         saleId,                     // WHERE sale_uuid = $20,
+        orderData.discount_gst_mode ?? null,
       ]
     );
  

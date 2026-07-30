@@ -4,7 +4,7 @@ const { randomUUID } = require("crypto");
 const { deleteFileFromMinIO } = require('../services/retail-service');
 // const { calculateItemTax } = require('../utils/gstcalcukator');
 const { generatePublicOrderNo } = require('./generatePublicOrderNo');
-const { calculateItemTax } = require('../utils/gstcalcukator');
+const { calculateItemsWithDiscount } = require('../utils/gstcalcukator');
 const sharp = require('sharp');
 
 
@@ -3241,7 +3241,8 @@ exports.createOrder = async (orderData, client) => {
         total_items, subtotal, total_tax,
         discount_type, discount_value, discount_amount,
         total_amount, paid_amount, balance_amount,
-        payment_status, notes, sale_date, sale_time,due_date,round_off
+        payment_status, notes, sale_date, sale_time,due_date,round_off,
+        discount_gst_mode
      )
      VALUES (
         $1,$2,$3,
@@ -3250,35 +3251,37 @@ exports.createOrder = async (orderData, client) => {
         $6,$7,$8,
         $9,$10,$11,
         $12,$13,$14,
-        $15,$16,$17,$18,$19,$20
+        $15,$16,$17,$18,$19,$20,
+        $21
      )
      RETURNING *`,
     [
       sale_id,
       orderData.zodu_id,
       orderData.branch_id,
- 
+
       orderData.sale_type ?? null,
       orderData.customer_id ?? null,
- 
+
       orderData.total_items,
       orderData.subtotal,
       orderData.total_tax,
- 
+
       orderData.discount_type   ?? null,
       Number(orderData.discount_value ?? 0),
       orderData.discount_amount,
- 
+
       orderData.total_amount,
       orderData.paid_amount,
       orderData.balance_amount,
- 
+
       orderData.payment_status,
       orderData.notes     ?? null,
       sale_date,
       orderData.sale_time ?? null,
       orderData.due_date ?? null,
-      orderData.round_off ?? 0
+      orderData.round_off ?? 0,
+      orderData.discount_gst_mode ?? null
     ]
   );
  
@@ -3295,44 +3298,52 @@ exports.createOrder = async (orderData, client) => {
 exports.createSaleItems = async (orderData, sale, client) => {
   const db = client ?? conn;
   const items = orderData.items;
- 
+
   if (!Array.isArray(items) || items.length === 0) {
     throw new Error('Items array is empty or invalid');
   }
- 
+
   const insertedItems = [];
- 
-  for (const item of items) {
-    const taxData = calculateItemTax(item);
- 
+  const itemTaxData = calculateItemsWithDiscount(
+    items,
+    orderData.discount_type,
+    orderData.discount_value,
+    orderData.discount_gst_mode || 'after'
+  );
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const taxData = itemTaxData[i];
+
     const result = await db.query(
       `INSERT INTO tbl_sale_items (
           sale_uuid, sale_id,
           item_id,   item_name,
           variant_id, variant_name,
           unit, quantity, price,
-          discount,
+          discount, discount_percentage,
           gst_percentage,
           tax_amount, cgst, sgst,
           tax_inclusive, hsn_code, mrp
        )
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
        RETURNING *`,
       [
         sale.sale_uuid,
         sale.sale_id,
- 
+
         item.item_id,
         item.item_name    ?? null,
- 
+
         item.variant_id   ?? null,
         item.variant_name ?? null,
- 
+
         item.unit         ?? null,
         item.quantity,
         item.price,
         Number(item.discount ?? 0),
- 
+        item.discount_percentage ?? null,
+
         taxData.gst_percentage,
         taxData.tax_amount,
         taxData.cgst,
@@ -3361,8 +3372,15 @@ exports.syncSaleItems = async (orderData, sale, client) => {
     throw new Error('Items array is empty or invalid');
   }
 
-  const rows = items.map((item) => {
-    const taxData = calculateItemTax(item);
+  const itemTaxData = calculateItemsWithDiscount(
+    items,
+    orderData.discount_type,
+    orderData.discount_value,
+    orderData.discount_gst_mode || 'after'
+  );
+
+  const rows = items.map((item, i) => {
+    const taxData = itemTaxData[i];
     return {
       item_id:         item.item_id,
       item_name:       item.item_name    ?? null,
@@ -3372,6 +3390,7 @@ exports.syncSaleItems = async (orderData, sale, client) => {
       quantity:        item.quantity,
       price:           item.price,
       discount:        Number(item.discount ?? 0),
+      discount_percentage: item.discount_percentage ?? null,
       gst_percentage:  taxData.gst_percentage,
       tax_amount:      taxData.tax_amount,
       cgst:            taxData.cgst,
@@ -3406,7 +3425,7 @@ exports.syncSaleItems = async (orderData, sale, client) => {
          item_id text, item_name text,
          variant_id text, variant_name text,
          unit text, quantity numeric, price numeric,
-         discount numeric, gst_percentage numeric,
+         discount numeric, discount_percentage numeric, gst_percentage numeric,
          tax_amount numeric, cgst numeric, sgst numeric,
          tax_inclusive boolean, hsn_code text, mrp numeric
        )
@@ -3420,6 +3439,7 @@ exports.syncSaleItems = async (orderData, sale, client) => {
            quantity       = i.quantity,
            price          = i.price,
            discount       = i.discount,
+           discount_percentage = i.discount_percentage,
            gst_percentage = i.gst_percentage,
            tax_amount     = i.tax_amount,
            cgst           = i.cgst,
@@ -3438,7 +3458,7 @@ exports.syncSaleItems = async (orderData, sale, client) => {
          item_id, item_name,
          variant_id, variant_name,
          unit, quantity, price,
-         discount, gst_percentage,
+         discount, discount_percentage, gst_percentage,
          tax_amount, cgst, sgst,
          tax_inclusive, hsn_code, mrp
        )
@@ -3446,7 +3466,7 @@ exports.syncSaleItems = async (orderData, sale, client) => {
               i.item_id, i.item_name,
               i.variant_id, i.variant_name,
               i.unit, i.quantity, i.price,
-              i.discount, i.gst_percentage,
+              i.discount, i.discount_percentage, i.gst_percentage,
               i.tax_amount, i.cgst, i.sgst,
               i.tax_inclusive, i.hsn_code, i.mrp
        FROM incoming i
@@ -3613,6 +3633,7 @@ exports.getSalesHistory = async (filters) => {
         s.payment_status,
         s.notes,
         s.round_off,
+        s.discount_gst_mode,
          TO_CHAR(s.sale_time,  'HH12:MI AM')              AS sale_time_fmt,
         TO_CHAR(s.created_at, 'DD Mon YYYY, HH12:MI AM') AS created_at_fmt,
         TO_CHAR(s.sale_date + s.created_at::time, 'DD Mon YYYY, HH12:MI AM') AS sale_date_fmt,
@@ -3747,6 +3768,7 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
         TO_CHAR(s.sale_time,  'HH12:MI AM')              AS sale_time_fmt,
         TO_CHAR(s.created_at, 'DD Mon YYYY, HH12:MI AM') AS created_at_fmt,
         s.round_off,
+        s.discount_gst_mode,
         TO_CHAR(s.due_date,  'DD-Mon-YYYY')             AS due_date_fmt,
  
         c.cust_uuid,
@@ -3803,6 +3825,7 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
     sale_time_fmt:   row.sale_time_fmt,
     created_at_fmt: row.created_at_fmt,
     round_off: row.round_off,
+    discount_gst_mode: row.discount_gst_mode,
     due_date_fmt: row.due_date_fmt,
   };
  
@@ -3844,6 +3867,7 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
         si.price,
         si.mrp,
         si.discount,
+        si.discount_percentage,
         si.hsn_code,
         si.gst_percentage,
         si.tax_amount,
@@ -3877,21 +3901,25 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
   );
  
   // HSN-wise tax summary (SQL grouped — faster than JS reduce)
-  // taxable_value = base price before tax (excludes tax when tax_inclusive=true), minus discount
+  // taxable_value is derived from the stored tax_amount/gst_percentage (already
+  // discount-adjusted at insert time per discount_gst_mode) so it stays
+  // consistent with cgst_amount/sgst_amount instead of recomputing from the
+  // raw gross price, which would ignore the order-level discount.
   const hsnResult = await conn.query(
     `SELECT
         si.hsn_code,
         ROUND(SUM(
           CASE
-            WHEN si.tax_inclusive = true
-            THEN (si.price * si.quantity) / (1 + si.gst_percentage / 100.0) - COALESCE(si.discount, 0)
-            ELSE  si.price * si.quantity                                     - COALESCE(si.discount, 0)
+            WHEN si.gst_percentage > 0
+            THEN si.tax_amount * 100.0 / si.gst_percentage
+            ELSE si.price * si.quantity - COALESCE(si.discount, 0)
           END
         )::numeric, 2)              AS taxable_value,
         (si.gst_percentage / 2)     AS cgst_percent,
         ROUND(SUM(si.cgst)::numeric, 2)       AS cgst_amount,
         (si.gst_percentage / 2)     AS sgst_percent,
         ROUND(SUM(si.sgst)::numeric, 2)       AS sgst_amount,
+        ROUND(SUM(si.discount)::numeric, 2)       AS item_wise_discount_amount,
         ROUND(SUM(si.tax_amount)::numeric, 2) AS total_tax
      FROM tbl_sale_items si
      WHERE si.sale_uuid = $1

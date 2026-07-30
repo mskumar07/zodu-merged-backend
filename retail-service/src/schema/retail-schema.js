@@ -215,7 +215,7 @@ sale_time: Joi.string()
 
   notes: Joi.string().optional().allow(null, ""),
 
-  discount_gst_mode: Joi.string().valid("before", "after").default("after"),
+  discount_gst_mode: Joi.string().optional().allow(null, ""),
 
   round_off: Joi.number().precision(2).optional().allow(null),
 
@@ -241,6 +241,7 @@ sale_time: Joi.string()
         price: Joi.number().min(0).required(),
 
         discount: Joi.number().min(0).default(0),
+        discount_percentage: Joi.number().min(0).max(100).optional().allow(null),
 
         gst_percentage: Joi.number().min(0).max(100).default(0),
         hsn_code: Joi.string().optional().allow(null, ""),
@@ -299,7 +300,7 @@ sale_time: Joi.string()
   payment_mode: Joi.string().optional().allow(null, ""),
 
 
-    discount_gst_mode: Joi.string().valid("before", "after").default("after"),
+    discount_gst_mode: Joi.string().optional().allow(null, ""),
 
   roundoff: Joi.number().precision(2).optional().allow(null),
 
@@ -334,6 +335,12 @@ sale_time: Joi.string()
         discount: Joi.number()
           .min(0)
           .default(0),
+
+        discount_percentage: Joi.number()
+          .min(0)
+          .max(100)
+          .optional()
+          .allow(null),
 
         gst_percentage: Joi.number()
           .min(0)
