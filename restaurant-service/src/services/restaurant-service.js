@@ -482,9 +482,9 @@ async function getCategoryData(type, branch_id, zodu_id, page = 1, limit = 10) {
   }
 }
 
-async function getAllCategoryData(types, branch_id, zodu_id, page = 1, limit = 10) {
+async function getAllCategoryData(types, branch_id, zodu_id, page = 1, limit = 10, category_name) {
   try {
-    const result = await repository.get_all_category_data(types, branch_id, zodu_id, page, limit);
+    const result = await repository.get_all_category_data(types, branch_id, zodu_id, page, limit, category_name);
 
     return {
       success:     true,

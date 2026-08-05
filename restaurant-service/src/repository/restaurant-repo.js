@@ -276,19 +276,24 @@ exports.get_category_data = async (type, branch_id, zodu_id, page = 1, limit = 1
   }
 }
 
-exports.get_all_category_data = async (types, branch_id, zodu_id, page = 1, limit = 10) => {
+exports.get_all_category_data = async (types, branch_id, zodu_id, page = 1, limit = 10, category_name) => {
   try {
     const offset = (page - 1) * limit;
 
-    // types is an array e.g. ['S','M']. If empty, return all types.
-    const typeFilter = types && types.length > 0 ? `AND type = ANY($1)` : "";
-    const baseParams = types && types.length > 0
-      ? [types, branch_id, zodu_id]
-      : [branch_id, zodu_id];
-    const branchIdx  = types && types.length > 0 ? 2 : 1;
-    const zoduIdx    = types && types.length > 0 ? 3 : 2;
-    const limitIdx   = baseParams.length + 1;
-    const offsetIdx  = baseParams.length + 2;
+    const baseParams = [branch_id, zodu_id];
+    let filters = "";
+
+    if (types && types.length > 0) {
+      baseParams.push(types);
+      filters += ` AND type = ANY($${baseParams.length})`;
+    }
+    if (category_name) {
+      baseParams.push(`%${category_name}%`);
+      filters += ` AND name ILIKE $${baseParams.length}`;
+    }
+
+    const limitIdx  = baseParams.length + 1;
+    const offsetIdx = baseParams.length + 2;
 
     const dataQuery = `
       SELECT
@@ -307,8 +312,8 @@ exports.get_all_category_data = async (types, branch_id, zodu_id, page = 1, limi
           ELSE type
         END AS type
       FROM tbl_category
-      WHERE branch_id = $${branchIdx} AND zodu_id = $${zoduIdx}
-        ${typeFilter}
+      WHERE branch_id = $1 AND zodu_id = $2
+        ${filters}
       ORDER BY active DESC, id DESC
       LIMIT $${limitIdx} OFFSET $${offsetIdx}
     `;
@@ -316,8 +321,8 @@ exports.get_all_category_data = async (types, branch_id, zodu_id, page = 1, limi
     const countQuery = `
       SELECT COUNT(*)::int AS total_count
       FROM tbl_category
-      WHERE branch_id = $${branchIdx} AND zodu_id = $${zoduIdx}
-        ${typeFilter}
+      WHERE branch_id = $1 AND zodu_id = $2
+        ${filters}
     `;
 
     const [dataResult, countResult] = await Promise.all([

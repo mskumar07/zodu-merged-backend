@@ -1339,7 +1339,9 @@ router.get("/get/category/:zodu_id/:branch_id", async (req, res) => {
     // active is optional: only filter by it when the frontend explicitly passes it
     const active = req.query.active === undefined ? undefined : req.query.active === 'true';
 
-    const getCategoryData = await service.getAllCategoryData(types, branch_id, zodu_id, page, limit, active);
+    const category_name = req.query.category_name?.trim() || undefined;
+
+    const getCategoryData = await service.getAllCategoryData(types, branch_id, zodu_id, page, limit, active, category_name);
     if (!getCategoryData.success) return res.status(400).json({ message: getCategoryData.message });
 
     return res.status(200).json({

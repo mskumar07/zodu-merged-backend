@@ -1228,7 +1228,9 @@ router.get("/get/category/:zodu_id/:branch_id", async (req, res) => {
       ? (Array.isArray(rawType) ? rawType : [rawType]).map(t => t.trim()).filter(Boolean)
       : [];
 
-    const getCategoryData = await service.getAllCategoryData(types, branch_id, zodu_id, page, limit);
+    const category_name = req.query.category_name?.trim() || undefined;
+
+    const getCategoryData = await service.getAllCategoryData(types, branch_id, zodu_id, page, limit, category_name);
     if (!getCategoryData.success) return res.status(400).json({ message: getCategoryData.message });
 
     return res.status(200).json({

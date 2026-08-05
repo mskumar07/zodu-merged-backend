@@ -6,9 +6,9 @@ exports.createPurchase = async (client, data) => {
       purchase_id, zodu_id, branch_id,
       purchase_date, vendor_id,
       total_amount, paid_amount,
-      payment_status, notes, attachment_url,due_date
+      payment_status, notes, attachment_url,due_date,invoice_bill_no
     )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
     RETURNING *`,
     [
       data.purchase_id,
@@ -22,6 +22,7 @@ exports.createPurchase = async (client, data) => {
       data.notes || null,
       data.attachment_url ? JSON.stringify(data.attachment_url) : null,
       data.due_date || null,
+      data.invoice_bill_no || null,
     ]
   );
   return rows[0];
@@ -319,7 +320,8 @@ exports.updatePurchase = async (client, purchase_id, data) => {
                             END,
          notes            = $5,
          attachment_url   = $6,
-         updated_at       = NOW()
+         updated_at       = NOW(),
+         invoice_bill_no  = $9
      WHERE purchase_id = $7::varchar`,   // ✅ FIX HERE
     [
       data.vendor_id || null,
@@ -330,6 +332,7 @@ exports.updatePurchase = async (client, purchase_id, data) => {
       data.attachment_url ? JSON.stringify(data.attachment_url) : null,
       String(purchase_id), // ✅ FORCE STRING
       data.due_date || null,
+      data.invoice_bill_no || null,
     ]
   );
 };

@@ -592,6 +592,25 @@ exports.checkItemIdExists = async (item_id, zodu_id, branch_id) => {
   return rows[0] ?? null;
 };
 
+// Bulk existence check by item_id — used before purchase create/update so a
+// typo'd or deleted item_id fails fast instead of surfacing as an FK error
+// mid-transaction after stock/ledger writes have already started.
+exports.checkItemIdsExistBulk = async (item_ids, zodu_id, branch_id, client) => {
+  const db = client ?? conn;
+  const uniqueIds = [...new Set(item_ids)];
+  const { rows } = await db.query(
+    `SELECT item_id, item_uuid, item_name, status
+     FROM tbl_menu_items
+     WHERE item_id = ANY($1::text[]) AND zodu_id = $2 AND branch_id = $3`,
+    [uniqueIds, zodu_id, branch_id]
+  );
+
+  const foundIds = new Set(rows.map(r => r.item_id));
+  const missing = uniqueIds.filter(id => !foundIds.has(id));
+
+  return { found: rows, missing };
+};
+
 exports.getStockHistoryRepo = async ({ item_uuid, zodu_id, branch_id }) => {
   // ✅ 1. Get Item + Inventory Details (Always)
   console.log(item_uuid)

@@ -33,6 +33,11 @@ function parseLimit(raw) {
   return Math.min(parseInt(raw) || DEFAULT_LIMIT, MAX_LIMIT);
 }
 
+function parsePage(raw) {
+  const page = parseInt(raw);
+  return page && page > 0 ? page : 1;
+}
+
 async function getStats(zodu_id, branch_id) {
   const raw = await repo.getStats(zodu_id, branch_id);
   return {
@@ -74,17 +79,25 @@ async function getTopItems(zodu_id, branch_id, rawLimit, cursorToken) {
   }));
 }
 
-async function getReminders(zodu_id, branch_id, rawLimit, cursorToken) {
+async function getReminders(zodu_id, branch_id, rawPage, rawLimit) {
+  const page   = parsePage(rawPage);
   const limit  = parseLimit(rawLimit);
-  const cursor = decodeCursor(cursorToken);
-  const rows   = await repo.getReminders(zodu_id, branch_id, limit + 1, cursor);
+  const offset = (page - 1) * limit;
 
-  return paginate(rows, limit, (r) => ({
-    due_date: r.due_date,
-    ref_id:   r.ref_id,
-    ref_type: r.ref_type,
-    ref_uuid: r.ref_uuid,
-  }));
+  const rows       = await repo.getReminders(zodu_id, branch_id, limit, offset);
+  const totalCount = rows.length ? parseInt(rows[0].total_count) : 0;
+  const totalPages = totalCount ? Math.ceil(totalCount / limit) : 0;
+
+  return {
+    data: rows.map(({ total_count, ...rest }) => rest),
+    pagination: {
+      page,
+      limit,
+      totalCount,
+      totalPages,
+      hasMore: page < totalPages,
+    },
+  };
 }
 
 async function getInventoryAlerts(zodu_id, branch_id, rawLimit, cursorToken) {

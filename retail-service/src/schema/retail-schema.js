@@ -431,69 +431,65 @@ const mark_customer_payment = Joi.object({
     .required(),
 });
 
+// Rejects any string containing < or > so HTML/script tags can never be
+// stored (e.g. purchase notes rendered unescaped elsewhere would otherwise
+// be a stored-XSS vector). Plain punctuation, numbers, and text pass through.
+const NO_HTML_PATTERN = /^[^<>]*$/;
+const notesField = Joi.string()
+  .max(1000)
+  .pattern(NO_HTML_PATTERN)
+  .messages({ "string.pattern.base": "Notes cannot contain HTML tags (< or >)" })
+  .allow("", null);
+
+const purchaseItemSchema = Joi.object({
+  item_id: Joi.string().max(100).required(),
+  item_uuid: Joi.string().allow(null, ""),
+  item_name: Joi.string().max(200).allow(null, ""),
+  qty: Joi.number().positive().required(),
+  unit: Joi.string().max(50).allow(null, ""),
+  unit_id: Joi.number().allow(null),
+  purchase_price: Joi.number().precision(2).min(0).required(),
+  gst_percentage: Joi.number().min(0).max(100).allow(null),
+  tax_amount: Joi.number().min(0).allow(null),
+  cgst: Joi.number().min(0).allow(null),
+  sgst: Joi.number().min(0).allow(null),
+  category_id: Joi.number().allow(null),
+});
+
 const purchase_order_create = Joi.object({
   zodu_id: Joi.string().max(50).required(),
   branch_id: Joi.string().max(50).required(),
-  vendor: Joi.string().required(),
-  // category: Joi.number().required(),
+  vendor_id: Joi.string().max(50).allow(null, ""),
   purchase_date: Joi.date().required(),
+  due_date: Joi.date().allow(null, ""),
   total_amount: Joi.number().precision(2).min(0).required(),
-  paid_amount: Joi.number().precision(2).min(0).required(),
-  purchase_type: Joi.string().max(50).required(),
+  paid_amount: Joi.number().precision(2).min(0).default(0),
+  payment_status: Joi.string().valid("pending", "partial", "paid").optional(),
+  payment_date: Joi.date().allow(null, ""),
+  transaction_type: Joi.string().max(50).allow(null, ""),
+  transaction_id: Joi.string().max(100).allow(null, ""),
   attachment_url: Joi.array().items(Joi.object()).optional(),
-  payment_type: Joi.string().allow(null, ""),
-  notes: Joi.string().allow("", null),
-
-  // array of items
-  items: Joi.array()
-    .items(
-      Joi.object({
-        id: Joi.string().required(),
-        name: Joi.string().required(),
-        qty: Joi.number().min(1).required(),
-        category_id: Joi.number().required(),
-        unit: Joi.string().max(50).required(),
-        purchase_price: Joi.number().precision(2).min(0).required(),
-        selling_price: Joi.number().precision(2).min(0),
-        gst_tax: Joi.number().min(0),
-       // total_price: Joi.number().precision(2).min(0).required(),
-      })
-    )
-    .min(1)
-    .required(),
+  notes: notesField,
+  invoice_bill_no: Joi.string().max(100).optional().allow(null, ""),
+  items: Joi.array().items(purchaseItemSchema).min(1).required(),
 });
 
 const purchase_order_update = Joi.object({
   zodu_id: Joi.string().max(50).optional(),
   branch_id: Joi.string().max(50).optional(),
-    purchaseId:Joi.string().max(50).required(),
-  vendor: Joi.string().optional(),
-  // category: Joi.number().optional(),
+  vendor_id: Joi.string().max(50).allow(null, ""),
   purchase_date: Joi.date().optional(),
+  due_date: Joi.date().allow(null, ""),
   total_amount: Joi.number().precision(2).min(0).optional(),
   paid_amount: Joi.number().precision(2).min(0).optional(),
-  purchase_type: Joi.string().max(50).optional(),
+  payment_status: Joi.string().valid("pending", "partial", "paid").optional(),
+  payment_date: Joi.date().allow(null, ""),
+  transaction_type: Joi.string().max(50).allow(null, ""),
+  transaction_id: Joi.string().max(100).allow(null, ""),
   attachment_url: Joi.array().items(Joi.object()).optional(),
-  payment_type: Joi.string().optional(),
-  notes: Joi.string().allow("", null).optional(),
-
-  // array of items
-  items: Joi.array()
-    .items(
-      Joi.object({
-        id: Joi.string().required(),
-        name: Joi.string().required(),
-        category_id: Joi.number().required(),
-        qty: Joi.number().min(1).required(),
-        unit: Joi.string().max(50).required(),
-        purchase_price: Joi.number().precision(2).min(0).required(),
-        selling_price: Joi.number().precision(2).min(0),
-        gst_tax: Joi.number().min(0),
-       // total_price: Joi.number().precision(2).min(0).required(),        
-      })
-    )
-    .min(1)
-    .optional(),
+  notes: notesField,
+  invoice_bill_no: Joi.string().max(100).optional().allow(null, ""),
+  items: Joi.array().items(purchaseItemSchema).min(1).optional(),
 });
 
 const expense_data = Joi.object({

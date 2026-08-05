@@ -97,6 +97,17 @@ exports.createPurchase = async (data) => {
   try {
     await client.query("BEGIN");
 
+    const { missing } = await inventoryRepo.checkItemIdsExistBulk(
+      (data.items || []).map(i => i.item_id),
+      data.zodu_id,
+      data.branch_id,
+      client
+    );
+    if (missing.length > 0) {
+      await client.query("ROLLBACK");
+      return { success: false, message: `Item(s) not found in menu: ${missing.join(", ")}` };
+    }
+
     const purchase_id = "PUR-" + Date.now();
 
     const purchase = await repo.createPurchase(client, {
@@ -212,9 +223,20 @@ exports.updatePurchase = async (purchase_id, data) => {
 
     const oldItems = await repo.getPurchaseItems(client, purchase_id);
     const newItems = data.items || [];
-    
+
     const zodu_id = data.zodu_id || oldPurchase.zodu_id;
     const branch_id = data.branch_id || oldPurchase.branch_id;
+
+    const { missing } = await inventoryRepo.checkItemIdsExistBulk(
+      newItems.map(i => i.item_id),
+      zodu_id,
+      branch_id,
+      client
+    );
+    if (missing.length > 0) {
+      await client.query("ROLLBACK");
+      return { success: false, message: `Item(s) not found in menu: ${missing.join(", ")}` };
+    }
 
     // ── NORMALIZE QUANTITIES ──────
     // Convert all qty values to numbers to ensure proper comparison

@@ -381,39 +381,18 @@ async function getDashboardTopItems(zodu_id, branch_id, { limit, offset }) {
 //   return rows;
 // }
 
-async function getReminders(zodu_id, branch_id, limit, cursor) {
-  const values = [zodu_id, branch_id, limit];
-  let cursorClause = "";
-
-  if (cursor) {
-    cursorClause = `AND (
-      due_date > $4
-      OR (due_date = $4 AND ref_type > $6)
-      OR (due_date = $4 AND ref_type = $6 AND ref_id > $5)
-    )`;
-    values.push(cursor.due_date, cursor.ref_id, cursor.ref_type);
-  }
+async function getReminders(zodu_id, branch_id, limit, offset) {
+  const values = [zodu_id, branch_id, limit, offset];
 
   const { rows } = await conn.query(
-  `SELECT
-    ref_id,
-    ref_type,
-    txn_date,
-    TO_CHAR(due_date, 'DD Mon YYYY') AS due_date,   -- format for display
-    total_amount,
-    paid_amount,
-    balance_amount,
-    payment_status,
-    transaction_type,
-    party_name,
-    vendor_name
-  FROM (
+  `WITH combined AS (
 
     SELECT
       p.purchase_id::varchar                                                                AS ref_id,
       NULL::uuid                                                                            AS ref_uuid,
       'PURCHASE'                                                                            AS ref_type,
       TO_CHAR(p.purchase_date, 'DD Mon YYYY')                                              AS txn_date,
+      p.purchase_date::date                                                                 AS txn_date_raw,
       COALESCE(MAX(pp.payment_date), p.due_date)::date                                     AS due_date,
       p.total_amount,
       p.paid_amount,
@@ -439,6 +418,7 @@ async function getReminders(zodu_id, branch_id, limit, cursor) {
       NULL::uuid                                     AS ref_uuid,
       'EXPENSE'                                      AS ref_type,
       TO_CHAR(e.expense_date, 'DD Mon YYYY')         AS txn_date,
+      e.expense_date::date                           AS txn_date_raw,
       e.due_date::date                               AS due_date,
       e.total_amount,
       e.paid_amount,
@@ -452,10 +432,23 @@ async function getReminders(zodu_id, branch_id, limit, cursor) {
     WHERE e.zodu_id = $1 AND e.branch_id = $2
       AND e.payment_status IN ('pending', 'partial')
 
-  ) combined
-  WHERE 1=1 ${cursorClause}
-  ORDER BY due_date ASC NULLS LAST, ref_type ASC, ref_id ASC
-  LIMIT $3`,
+  )
+  SELECT
+    ref_id,
+    ref_type,
+    txn_date,
+    TO_CHAR(due_date, 'DD Mon YYYY') AS due_date,
+    total_amount,
+    paid_amount,
+    balance_amount,
+    payment_status,
+    transaction_type,
+    party_name,
+    vendor_name,
+    COUNT(*) OVER() AS total_count
+  FROM combined
+  ORDER BY due_date ASC NULLS FIRST, txn_date_raw ASC, ref_id ASC
+  LIMIT $3 OFFSET $4`,
   values
 );
   return rows;

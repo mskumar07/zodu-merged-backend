@@ -127,3 +127,30 @@ CREATE TABLE tbl_menu_item (
         ON UPDATE CASCADE
         ON DELETE SET NULL
 );
+
+CREATE TABLE tbl_expense_menu_items (
+    item_uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    zodu_id VARCHAR(50) NOT NULL,
+    branch_id VARCHAR(50) NOT NULL,
+    item_id VARCHAR(50) NOT NULL,
+    expense_item_name VARCHAR(255) NOT NULL,
+    category_id BIGINT,
+    category_name VARCHAR(100),
+    amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+    qty NUMERIC(12,3) NOT NULL DEFAULT 1,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_expense_menu_items_zodu_id FOREIGN KEY (zodu_id)
+        REFERENCES tbl_company_registration(zodu_id)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+
+    CONSTRAINT fk_expense_menu_items_category_id FOREIGN KEY (category_id)
+        REFERENCES tbl_category(id)
+        ON UPDATE CASCADE
+        ON DELETE SET NULL,
+
+    CONSTRAINT uq_expense_menu_items_item_id UNIQUE (zodu_id, branch_id, item_id)
+);

@@ -1,10 +1,15 @@
 const express = require("express");
 const router = express.Router();
 const service = require("../services/purchase.service");
+const RequestValidator = require("../utils/requestValidator.js");
+const schema = require("../schema/retail-schema.js");
 
 // CREATE PURCHASE
 router.post("/", async (req, res) => {
-  const result = await service.createPurchase(req.body);
+  const { errors, input } = await RequestValidator(schema.purchase_order_create, req.body);
+  if (errors) return res.status(400).json({ success: false, message: errors });
+
+  const result = await service.createPurchase(input);
   return res.status(result.success ? 201 : 400).json(result);
 });
 
@@ -31,7 +36,10 @@ router.get("/:id", async (req, res) => {
 
 // UPDATE
 router.put("/:id", async (req, res) => {
-  const result = await service.updatePurchase(req.params.id, req.body);
+  const { errors, input } = await RequestValidator(schema.purchase_order_update, req.body);
+  if (errors) return res.status(400).json({ success: false, message: errors });
+
+  const result = await service.updatePurchase(req.params.id, input);
   return res.status(result.success ? 200 : 400).json(result);
 });
 

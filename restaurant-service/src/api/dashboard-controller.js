@@ -91,11 +91,11 @@ async function getTopItems(req, res) {
 }
 
 async function getReminders(req, res) {
-  const { zodu_id, branch_id, cursor, limit } = req.query;
+  const { zodu_id, branch_id, page, limit } = req.query;
   if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"])) return;
 
   try {
-    const result = await service.getReminders(zodu_id, branch_id, limit, cursor);
+    const result = await service.getReminders(zodu_id, branch_id, page, limit);
     res.json({ success: true, ...result });
   } catch (err) {
     console.log(err)

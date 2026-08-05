@@ -1,6 +1,6 @@
 const conn = require("../database/connection");
 
-// ── EXPENSE ITEM CATALOG (tbl_expense_item) ──────────────────────
+// ── EXPENSE ITEM CATALOG (tbl_expense_menu_items) ────────────────
 
 exports.getCatalogItems = async ({ zodu_id, branch_id, category_id, search } = {}) => {
   const conditions = [];
@@ -11,7 +11,7 @@ exports.getCatalogItems = async ({ zodu_id, branch_id, category_id, search } = {
   if (branch_id)   { conditions.push(`ei.branch_id = $${idx++}`);   values.push(branch_id); }
   if (category_id) { conditions.push(`ei.category_id = $${idx++}`); values.push(category_id); }
   if (search) {
-    conditions.push(`ei.item_name ILIKE $${idx++}`);
+    conditions.push(`ei.expense_item_name ILIKE $${idx++}`);
     values.push(`%${search}%`);
   }
 
@@ -19,10 +19,10 @@ exports.getCatalogItems = async ({ zodu_id, branch_id, category_id, search } = {
 
   const { rows } = await conn.query(
     `SELECT ei.*, c.name AS category_name
-     FROM tbl_expense_item ei
+     FROM tbl_expense_menu_items ei
      LEFT JOIN tbl_category c ON c.id = ei.category_id
      ${where}
-     ORDER BY ei.item_name ASC`,
+     ORDER BY ei.expense_item_name ASC`,
     values
   );
   return rows;
@@ -30,27 +30,59 @@ exports.getCatalogItems = async ({ zodu_id, branch_id, category_id, search } = {
 
 exports.createCatalogItem = async (data) => {
   const { rows } = await conn.query(
-    `INSERT INTO tbl_expense_item (zodu_id, branch_id, item_name, category_id)
-     VALUES ($1,$2,$3,$4)
+    `INSERT INTO tbl_expense_menu_items (
+       zodu_id, branch_id, item_id, expense_item_name,
+       category_id, category_name, amount, qty
+     )
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
      RETURNING *`,
-    [data.zodu_id, data.branch_id, data.item_name, data.category_id || null]
+    [
+      data.zodu_id,
+      data.branch_id,
+      data.item_id,
+      data.expense_item_name,
+      data.category_id || null,
+      data.category_name || null,
+      Number(data.amount) || 0,
+      Number(data.qty) || 1,
+    ]
   );
   return rows[0];
 };
 
-exports.updateCatalogItem = async (id, data) => {
+exports.updateCatalogItem = async (item_uuid, data) => {
   const { rows } = await conn.query(
-    `UPDATE tbl_expense_item
-     SET item_name = $1, category_id = $2, active = $3, updated_at = NOW()
-     WHERE id = $4
+    `UPDATE tbl_expense_menu_items
+     SET expense_item_name = $1,
+         item_id            = $2,
+         category_id        = $3,
+         category_name      = $4,
+         amount             = $5,
+         qty                = $6,
+         is_active          = $7,
+         updated_at         = NOW()
+     WHERE item_uuid = $8
      RETURNING *`,
-    [data.item_name, data.category_id || null, data.active !== false, id]
+    [
+      data.expense_item_name,
+      data.item_id,
+      data.category_id || null,
+      data.category_name || null,
+      Number(data.amount) || 0,
+      Number(data.qty) || 1,
+      data.is_active !== false,
+      item_uuid,
+    ]
   );
   return rows[0];
 };
 
-exports.deleteCatalogItem = async (id) => {
-  await conn.query(`DELETE FROM tbl_expense_item WHERE id = $1`, [id]);
+exports.deleteCatalogItem = async (item_uuid) => {
+  const { rows } = await conn.query(
+    `DELETE FROM tbl_expense_menu_items WHERE item_uuid = $1 RETURNING item_uuid`,
+    [item_uuid]
+  );
+  return rows[0];
 };
 
 // ── EXPENSE (tbl_expense) ────────────────────────────────────────

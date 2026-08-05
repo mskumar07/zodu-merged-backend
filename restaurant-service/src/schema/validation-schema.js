@@ -73,16 +73,23 @@ const expense_item_update = Joi.object({
 
 const expense_catalog_create = Joi.object({
   ...zodu_branch,
-  item_name:    Joi.string().max(150).required(),
-  unit:         Joi.string().max(50).optional().allow(null, ""),
-  description:  Joi.string().optional().allow(null, ""),
+  item_id:            Joi.string().max(50).required(),
+  expense_item_name:  Joi.string().max(255).required(),
+  category_id:        Joi.number().integer().optional().allow(null),
+  category_name:      Joi.string().max(100).optional().allow(null, ""),
+  amount:             Joi.number().min(0).required(),
+  qty:                Joi.number().min(0).default(1),
 });
 
 const expense_catalog_update = Joi.object({
-  item_name:    Joi.string().max(150).optional(),
-  unit:         Joi.string().max(50).optional().allow(null, ""),
-  description:  Joi.string().optional().allow(null, ""),
-}).min(1);
+  item_id:            Joi.string().max(50).required(),
+  expense_item_name:  Joi.string().max(255).required(),
+  category_id:        Joi.number().integer().optional().allow(null),
+  category_name:      Joi.string().max(100).optional().allow(null, ""),
+  amount:             Joi.number().min(0).required(),
+  qty:                Joi.number().min(0).default(1),
+  is_active:          Joi.boolean().optional(),
+});
 
 // ─────────────────────────────────────────────────────────────
 // UNIT
@@ -217,6 +224,7 @@ const purchase_create = Joi.object({
   transaction_type: Joi.string().optional().allow(null, ""),
   transaction_id:   Joi.string().optional().allow(null, ""),
   payment_date:     Joi.string().isoDate().optional().allow(null, ""),
+  invoice_bill_no: Joi.string().max(100).optional().allow(null, ""),
   items: Joi.array().items(purchase_item_schema).min(1).required(),
 }).options({ abortEarly: false });
 
@@ -234,7 +242,9 @@ const purchase_update = Joi.object({
   transaction_type: Joi.string().optional().allow(null, ""),
   transaction_id:   Joi.string().optional().allow(null, ""),
   payment_date:     Joi.string().isoDate().optional().allow(null, ""),
-  items:            Joi.array().items(purchase_item_schema).min(1).optional(),
+  items: Joi.array().items(purchase_item_schema).min(1).optional(),
+  invoice_bill_no: Joi.string().max(100).optional().allow(null, ""),
+
 }).min(1).options({ abortEarly: false });
 
 const purchase_payment = Joi.object({

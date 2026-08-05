@@ -301,7 +301,7 @@ exports.get_category_data = async (type, branch_id, zodu_id, page = 1, limit = 1
   }
 }
 
-exports.get_all_category_data = async (types, branch_id, zodu_id, page = 1, limit = 10, active) => {
+exports.get_all_category_data = async (types, branch_id, zodu_id, page = 1, limit = 10, active, category_name) => {
   try {
     const offset = (page - 1) * limit;
 
@@ -315,6 +315,10 @@ exports.get_all_category_data = async (types, branch_id, zodu_id, page = 1, limi
     if (active !== undefined) {
       params.push(active);
       filters += ` AND active = $${params.length}`;
+    }
+    if (category_name) {
+      params.push(`%${category_name}%`);
+      filters += ` AND name ILIKE $${params.length}`;
     }
 
     params.push(limit, offset);

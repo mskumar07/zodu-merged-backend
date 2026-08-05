@@ -14,29 +14,35 @@ exports.getCatalogItems = async (params = {}) => {
 
 exports.createCatalogItem = async (data) => {
   try {
-    if (!data.item_name || !data.zodu_id || !data.branch_id) {
-      return { success: false, message: "item_name, zodu_id and branch_id are required" };
+    if (!data.expense_item_name || !data.item_id || !data.zodu_id || !data.branch_id) {
+      return { success: false, message: "expense_item_name, item_id, zodu_id and branch_id are required" };
     }
     const item = await repo.createCatalogItem(data);
     return { success: true, data: item };
   } catch (err) {
+    if (err.code === "23505") return { success: false, message: "Item ID already exists" };
     return { success: false, message: err.message };
   }
 };
 
-exports.updateCatalogItem = async (id, data) => {
+exports.updateCatalogItem = async (item_uuid, data) => {
   try {
-    const item = await repo.updateCatalogItem(id, data);
+    if (!data.expense_item_name || !data.item_id) {
+      return { success: false, message: "expense_item_name and item_id are required" };
+    }
+    const item = await repo.updateCatalogItem(item_uuid, data);
     if (!item) return { success: false, message: "Item not found" };
     return { success: true, data: item };
   } catch (err) {
+    if (err.code === "23505") return { success: false, message: "Item ID already exists" };
     return { success: false, message: err.message };
   }
 };
 
-exports.deleteCatalogItem = async (id) => {
+exports.deleteCatalogItem = async (item_uuid) => {
   try {
-    await repo.deleteCatalogItem(id);
+    const deleted = await repo.deleteCatalogItem(item_uuid);
+    if (!deleted) return { success: false, message: "Item not found" };
     return { success: true, message: "Deleted successfully" };
   } catch (err) {
     return { success: false, message: err.message };
