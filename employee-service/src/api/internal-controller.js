@@ -57,7 +57,7 @@ router.get('/employee/by-user', async (req, res) => {
   console.log('Received request to /internal/employee/by-user with params:', { user_id, zodu_id, branch_id });
   try {
     const { rows } = await db.query(
-      `SELECT employee_id, employee_code,name as employee_name,reporting_manager_id
+      `SELECT employee_id, branch_id, employee_code, name as employee_name, reporting_manager_id
        FROM tbl_employees
        WHERE user_id = $1 AND zodu_id = $2 AND branch_id = $3
        LIMIT 1`,

@@ -185,4 +185,23 @@ router.get('/api/my-companies', ValidateSignature, async (req, res) => {
   }
 });
 
+// ── GET /api/role-access ──────────────────────────────────────────────────────
+// Query: user_id, zodu_id, branch_id
+// Admin role → zodu_id-only access (branch ignored). Other roles → zodu_id + branch_id.
+router.get('/api/role-access', ValidateSignature, async (req, res) => {
+  try {
+    const { zodu_id, branch_id } = req.query;
+    const data = await authService.GetRoleAccess({
+      user_id: req.user.user_id,
+      zodu_id,
+      branch_id,
+    });
+    if (data.error) return res.status(400).json(data);
+    return res.status(STATUS_CODES.OK).json(data);
+  } catch (error) {
+    logger.error(error);
+    return res.status(STATUS_CODES.INTERNAL_ERROR).json({ message: error.message });
+  }
+});
+
 module.exports = router;

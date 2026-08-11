@@ -5,8 +5,11 @@ const { withTransaction } = require('../utils/transaction');
 // ── CREATE ROLE ───────────────────────────────────────────────────────────────
 
 exports.createRole = async ({ zodu_id, branch_id, role_name, description, permissions }) => {
+  // Admin role is always global — never scope it (or its permissions) to a branch
+  const roleBranchId = role_name === 'Admin' ? null : branch_id;
+
   const role = await withTransaction(async (client) => {
-    const newRole = await repo.createRole(client, { zodu_id, branch_id, role_name, description });
+    const newRole = await repo.createRole(client, { zodu_id, branch_id: roleBranchId, role_name, description });
 
     await repo.deleteAccessByRole(client, newRole.role_id);
 
@@ -14,7 +17,7 @@ exports.createRole = async ({ zodu_id, branch_id, role_name, description, permis
       await repo.upsertAccessControl(client, {
         role_id:    newRole.role_id,
         zodu_id,
-        branch_id,
+        branch_id:  roleBranchId,
         module_id:  p.module_id,
         can_read:   p.can_read   ?? false,
         can_create: p.can_create ?? false,
@@ -67,6 +70,9 @@ exports.updateRole = async (role_id, { zodu_id, branch_id, role_name, descriptio
     const role = await repo.updateRole(client, role_id, { zodu_id, branch_id, role_name, description });
     if (!role) throw new Error('Role not found');
 
+    // Admin role stays global — never let access_control rows get pinned to a branch
+    const accessBranchId = role.role_name === 'Admin' ? null : branch_id;
+
     if (permissions && permissions.length > 0) {
       await repo.deleteAccessByRole(client, role_id);
 
@@ -74,7 +80,7 @@ exports.updateRole = async (role_id, { zodu_id, branch_id, role_name, descriptio
         await repo.upsertAccessControl(client, {
           role_id,
           zodu_id,
-          branch_id,
+          branch_id: accessBranchId,
           module_id:  p.module_id,
           can_read:   p.can_read   ?? false,
           can_create: p.can_create ?? false,

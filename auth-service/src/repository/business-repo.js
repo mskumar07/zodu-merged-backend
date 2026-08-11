@@ -34,11 +34,15 @@ exports.createCompany = async (data) => {
       bank_details_id = r.rows[0].id;
     }
 
-    // 3. tbl_business
+    // 3. tbl_business — new companies get a 5-year subscription starting now;
+    //    re-registering an existing zodu_id (ON CONFLICT) leaves the
+    //    subscription window untouched.
     const r = await client.query(
       `INSERT INTO tbl_business
-         (zodu_id, business_name, owner_admin_name, mobile_no, mail_id, gst_no, type, address_id, bank_details_id, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true)
+         (zodu_id, business_name, owner_admin_name, mobile_no, mail_id, gst_no, type, address_id, bank_details_id, status,
+          is_subscripted, subscription_start_date, subscription_expiry_date)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true,
+               true, now(), now() + INTERVAL '5 years')
        ON CONFLICT (zodu_id) DO UPDATE
          SET business_name    = EXCLUDED.business_name,
              owner_admin_name = EXCLUDED.owner_admin_name,
@@ -159,6 +163,8 @@ exports.getCompany = async (zodu_id) => {
   const r = await conn.query(
     `SELECT b.*,
             b.business_name AS restaurant_name,b.type AS business_type,
+            TO_CHAR(b.subscription_start_date, 'FMDD Mon YYYY')  AS subscription_start_date,
+            TO_CHAR(b.subscription_expiry_date, 'FMDD Mon YYYY') AS subscription_expiry_date,
             a.address_line_1, a.address_line_2,
             a.city, a.district, a.state, a.pincode,
             bd.bank_name, bd.bank_branch, bd.holder_name,

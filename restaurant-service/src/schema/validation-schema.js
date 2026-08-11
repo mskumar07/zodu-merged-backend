@@ -73,21 +73,15 @@ const expense_item_update = Joi.object({
 
 const expense_catalog_create = Joi.object({
   ...zodu_branch,
-  item_id:            Joi.string().max(50).required(),
   expense_item_name:  Joi.string().max(255).required(),
-  category_id:        Joi.number().integer().optional().allow(null),
-  category_name:      Joi.string().max(100).optional().allow(null, ""),
   amount:             Joi.number().min(0).required(),
-  qty:                Joi.number().min(0).default(1),
+  unit:               Joi.number().min(0).default(1),
 });
 
 const expense_catalog_update = Joi.object({
-  item_id:            Joi.string().max(50).required(),
   expense_item_name:  Joi.string().max(255).required(),
-  category_id:        Joi.number().integer().optional().allow(null),
-  category_name:      Joi.string().max(100).optional().allow(null, ""),
   amount:             Joi.number().min(0).required(),
-  qty:                Joi.number().min(0).default(1),
+  unit:               Joi.number().min(0).default(1),
   is_active:          Joi.boolean().optional(),
 });
 

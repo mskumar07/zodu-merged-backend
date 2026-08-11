@@ -19,7 +19,7 @@ exports.findRoles = async ({ zodu_id, branch_id }) => {
        COUNT(DISTINCT ur.user_id)::int AS assigned_users
      FROM tbl_roles r
      LEFT JOIN tbl_user_roles ur ON ur.role_id = r.role_id
-     WHERE r.zodu_id = $1 AND r.branch_id = $2
+     WHERE r.zodu_id = $1 AND (r.role_name = 'Admin' OR r.branch_id = $2)
      GROUP BY r.role_id
      ORDER BY r.created_at ASC`,
     [zodu_id, branch_id]
@@ -30,7 +30,7 @@ exports.findRoles = async ({ zodu_id, branch_id }) => {
 exports.findRoleById = async (role_id, { zodu_id, branch_id }) => {
   const { rows } = await conn.query(
     `SELECT * FROM tbl_roles
-     WHERE role_id = $1 AND zodu_id = $2 AND branch_id = $3`,
+     WHERE role_id = $1 AND zodu_id = $2 AND (role_name = 'Admin' OR branch_id = $3)`,
     [role_id, zodu_id, branch_id]
   );
   return rows[0] || null;
@@ -49,7 +49,7 @@ exports.updateRole = async (client, role_id, { zodu_id, branch_id, role_name, de
 
   const { rows } = await client.query(
     `UPDATE tbl_roles SET ${sets.join(', ')}
-     WHERE role_id = $${idx++} AND zodu_id = $${idx++} AND branch_id = $${idx}
+     WHERE role_id = $${idx++} AND zodu_id = $${idx++} AND (role_name = 'Admin' OR branch_id = $${idx})
      RETURNING *`,
     vals
   );
@@ -58,7 +58,7 @@ exports.updateRole = async (client, role_id, { zodu_id, branch_id, role_name, de
 
 exports.deleteRole = async (client, role_id, { zodu_id, branch_id }) => {
   const { rowCount } = await client.query(
-    `DELETE FROM tbl_roles WHERE role_id = $1 AND zodu_id = $2 AND branch_id = $3`,
+    `DELETE FROM tbl_roles WHERE role_id = $1 AND zodu_id = $2 AND (role_name = 'Admin' OR branch_id = $3)`,
     [role_id, zodu_id, branch_id]
   );
   return rowCount > 0;

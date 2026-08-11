@@ -14,27 +14,25 @@ exports.getCatalogItems = async (params = {}) => {
 
 exports.createCatalogItem = async (data) => {
   try {
-    if (!data.expense_item_name || !data.item_id || !data.zodu_id || !data.branch_id) {
-      return { success: false, message: "expense_item_name, item_id, zodu_id and branch_id are required" };
+    if (!data.expense_item_name || !data.zodu_id || !data.branch_id) {
+      return { success: false, message: "expense_item_name, zodu_id and branch_id are required" };
     }
     const item = await repo.createCatalogItem(data);
     return { success: true, data: item };
   } catch (err) {
-    if (err.code === "23505") return { success: false, message: "Item ID already exists" };
     return { success: false, message: err.message };
   }
 };
 
 exports.updateCatalogItem = async (item_uuid, data) => {
   try {
-    if (!data.expense_item_name || !data.item_id) {
-      return { success: false, message: "expense_item_name and item_id are required" };
+    if (!data.expense_item_name) {
+      return { success: false, message: "expense_item_name is required" };
     }
     const item = await repo.updateCatalogItem(item_uuid, data);
     if (!item) return { success: false, message: "Item not found" };
     return { success: true, data: item };
   } catch (err) {
-    if (err.code === "23505") return { success: false, message: "Item ID already exists" };
     return { success: false, message: err.message };
   }
 };
@@ -61,7 +59,7 @@ exports.createExpense = async (data) => {
     const expense = await repo.createExpense(client, { ...data, expense_id });
 
     if (data.items && data.items.length > 0) {
-      await repo.createExpenseLineItems(client, data.items, expense_id);
+      await repo.createExpenseLineItems(client, data.items, expense_id, data.category_id);
     }
 
     if (data.paid_amount && data.paid_amount > 0) {
@@ -154,7 +152,7 @@ exports.updateExpense = async (expense_id, data) => {
     await repo.updateExpense(client, expense_id, data);
 
     if (data.items && data.items.length > 0) {
-      await repo.createExpenseLineItems(client, data.items, expense_id);
+      await repo.createExpenseLineItems(client, data.items, expense_id, data.category_id);
     }
 
     const oldPaid  = Number(old.paid_amount || 0);

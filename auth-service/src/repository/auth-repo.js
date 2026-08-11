@@ -50,7 +50,7 @@ async function AccountCreationQuery({ zodu_id, phone_number, email, password_has
     // 3. Default "Owner" role
     const roleResult = await client.query(
       `INSERT INTO tbl_roles (zodu_id, branch_id, role_name, description)
-       VALUES ($1, NULL, 'Owner', 'Full access — auto-created on registration')
+       VALUES ($1, NULL, 'Admin', 'Full access — auto-created on registration')
        RETURNING role_id`,
       [zodu_id]
     );
@@ -191,6 +191,25 @@ async function getUserCompanies({ user_id }) {
   return result.rows;
 }
 
+async function getUserRoleAccess({ user_id, zodu_id, branch_id }) {
+  const { rows } = await conn.query(
+    `SELECT
+       ac.module_id, m.module_name, m.parent_module_id, m.sort_order,
+       ac.can_read, ac.can_create, ac.can_edit, ac.can_delete,
+       r.role_id, r.role_name
+     FROM tbl_user_roles ur
+     JOIN tbl_roles r          ON r.role_id = ur.role_id
+     JOIN tbl_access_control ac ON ac.role_id = r.role_id
+     JOIN tbl_modules m        ON m.module_id = ac.module_id
+     WHERE ur.user_id = $1
+       AND ur.zodu_id = $2
+       AND (r.role_name = 'Admin' OR ur.branch_id IS NULL OR ur.branch_id = $3)
+     ORDER BY m.sort_order ASC`,
+    [user_id, zodu_id, branch_id || null]
+  );
+  return rows;
+}
+
 async function createDefaultRoleForCompany({ user_id, zodu_id }) {
   const client = await conn.connect();
   try {
@@ -255,4 +274,5 @@ module.exports = {
   addUserCompany,
   getUserCompanies,
   createDefaultRoleForCompany,
+  getUserRoleAccess,
 };

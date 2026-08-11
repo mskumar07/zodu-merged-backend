@@ -209,6 +209,9 @@ async function AccountLogin(userInputs, meta = {}) {
         account_type:     companyInfo?.account_type     ?? null,
         ifsc_code: companyInfo?.ifsc_code ?? null,
         business_type: companyInfo?.type ?? null,
+        is_subscripted:            companyInfo?.is_subscripted            ?? null,
+        subscription_start_date:   companyInfo?.subscription_start_date   ?? null,
+        subscription_expiry_date:  companyInfo?.subscription_expiry_date  ?? null,
         branches,
       };
     })
@@ -228,6 +231,7 @@ async function AccountLogin(userInputs, meta = {}) {
       employee_id:   employeeInfo?.employee_id   ?? null,
       employee_code: employeeInfo?.employee_code ?? null,
       employee_name: employeeInfo?.employee_name ?? null,
+      employee_branch : employeeInfo?.branch_id ?? null,
     },
     companies,
   });
@@ -514,6 +518,17 @@ async function GetMyCompanies(user_id) {
   return FormateData({ companies: details });
 }
 
+// ── GetRoleAccess ─────────────────────────────────────────────────────────────
+// Admin role → zodu_id-only (branch ignored). Any other role → zodu_id + branch_id.
+async function GetRoleAccess({ user_id, zodu_id, branch_id }) {
+  if (!user_id || !zodu_id) {
+    return FormateData({ error: 'user_id and zodu_id are required' });
+  }
+
+  const role_access = await repository.getUserRoleAccess({ user_id, zodu_id, branch_id });
+  return FormateData({ role_access });
+}
+
 module.exports = {
   CreateAccount,
   AccountLogin,
@@ -524,4 +539,5 @@ module.exports = {
   EditCompany,
   EditBranch,
   GetMyCompanies,
+  GetRoleAccess,
 };
