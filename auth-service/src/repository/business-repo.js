@@ -209,12 +209,31 @@ exports.getBranches = async (zodu_id, branch_id = null) => {
 };
 
 exports.createDefaultBranch = async ({ branch_id, zodu_id, qr_code_id, branch_name, branch_mobile_no, branch_mail_id }) => {
-  const { rows } = await conn.query(
-    `INSERT INTO tbl_branch (branch_id, zodu_id, qr_code_id, branch_name, branch_mobile_no, branch_mail_id)
-     VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-    [branch_id, zodu_id, qr_code_id || null, branch_name, branch_mobile_no || null, branch_mail_id || null]
-  );
-  return rows[0] || null;
+  const client = await conn.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows } = await client.query(
+      `INSERT INTO tbl_branch (branch_id, zodu_id, qr_code_id, branch_name, branch_mobile_no, branch_mail_id)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [branch_id, zodu_id, qr_code_id || null, branch_name, branch_mobile_no || null, branch_mail_id || null]
+    );
+
+    await client.query(
+      `INSERT INTO tbl_invoice_settings (zodu_id, branch_id)
+       VALUES ($1, $2)
+       ON CONFLICT (zodu_id, branch_id) DO NOTHING`,
+      [zodu_id, branch_id]
+    );
+
+    await client.query('COMMIT');
+    return rows[0] || null;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw new Error('Unable to create default branch: ' + err.message);
+  } finally {
+    client.release();
+  }
 };
 
 exports.createBranch = async (data) => {
@@ -287,6 +306,14 @@ exports.createBranch = async (data) => {
         data.use_same_address_as_company ?? data.same_as_address ?? false,
         data.use_same_bank_as_company ?? data.same_as_bank_details ?? false,
       ]
+    );
+
+    // ── Seed default invoice settings for this branch ──────────────────────
+    await client.query(
+      `INSERT INTO tbl_invoice_settings (zodu_id, branch_id)
+       VALUES ($1, $2)
+       ON CONFLICT (zodu_id, branch_id) DO NOTHING`,
+      [data.zodu_id, data.branch_id]
     );
 
     await client.query('COMMIT');
@@ -422,5 +449,42 @@ exports.updateBranch = async (zodu_id, branch_id, fields) => {
 
 exports.findMaxBranchId = async (zodu_id) => {
   const r = await conn.query('SELECT max(branch_id) FROM tbl_branch WHERE zodu_id=$1', [zodu_id]);
+  return r.rows[0];
+};
+
+// ── INVOICE SETTINGS ─────────────────────────────────────────────────────────
+
+exports.getInvoiceSettings = async (zodu_id, branch_id) => {
+  const r = await conn.query(
+    `SELECT * FROM tbl_invoice_settings WHERE zodu_id=$1 AND branch_id=$2`,
+    [zodu_id, branch_id]
+  );
+  return r.rows[0] || null;
+};
+
+exports.upsertInvoiceSettings = async (zodu_id, branch_id, fields) => {
+  const allowed = [
+    'invoice_prefix', 'invoice_digit_count', 'invoice_start_number',
+    'default_tax_label', 'invoice_due_days', 'default_payment_method',
+    'printer_inch', 'show_company_logo', 'print_thank_you_message',
+  ];
+  const cols = Object.keys(fields).filter((k) => allowed.includes(k));
+
+  if (cols.length === 0) {
+    return exports.getInvoiceSettings(zodu_id, branch_id);
+  }
+
+  const insertCols = ['zodu_id', 'branch_id', ...cols];
+  const insertVals = [zodu_id, branch_id, ...cols.map((c) => fields[c])];
+  const placeholders = insertVals.map((_, i) => `$${i + 1}`).join(', ');
+  const updateSet = cols.map((c) => `${c} = EXCLUDED.${c}`).join(', ');
+
+  const r = await conn.query(
+    `INSERT INTO tbl_invoice_settings (${insertCols.join(', ')})
+     VALUES (${placeholders})
+     ON CONFLICT (zodu_id, branch_id) DO UPDATE SET ${updateSet}
+     RETURNING *`,
+    insertVals
+  );
   return r.rows[0];
 };

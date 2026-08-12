@@ -130,6 +130,20 @@ const schema = {
     same_as_address: joi.boolean(),
     same_as_bank_details: joi.boolean(),
   }).min(3),
+
+  edit_invoice_settings: joi.object({
+    zodu_id: joi.string().required(),
+    branch_id: joi.string().required(),
+    invoice_prefix: joi.string().max(20).allow(null, ''),
+    invoice_digit_count: joi.number().integer().min(1).max(10),
+    invoice_start_number: joi.number().integer().min(1),
+    default_tax_label: joi.string().max(50).allow(null, ''),
+    invoice_due_days: joi.number().integer().min(0),
+    default_payment_method: joi.string().max(30).allow(null, ''),
+    printer_inch: joi.string().max(10).allow(null, ''),
+    show_company_logo: joi.boolean(),
+    print_thank_you_message: joi.boolean(),
+  }).min(3),
 };
 
 module.exports = schema;

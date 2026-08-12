@@ -204,4 +204,43 @@ router.get('/api/role-access', ValidateSignature, async (req, res) => {
   }
 });
 
+// ── GET /api/invoice-settings/:zodu_id/:branch_id ─────────────────────────────
+router.get('/api/invoice-settings/:zodu_id/:branch_id', ValidateSignature, async (req, res) => {
+  try {
+    const { zodu_id, branch_id } = req.params;
+    const data = await authService.GetInvoiceSettings({
+      user_id: req.user.user_id,
+      zodu_id,
+      branch_id,
+    });
+    if (data.error) return res.status(400).json(data);
+    return res.status(STATUS_CODES.OK).json(data);
+  } catch (error) {
+    logger.error(error);
+    return res.status(STATUS_CODES.INTERNAL_ERROR).json({ message: error.message });
+  }
+});
+
+// ── PUT /api/invoice-settings/:zodu_id/:branch_id ─────────────────────────────
+router.put('/api/invoice-settings/:zodu_id/:branch_id', ValidateSignature, async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(schema.edit_invoice_settings, {
+      ...req.body,
+      zodu_id: req.params.zodu_id,
+      branch_id: req.params.branch_id,
+    });
+    if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
+
+    const data = await authService.EditInvoiceSettings({
+      user_id: req.user.user_id,
+      ...input,
+    });
+    if (data.error) return res.status(400).json(data);
+    return res.status(STATUS_CODES.OK).json(data);
+  } catch (error) {
+    logger.error(error);
+    return res.status(STATUS_CODES.INTERNAL_ERROR).json({ message: error.message });
+  }
+});
+
 module.exports = router;

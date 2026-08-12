@@ -21,5 +21,6 @@ MINIO_HOST: process.env.MINIO_HOST,
 MINIO_PORT: parseInt(process.env.MINIO_PORT),
 MINIO_ACCESSKEY: process.env.MINIO_ACCESSKEY,
 MINIO_SECRETKEY: process.env.MINIO_SECRETKEY,
-BUCKET_NAME: process.env.MINIO_BUCKET_NAME
+BUCKET_NAME: process.env.MINIO_BUCKET_NAME,
+AUTH_SERVICE_URL: process.env.AUTH_SERVICE_URL || 'http://localhost:3000',
 };

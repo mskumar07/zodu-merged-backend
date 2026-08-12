@@ -1,4 +1,5 @@
 const conn = require("../database/connection");
+const authClient = require("../utils/authClient");
 
 const BRANCH_SELECT = `
   SELECT
@@ -323,6 +324,16 @@ exports.createBranch = async (branchData) => {
     );
 
     await client.query('COMMIT');
+
+    // ── Seed default invoice settings via auth-service (source of truth) ───
+    // Best-effort: branch creation already succeeded, so a settings-seed
+    // failure here shouldn't fail the branch creation response. Settings
+    // are self-healing anyway — upsertInvoiceSettings on first save creates
+    // the row if it's missing.
+    authClient
+      .upsertInvoiceSettings(branchData.zodu_id, branchData.branch_id, {})
+      .catch((err) => console.error('[branch-repo] seed invoice settings failed:', err.message));
+
     return rows[0];
   } catch (err) {
     await client.query('ROLLBACK');

@@ -490,6 +490,40 @@ async function EditBranch(userInputs, user_id) {
   }
 }
 
+// ── Invoice Settings ──────────────────────────────────────────────────────────
+
+async function GetInvoiceSettings({ user_id, zodu_id, branch_id }) {
+  const userCompanies = await repository.getUserCompanies({ user_id });
+  const hasAccess = userCompanies.some((company) => company.zodu_id === zodu_id);
+
+  if (!hasAccess) {
+    return FormateData({ error: 'You do not have access to view settings for this company' });
+  }
+
+  const settings = await businessRepo.getInvoiceSettings(zodu_id, branch_id);
+  if (!settings) {
+    return FormateData({ error: 'Invoice settings not found' });
+  }
+  return FormateData({ settings });
+}
+
+async function EditInvoiceSettings({ user_id, zodu_id, branch_id, ...fields }) {
+  const userCompanies = await repository.getUserCompanies({ user_id });
+  const hasAccess = userCompanies.some((company) => company.zodu_id === zodu_id);
+
+  if (!hasAccess) {
+    return FormateData({ error: 'You do not have access to edit settings for this company' });
+  }
+
+  try {
+    const settings = await businessRepo.upsertInvoiceSettings(zodu_id, branch_id, fields);
+    return FormateData({ message: 'Invoice settings updated successfully', settings });
+  } catch (err) {
+    console.error('update invoice settings failed:', err.message);
+    return FormateData({ error: 'Failed to update invoice settings. Please try again.' });
+  }
+}
+
 // ── GetMyCompanies ────────────────────────────────────────────────────────────
 
 async function GetMyCompanies(user_id) {
@@ -540,4 +574,6 @@ module.exports = {
   EditBranch,
   GetMyCompanies,
   GetRoleAccess,
+  GetInvoiceSettings,
+  EditInvoiceSettings,
 };
