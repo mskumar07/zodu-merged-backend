@@ -524,6 +524,27 @@ async function EditInvoiceSettings({ user_id, zodu_id, branch_id, ...fields }) {
   }
 }
 
+// ── GetAllSettings ────────────────────────────────────────────────────────────
+// Aggregates every settings category for a branch into one response.
+// Add a new category here (e.g. notification, receipt) as those tables land —
+// the route/URL never has to change for the frontend.
+async function GetAllSettings({ user_id, zodu_id, branch_id }) {
+  const userCompanies = await repository.getUserCompanies({ user_id });
+  const hasAccess = userCompanies.some((company) => company.zodu_id === zodu_id);
+
+  if (!hasAccess) {
+    return FormateData({ error: 'You do not have access to view settings for this company' });
+  }
+
+  const invoice = await businessRepo.getInvoiceSettings(zodu_id, branch_id);
+
+  return FormateData({
+    settings: {
+      invoice: invoice || null,
+    },
+  });
+}
+
 // ── GetMyCompanies ────────────────────────────────────────────────────────────
 
 async function GetMyCompanies(user_id) {
@@ -576,4 +597,5 @@ module.exports = {
   GetRoleAccess,
   GetInvoiceSettings,
   EditInvoiceSettings,
+  GetAllSettings,
 };

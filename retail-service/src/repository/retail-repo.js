@@ -6,6 +6,7 @@ const { deleteFileFromMinIO } = require('../services/retail-service');
 const { generatePublicOrderNo } = require('./generatePublicOrderNo');
 const { calculateItemsWithDiscount } = require('../utils/gstcalcukator');
 const sharp = require('sharp');
+const authClient = require('../utils/authClient');
 
 
 // ========== Company Repository Functions ==========
@@ -3532,39 +3533,66 @@ exports.generateSaleId = async (branchId, saleType, zoduId, client) => {
   // ── 1. Normalise type ────────────────────────────────────────────────────
   const type =
     saleType === 'Q' || saleType === 'quotation' ? 'Q' : 'S';
- 
-  const prefix = type === 'Q' ? 'QUO' : 'INV';
- 
-  // ── 2. Extract branch suffix ─────────────────────────────────────────────
+
+  // ── 2. Invoice prefix (auth-service is the single source of truth) ──────
+  // digit_count and start_number are fixed — the Settings screen no longer
+  // exposes them, numbering always starts at 001 and pads to 3 digits.
+  const digitCount = 3;
+  const startNumber = 1;
+  let invoicePrefix = 'INV';
+  try {
+    const res = await authClient.getInvoiceSettings(zoduId, branchId);
+    const settings = res?.data;
+    if (settings?.invoice_prefix) {
+      invoicePrefix = settings.invoice_prefix;
+    }
+  } catch (err) {
+    console.error('[generateSaleId] invoice settings lookup failed, using defaults:', err.message);
+  }
+
+  // Quotations keep their own independent sequence, distinguished by a
+  // "Q" suffix on the prefix so numbering never collides with sales.
+  const prefix = type === 'Q' ? `${invoicePrefix}Q` : invoicePrefix;
+
+  // ── Branch suffix ─────────────────────────────────────────────────────────
   // Primary:  strip the known zoduId prefix   →  "ZODU035B1".replace("ZODU035","") = "B1"
   // Fallback: regex match on trailing B+digits →  handles any format
   let branchSuffix;
   if (zoduId && branchId.startsWith(zoduId)) {
-    branchSuffix = branchId.slice(zoduId.length);         // "B1"
+    branchSuffix = branchId.slice(zoduId.length);
   } else {
     const match = branchId.match(/B\d+$/i);
     branchSuffix = match ? match[0].toUpperCase() : branchId;
   }
- 
-  // ── 3. Atomic sequence increment ─────────────────────────────────────────
-  // INSERT the row if it doesn't exist (last_seq = 1).
-  // If it does exist, bump last_seq by 1 and return the new value.
-  // Both paths return the value that belongs to THIS caller — no two callers
-  // can ever get the same number for the same (branch_id, type).
+
+  // ── 3. Next number: derived from tbl_sales itself, no separate counter ────
+  // Look at the highest existing sale_id already using this exact prefix for
+  // this branch, and increment from there. If none exist yet (prefix/branch
+  // combo never used — e.g. prefix or start number was just changed in
+  // Settings), fall back to invoice_start_number. This must run inside the
+  // same DB transaction as the INSERT into tbl_sales, and we take a
+  // transaction-scoped advisory lock keyed on (zodu_id, branch_id, prefix)
+  // so two concurrent sales for the same branch can't read the same max and
+  // collide on the same sale_id.
+  await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${zoduId}:${branchId}:${prefix}`]);
+
   const { rows } = await db.query(
-    `INSERT INTO tbl_sale_sequence (branch_id, sale_type, last_seq,zodu_id)
-     VALUES ($1, $2, 1, $3)
-     ON CONFLICT (branch_id, sale_type)
-     DO UPDATE SET last_seq = tbl_sale_sequence.last_seq + 1
-     RETURNING last_seq`,
-    [branchId, type, zoduId]
+    `SELECT sale_id FROM tbl_sales
+     WHERE zodu_id = $1 AND branch_id = $2 AND sale_id LIKE $3
+     ORDER BY (regexp_match(sale_id, '-(\\d+)$'))[1]::int DESC
+     LIMIT 1`,
+    [zoduId, branchId, `${prefix}-${branchSuffix}-%`]
   );
- 
-  const seq = rows[0].last_seq;
- 
+
+  let nextNumber = startNumber;
+  if (rows[0]) {
+    const match = rows[0].sale_id.match(/-(\d+)$/);
+    if (match) nextNumber = parseInt(match[1], 10) + 1;
+  }
+
   // ── 4. Format ─────────────────────────────────────────────────────────────
-  return `${prefix}-${branchSuffix}-${String(seq).padStart(4, '0')}`;
-  // → "INV-B1-0001"  |  "QUO-B2-0042"
+  return `${prefix}-${branchSuffix}-${String(nextNumber).padStart(digitCount, '0')}`;
+  // → "IXV-B1-0005"  (prefix, digit_count, start_number all settings-driven)
 }
 
 exports.getSalesHistory = async (filters) => {

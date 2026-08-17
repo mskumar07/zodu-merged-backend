@@ -135,8 +135,6 @@ const schema = {
     zodu_id: joi.string().required(),
     branch_id: joi.string().required(),
     invoice_prefix: joi.string().max(20).allow(null, ''),
-    invoice_digit_count: joi.number().integer().min(1).max(10),
-    invoice_start_number: joi.number().integer().min(1),
     default_tax_label: joi.string().max(50).allow(null, ''),
     invoice_due_days: joi.number().integer().min(0),
     default_payment_method: joi.string().max(30).allow(null, ''),

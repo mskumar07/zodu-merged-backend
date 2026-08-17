@@ -464,7 +464,7 @@ exports.getInvoiceSettings = async (zodu_id, branch_id) => {
 
 exports.upsertInvoiceSettings = async (zodu_id, branch_id, fields) => {
   const allowed = [
-    'invoice_prefix', 'invoice_digit_count', 'invoice_start_number',
+    'invoice_prefix',
     'default_tax_label', 'invoice_due_days', 'default_payment_method',
     'printer_inch', 'show_company_logo', 'print_thank_you_message',
   ];

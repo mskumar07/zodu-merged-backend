@@ -48,3 +48,7 @@ exports.updateBranch = (zodu_id, branch_id, data) =>
 
 exports.findMaxBranchId = (zodu_id) =>
   call(() => client.get(`/branches/max/${zodu_id}`));
+
+// ── Invoice Settings ──────────────────────────────────────────────────────────
+exports.getInvoiceSettings = (zodu_id, branch_id) =>
+  call(() => client.get(`/invoice-settings/${zodu_id}/${branch_id}`));

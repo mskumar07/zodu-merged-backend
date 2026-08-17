@@ -204,6 +204,27 @@ router.get('/api/role-access', ValidateSignature, async (req, res) => {
   }
 });
 
+// ── GET /api/settings/:zodu_id/:branch_id ─────────────────────────────────────
+// Common settings endpoint — returns every settings category for this branch
+// in one response, namespaced by category (currently just "invoice"). Add new
+// categories to authService.GetAllSettings as their tables land; this route
+// stays the same.
+router.get('/api/settings/:zodu_id/:branch_id', ValidateSignature, async (req, res) => {
+  try {
+    const { zodu_id, branch_id } = req.params;
+    const data = await authService.GetAllSettings({
+      user_id: req.user.user_id,
+      zodu_id,
+      branch_id,
+    });
+    if (data.error) return res.status(400).json(data);
+    return res.status(STATUS_CODES.OK).json(data);
+  } catch (error) {
+    logger.error(error);
+    return res.status(STATUS_CODES.INTERNAL_ERROR).json({ message: error.message });
+  }
+});
+
 // ── GET /api/invoice-settings/:zodu_id/:branch_id ─────────────────────────────
 router.get('/api/invoice-settings/:zodu_id/:branch_id', ValidateSignature, async (req, res) => {
   try {

@@ -1,75 +1,46 @@
 const conn = require('../database/connection');
+const authClient = require('../utils/authClient');
 
+// Format: {invoice_prefix}-{branch_id}-{seq padded to 3 digits}
+// e.g. "IXV-B1-001" — prefix comes from auth-service's tbl_invoice_settings,
+// same convention as retail-service's generateSaleId. digit_count/start_number
+// are fixed (Settings screen no longer exposes them): always 3 digits,
+// starting at 001. The next number is derived from the highest existing
+// public_order_no already using this exact prefix (no separate counter
+// table) so a prefix change in Settings takes effect immediately.
+exports.generatePublicOrderNo = async (branch_id, zodu_id, client) => {
+  const db = client ?? conn;
+  const digitCount = 3;
+  const startNumber = 1;
 
-exports.generatePublicOrderNo = async (branch_id, zodu_id) => {
-  const tplRes = await conn.query(
-    `SELECT numbering_type, reset_policy
-     FROM tbl_order_no_template
-     WHERE branch_id = $1 AND is_active = true`,
-    [branch_id]
-  );
-
-  // Use default template if not configured
-  let numbering_type = "ZODUID_BRANCH_SEQ";
-  let reset_policy = "DAILY";
-
-  if (tplRes.rowCount > 0) {
-    numbering_type = tplRes.rows[0].numbering_type;
-    reset_policy = tplRes.rows[0].reset_policy;
-  }
-
-  let period_key = "GLOBAL";
-  const now = new Date();
-
-  if (reset_policy === "DAILY") {
-    period_key = now.toISOString().slice(0, 10).replace(/-/g, "");
-  } else if (reset_policy === "MONTHLY") {
-    period_key = now.toISOString().slice(0, 7).replace("-", "");
-  } else if (reset_policy === "YEARLY") {
-    period_key = String(now.getFullYear());
-  }
-
-  // Use an explicit transaction and an atomic update-or-insert
-  const client = await conn.connect();
+  let invoicePrefix = 'INV';
   try {
-    await client.query('BEGIN');
-
-    const updateRes = await client.query(
-      `UPDATE tbl_order_no_counter
-       SET last_seq = last_seq + 1
-       WHERE branch_id = $1 AND period_key = $2
-       RETURNING last_seq`,
-      [branch_id, period_key]
-    );
-
-    let seq;
-    if (updateRes.rowCount) {
-      seq = updateRes.rows[0].last_seq;
-    } else {
-      const insertRes = await client.query(
-        `INSERT INTO tbl_order_no_counter (branch_id, period_key, last_seq)
-         VALUES ($1, $2, 1)
-         RETURNING last_seq`,
-        [branch_id, period_key]
-      );
-      seq = insertRes.rows[0].last_seq;
-    }
-
-    await client.query('COMMIT');
-    // release and return
-    client.release();
-
-    if (numbering_type === "ZODUID_BRANCH_SEQ") {
-      // Default format: Z{zodu_id}-B{branch_id}-{counter:04d}
-      return `${zodu_id}-${branch_id}-${seq.toString().padStart(4, '0')}`;
-    } else if (numbering_type === "BRANCH_SEQ") {
-      return `${branch_id}-${seq}`;
-    } else {
-      return String(seq);
+    const res = await authClient.getInvoiceSettings(zodu_id, branch_id);
+    const settings = res?.data;
+    if (settings?.invoice_prefix) {
+      invoicePrefix = settings.invoice_prefix;
     }
   } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    client.release();
-    throw err;
+    console.error('[generatePublicOrderNo] invoice settings lookup failed, using defaults:', err.message);
   }
+
+  // Transaction-scoped advisory lock so two concurrent orders for the same
+  // branch/prefix can't read the same max and collide on the same number.
+  await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${zodu_id}:${branch_id}:${invoicePrefix}`]);
+
+  const { rows } = await db.query(
+    `SELECT public_order_no FROM tbl_orders
+     WHERE zodu_id = $1 AND branch_id = $2 AND public_order_no LIKE $3
+     ORDER BY (regexp_match(public_order_no, '-(\\d+)$'))[1]::int DESC
+     LIMIT 1`,
+    [zodu_id, branch_id, `${invoicePrefix}-${branch_id}-%`]
+  );
+
+  let nextNumber = startNumber;
+  if (rows[0]) {
+    const match = rows[0].public_order_no.match(/-(\d+)$/);
+    if (match) nextNumber = parseInt(match[1], 10) + 1;
+  }
+
+  return `${invoicePrefix}-${branch_id}-${String(nextNumber).padStart(digitCount, '0')}`;
 };

@@ -15,9 +15,9 @@ CREATE TABLE IF NOT EXISTS tbl_invoice_settings (
     branch_id                   VARCHAR(50) NOT NULL,
 
     -- Invoice Numbering
+    -- digit_count/start_number removed — numbering is fixed at 3 digits,
+    -- starting from 001, derived from existing sale_id/public_order_no rows.
     invoice_prefix              VARCHAR(20) NOT NULL DEFAULT 'INV',
-    invoice_digit_count         SMALLINT NOT NULL DEFAULT 4,
-    invoice_start_number        INTEGER NOT NULL DEFAULT 1,
 
     -- Tax Settings
     default_tax_label           VARCHAR(50) NOT NULL DEFAULT 'GST 18%',
