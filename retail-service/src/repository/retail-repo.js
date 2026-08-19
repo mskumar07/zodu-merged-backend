@@ -3566,22 +3566,23 @@ exports.generateSaleId = async (branchId, saleType, zoduId, client) => {
   }
 
   // ── 3. Next number: derived from tbl_sales itself, no separate counter ────
-  // Look at the highest existing sale_id already using this exact prefix for
-  // this branch, and increment from there. If none exist yet (prefix/branch
-  // combo never used — e.g. prefix or start number was just changed in
-  // Settings), fall back to invoice_start_number. This must run inside the
-  // same DB transaction as the INSERT into tbl_sales, and we take a
-  // transaction-scoped advisory lock keyed on (zodu_id, branch_id, prefix)
-  // so two concurrent sales for the same branch can't read the same max and
+  // Look at the highest existing number for this branch+type ACROSS ALL
+  // PREFIXES (not just the current one) and increment from there — changing
+  // the prefix in Settings must not restart numbering, e.g. INV-B1-143 then
+  // switching to IXV must produce IXV-B1-144, not IXV-B1-001. Falls back to
+  // invoice_start_number only when this branch+type has never had a sale.
+  // Runs inside the same DB transaction as the INSERT into tbl_sales, with a
+  // transaction-scoped advisory lock keyed on (zodu_id, branch_id, type) so
+  // two concurrent sales for the same branch can't read the same max and
   // collide on the same sale_id.
-  await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${zoduId}:${branchId}:${prefix}`]);
+  await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${zoduId}:${branchId}:${type}`]);
 
   const { rows } = await db.query(
     `SELECT sale_id FROM tbl_sales
-     WHERE zodu_id = $1 AND branch_id = $2 AND sale_id LIKE $3
+     WHERE zodu_id = $1 AND branch_id = $2 AND sale_type = $3 AND sale_id LIKE $4
      ORDER BY (regexp_match(sale_id, '-(\\d+)$'))[1]::int DESC
      LIMIT 1`,
-    [zoduId, branchId, `${prefix}-${branchSuffix}-%`]
+    [zoduId, branchId, type, `%-${branchSuffix}-%`]
   );
 
   let nextNumber = startNumber;
@@ -3592,7 +3593,7 @@ exports.generateSaleId = async (branchId, saleType, zoduId, client) => {
 
   // ── 4. Format ─────────────────────────────────────────────────────────────
   return `${prefix}-${branchSuffix}-${String(nextNumber).padStart(digitCount, '0')}`;
-  // → "IXV-B1-0005"  (prefix, digit_count, start_number all settings-driven)
+  // → "IXV-B1-144"  (prefix from settings, number continues across prefix changes)
 }
 
 exports.getSalesHistory = async (filters) => {
@@ -6304,6 +6305,7 @@ exports.getPaymentHistory = async ({ custUuid, branchId, zoduId, fromDate, toDat
        sp.transaction_type,
        sp.paid_amount      AS amount,
        sp.status,
+       sp.transaction_id,
        TO_CHAR(sp.created_at,'DD Mon YYYY, HH12:MI AM (Dy)') AS created_at
      FROM tbl_sale_payment sp
      INNER JOIN tbl_sales s

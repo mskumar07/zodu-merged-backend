@@ -2,12 +2,14 @@ const conn = require('../database/connection');
 const authClient = require('../utils/authClient');
 
 // Format: {invoice_prefix}-{branch_id}-{seq padded to 3 digits}
-// e.g. "IXV-B1-001" — prefix comes from auth-service's tbl_invoice_settings,
+// e.g. "IXV-B1-144" — prefix comes from auth-service's tbl_invoice_settings,
 // same convention as retail-service's generateSaleId. digit_count/start_number
-// are fixed (Settings screen no longer exposes them): always 3 digits,
-// starting at 001. The next number is derived from the highest existing
-// public_order_no already using this exact prefix (no separate counter
-// table) so a prefix change in Settings takes effect immediately.
+// are fixed (Settings screen no longer exposes them): always 3 digits.
+// The next number is derived from the highest existing public_order_no for
+// this branch ACROSS ALL PREFIXES, so changing the prefix in Settings does
+// not restart numbering — e.g. INV-B1-143 then switching to IXV produces
+// IXV-B1-144, not IXV-B1-001. Falls back to 001 only when this branch has
+// never had an order.
 exports.generatePublicOrderNo = async (branch_id, zodu_id, client) => {
   const db = client ?? conn;
   const digitCount = 3;
@@ -25,15 +27,15 @@ exports.generatePublicOrderNo = async (branch_id, zodu_id, client) => {
   }
 
   // Transaction-scoped advisory lock so two concurrent orders for the same
-  // branch/prefix can't read the same max and collide on the same number.
-  await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${zodu_id}:${branch_id}:${invoicePrefix}`]);
+  // branch can't read the same max and collide on the same number.
+  await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${zodu_id}:${branch_id}`]);
 
   const { rows } = await db.query(
     `SELECT public_order_no FROM tbl_orders
      WHERE zodu_id = $1 AND branch_id = $2 AND public_order_no LIKE $3
      ORDER BY (regexp_match(public_order_no, '-(\\d+)$'))[1]::int DESC
      LIMIT 1`,
-    [zodu_id, branch_id, `${invoicePrefix}-${branch_id}-%`]
+    [zodu_id, branch_id, `%-${branch_id}-%`]
   );
 
   let nextNumber = startNumber;

@@ -80,20 +80,20 @@ services:
         MINIO_SECRETKEY: zodu@2025
         MINIO_BUCKET_NAME: zodu
 
-    payroll-service:
-      image: vicky0015/zodu-backemd-payroll-service:latest
-      container_name: payroll-service
-      restart: always
-      expose:
-        - "3003"
-      environment:
-        NODE_ENV: production
-        PORT: 3003
-        DB_HOSTNAME: postgres_prod
-        DB_PORT: 5432
-        DB_USERNAME: zoduprod
-        DB_PASSWORD: zodu@2025
-        DB_NAME: payroll-service
+  payroll-service:
+    image: vicky0015/zodu-backemd-payroll-service:latest
+    container_name: payroll-service
+    restart: always
+    expose:
+      - "3003"
+    environment:
+      NODE_ENV: production
+      PORT: 3003
+      DB_HOSTNAME: postgres_prod
+      DB_PORT: 5432
+      DB_USERNAME: zoduprod
+      DB_PASSWORD: zodu@2025
+      DB_NAME: payroll-service
 
   checklist-service:
     image: vicky0015/zodu-backemd-checklist-service:latest
