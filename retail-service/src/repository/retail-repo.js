@@ -6220,7 +6220,8 @@ exports.getSalesRows = async ({ custUuid, branchId, zoduId, fromDate, toDate }) 
        s.total_amount,
        s.paid_amount,
        s.balance_amount,
-       s.payment_status
+       s.payment_status,
+       TO_CHAR(s.due_date,'DD Mon YYYY') AS due_date
      FROM tbl_sales s
      WHERE s.customer_uuid = $1
        AND s.zodu_id        = $2
@@ -6334,8 +6335,9 @@ exports.computeSummary = (salesRows, returnRows) => {
   const totalPaid    = salesRows.reduce((s, r) => s + parseFloat(r.paid_amount    || 0), 0);
   const totalBalance = salesRows.reduce((s, r) => s + parseFloat(r.balance_amount || 0), 0);
   const totalReturns = returnRows.reduce((s, r) => s + parseFloat(r.total_amount  || 0), 0);
- 
+
   return {
+    total_invoice:   salesRows.length,
     gross_total:     +grossTotal.toFixed(2),
     total_paid:      +totalPaid.toFixed(2),
     total_balance:   +totalBalance.toFixed(2),

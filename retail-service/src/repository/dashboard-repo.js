@@ -112,7 +112,7 @@ async function getSales(zodu_id, branch_id, limit, cursor) {
       TO_CHAR(s.sale_time, 'HH12:MI AM') AS sale_time,
       s.total_amount,
       s.payment_status,
-      COALESCE(c.cust_name, 'Walk-in') AS customer_name
+      c.cust_name AS customer_name
     FROM tbl_sales s
     LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid
     WHERE ${where}
@@ -181,7 +181,7 @@ async function getReminders(zodu_id, branch_id, limit, offset) {
       s.balance_amount,
       s.payment_status,
       NULL::varchar                           AS transaction_type,
-      COALESCE(c.cust_name, 'Walk-in')        AS party_name,
+      c.cust_name                             AS party_name,
       NULL::varchar                           AS vendor_name
     FROM tbl_sales s
     LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid
@@ -203,7 +203,7 @@ async function getReminders(zodu_id, branch_id, limit, offset) {
       p.payment_status,
       STRING_AGG(DISTINCT pp.transaction_type, ', ' ORDER BY pp.transaction_type)          AS transaction_type,
       NULL::varchar                                                                         AS party_name,
-      COALESCE(v.vendor_name, 'Unknown Vendor')                                            AS vendor_name
+      v.vendor_name                                                                         AS vendor_name
     FROM tbl_purchase p
     LEFT JOIN tbl_purchase_payment pp
       ON pp.purchase_id = p.purchase_id

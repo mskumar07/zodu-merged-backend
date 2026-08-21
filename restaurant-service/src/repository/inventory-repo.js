@@ -150,14 +150,16 @@ exports.getStockHistoryRepo = async ({ item_uuid, zodu_id, branch_id }) => {
 
   // ✅ 2. Get Ledger History (ONLY if exists)
   const historyQuery = `
-    SELECT 
+    SELECT
       l.ledger_id,
       l.transaction_type,
 
       COALESCE(
         CASE
-          WHEN l.transaction_type IN ('purchase', 'purchase_item_added', 'purchase_item_qty_updated', 'purchase_item_removed', 'purchase_delete')
+          WHEN l.transaction_type IN ('purchase', 'purchase_item_added', 'purchase_item_qty_updated', 'purchase_item_removed', 'purchase_cancel')
             THEN p.purchase_id::TEXT
+          WHEN l.transaction_type IN ('sale', 'sale_cancel')
+            THEN o.public_order_no
         END,
         l.reference_id::TEXT
       ) AS reference_id,
@@ -176,19 +178,25 @@ exports.getStockHistoryRepo = async ({ item_uuid, zodu_id, branch_id }) => {
       END as movement_type,
 
       CASE
-        WHEN l.transaction_type = 'sale_deleted' THEN 'Reverse'
+        WHEN l.transaction_type = 'sale_cancel' THEN 'Reverse'
         WHEN l.transaction_type IN ('sale', 'sale_update') THEN 'Sale'
         WHEN l.transaction_type = 'sale_update_reverse' THEN 'Sale Adjust'
         WHEN l.transaction_type = 'purchase' THEN 'Purchase'
         WHEN l.transaction_type IN ('purchase_item_added', 'purchase_item_qty_updated') THEN 'Purchase Update'
         WHEN l.transaction_type = 'purchase_item_removed' THEN 'Purchase Remove'
-        WHEN l.transaction_type = 'purchase_delete' THEN 'Purchase Delete'
+        WHEN l.transaction_type = 'purchase_cancel' THEN 'Purchase Cancel'
         ELSE INITCAP(REPLACE(l.transaction_type, '_', ' '))
       END AS label
 
     FROM tbl_stock_ledger l
     LEFT JOIN tbl_purchase p
       ON p.id = l.reference_id
+      AND l.transaction_type IN ('purchase', 'purchase_item_added', 'purchase_item_qty_updated', 'purchase_item_removed', 'purchase_cancel')
+    LEFT JOIN tbl_orders o
+      ON o.api_order_id = l.reference_id
+      AND o.zodu_id = l.zodu_id
+      AND o.branch_id = l.branch_id
+      AND l.transaction_type IN ('sale', 'sale_cancel')
 
     WHERE l.item_uuid = $1
       AND l.zodu_id = $2
