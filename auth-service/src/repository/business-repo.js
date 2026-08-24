@@ -4,10 +4,11 @@ const conn = require('../database/connection');
 
 // ── COMPANY ───────────────────────────────────────────────────────────────────
 
-exports.createCompany = async (data) => {
-  const client = await conn.connect();
+exports.createCompany = async (data, externalClient = null) => {
+  const client = externalClient || await conn.connect();
+  const ownsTransaction = !externalClient;
   try {
-    await client.query('BEGIN');
+    if (ownsTransaction) await client.query('BEGIN');
 
     // 1. address
     let address_id = null;
@@ -59,13 +60,13 @@ exports.createCompany = async (data) => {
        data.gst_no || null, data.type || data.business_type || null, address_id, bank_details_id]
     );
 
-    await client.query('COMMIT');
+    if (ownsTransaction) await client.query('COMMIT');
     return r.rows[0];
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (ownsTransaction) await client.query('ROLLBACK');
     throw err;
   } finally {
-    client.release();
+    if (ownsTransaction) client.release();
   }
 };
 
@@ -208,10 +209,11 @@ exports.getBranches = async (zodu_id, branch_id = null) => {
   return r.rows;
 };
 
-exports.createDefaultBranch = async ({ branch_id, zodu_id, qr_code_id, branch_name, branch_mobile_no, branch_mail_id }) => {
-  const client = await conn.connect();
+exports.createDefaultBranch = async ({ branch_id, zodu_id, qr_code_id, branch_name, branch_mobile_no, branch_mail_id }, externalClient = null) => {
+  const client = externalClient || await conn.connect();
+  const ownsTransaction = !externalClient;
   try {
-    await client.query('BEGIN');
+    if (ownsTransaction) await client.query('BEGIN');
 
     const { rows } = await client.query(
       `INSERT INTO tbl_branch (branch_id, zodu_id, qr_code_id, branch_name, branch_mobile_no, branch_mail_id)
@@ -226,13 +228,13 @@ exports.createDefaultBranch = async ({ branch_id, zodu_id, qr_code_id, branch_na
       [zodu_id, branch_id]
     );
 
-    await client.query('COMMIT');
+    if (ownsTransaction) await client.query('COMMIT');
     return rows[0] || null;
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (ownsTransaction) await client.query('ROLLBACK');
     throw new Error('Unable to create default branch: ' + err.message);
   } finally {
-    client.release();
+    if (ownsTransaction) client.release();
   }
 };
 

@@ -57,44 +57,46 @@ async function CreateAccount(userInputs) {
   const password_hash = await GeneratePassword(password, salt);
   const zodu_id       = await repository.getNextZoduId();
 
+  // Whole signup (user, roles, access, company, default branch) is one
+  // all-or-nothing transaction — any failure rolls back every table together,
+  // instead of leaving partial state (e.g. a user with no company).
+  const client = await repository.conn.connect();
   let createdData;
   try {
-    createdData = await repository.AccountCreationQuery({
+    await client.query('BEGIN');
+
+    createdData = await repository.AccountCreationQuery(client, {
       zodu_id, phone_number, email, password_hash,
     });
-  } catch (err) {
-    if (err.code === '23505') {
-      return FormateData({ error: 'Email or phone already registered' });
-    }
-    throw err;
-  }
 
-  try {
     await businessRepo.createCompany({
       zodu_id,
       restaurant_name,
       mobile_no: phone_number,
       mail_id: email,
       business_type: business_type || null,
-    });
-  } catch (err) {
-    console.error('company creation failed — rolling back:', err.message);
-    await repository.deleteAccountByZoduId(zodu_id).catch(() => {});
-    return FormateData({ error: 'Registration failed. Please try again.' });
-  }
+    }, client);
 
-  if (same_for_branch === true) {
-    try {
+    if (same_for_branch === true) {
       await businessRepo.createDefaultBranch({
         branch_id: 'B1',
         zodu_id,
         branch_name: restaurant_name,
         branch_mobile_no: phone_number,
         branch_mail_id: email,
-      });
-    } catch (err) {
-      console.error('Default branch creation failed (non-fatal):', err.message);
+      }, client);
     }
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (err.code === '23505') {
+      return FormateData({ error: 'Email or phone already registered' });
+    }
+    console.error('Account creation failed — rolled back:', err.message);
+    return FormateData({ error: 'Registration failed. Please try again.' });
+  } finally {
+    client.release();
   }
 
   // Seed Admin employee in employee-service (non-blocking — failure must not break signup)
