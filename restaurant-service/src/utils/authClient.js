@@ -21,9 +21,6 @@ async function call(fn) {
 }
 
 // ── Company ───────────────────────────────────────────────────────────────────
-exports.createCompany = (data) =>
-  call(() => client.post('/company', data));
-
 exports.updateCompany = (zodu_id, data) =>
   call(() => client.put(`/company/${zodu_id}`, data));
 

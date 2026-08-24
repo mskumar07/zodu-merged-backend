@@ -42,12 +42,6 @@ function generateTransactionId() {
 
 
 // Company/Branch operations — delegated to auth-service via HTTP (owns retail_auth_service DB)
-exports.createCompany = async (companyData) => {
-  console.log("Creating company with data:--------", companyData);
-  const res = await authClient.createCompany(companyData);
-  return res.data;
-};
-
 exports.updateCompany = async (zodu_id, fields) => {
   if (Object.keys(fields).length === 0) return null;
   const res = await authClient.updateCompany(zodu_id, fields);

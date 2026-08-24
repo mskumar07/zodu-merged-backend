@@ -29,13 +29,29 @@ exports.createVendor = async (data) => {
       throw new Error("zodu_id, branch_id and vendor_name are required");
     }
 
+    const vendor_type = data.type !== undefined && data.type !== null ? data.type : "Purchase";
+
+    if (data.vendor_phone || data.vendor_email) {
+      const { rows: existing } = await client.query(
+        `SELECT vendor_phone, vendor_email FROM tbl_vendor
+         WHERE zodu_id=$1 AND branch_id=$2 AND vendor_type=$3 AND (vendor_phone=$4 OR vendor_email=$5)
+         LIMIT 1`,
+        [data.zodu_id, data.branch_id, vendor_type, data.vendor_phone || null, data.vendor_email || null]
+      );
+
+      if (existing.length > 0) {
+        if (data.vendor_phone && existing[0].vendor_phone === data.vendor_phone) {
+          throw new Error("Vendor phone number already exists");
+        }
+        throw new Error("Vendor email already exists");
+      }
+    }
+
     const vendor_id = await getNextVendorId(
       client,
       data.zodu_id,
       data.branch_id
     );
-
-    const vendor_type = data.type !== undefined && data.type !== null ? data.type : "Purchase";
 
     const { rows } = await client.query(
       `INSERT INTO tbl_vendor (
@@ -95,8 +111,42 @@ exports.getVendors = async ({ zodu_id, branch_id, search, type }) => {
   return rows;
 };
 
+// 🔹 GET Vendor by ID
+exports.getVendorById = async (vendor_id) => {
+  const { rows } = await conn.query(
+    `SELECT * FROM tbl_vendor WHERE id=$1`,
+    [vendor_id]
+  );
+
+  return rows[0] || null;
+};
+
 // 🔹 UPDATE Vendor
-exports.updateVendor = async (vendor_id, data) => {
+exports.updateVendor = async (id, data) => {
+  if (data.vendor_phone || data.vendor_email) {
+    const { rows: current } = await conn.query(
+      `SELECT zodu_id, branch_id FROM tbl_vendor WHERE id=$1`,
+      [id]
+    );
+
+    if (current.length === 0) throw new Error("Vendor not found");
+
+    const { rows: existing } = await conn.query(
+      `SELECT vendor_phone, vendor_email FROM tbl_vendor
+       WHERE id<>$1 AND zodu_id=$2 AND branch_id=$3 AND vendor_type=$4
+         AND (vendor_phone=$5 OR vendor_email=$6)
+       LIMIT 1`,
+      [id, current[0].zodu_id, current[0].branch_id, data.vendor_type, data.vendor_phone || null, data.vendor_email || null]
+    );
+
+    if (existing.length > 0) {
+      if (data.vendor_phone && existing[0].vendor_phone === data.vendor_phone) {
+        throw new Error("Vendor phone number already exists");
+      }
+      throw new Error("Vendor email already exists");
+    }
+  }
+
   const { rows } = await conn.query(
     `UPDATE tbl_vendor SET
       vendor_name=$1,
@@ -110,7 +160,7 @@ exports.updateVendor = async (vendor_id, data) => {
       state=$9,
       pincode=$10,
       vendor_type=$11
-     WHERE vendor_id=$12
+     WHERE id=$12
      RETURNING *`,
     [
       data.vendor_name,
@@ -124,7 +174,7 @@ exports.updateVendor = async (vendor_id, data) => {
       data.state || null,
       data.pincode || null,
       data.vendor_type || null,
-      vendor_id,
+      id,
     ]
   );
 
@@ -133,10 +183,10 @@ exports.updateVendor = async (vendor_id, data) => {
 };
 
 // 🔹 DELETE Vendor (Soft delete recommended)
-exports.deleteVendor = async (vendor_id) => {
+exports.deleteVendor = async (id) => {
   const { rows } = await conn.query(
-    `DELETE FROM tbl_vendor WHERE vendor_id=$1 RETURNING *`,
-    [vendor_id]
+    `DELETE FROM tbl_vendor WHERE id=$1 RETURNING *`,
+    [id]
   );
 
   if (rows.length === 0) throw new Error("Vendor not found");

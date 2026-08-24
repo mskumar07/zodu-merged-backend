@@ -61,18 +61,6 @@ async function get_pos_data(data) {
   }
 }
 
-// service — unchanged, but now receives correct error propagation
-async function createCompanyService(companyData) {
-  console.log("Creating company with data:--------", companyData);
-  try {
-    const company = await repository.createCompany(companyData);
-    return { success: true, message: 'Company created successfully', data: company };
-  } catch (err) {
-    console.error('Error inserting company:', err);
-    return { success: false, message: err.message };
-  }
-}
-
 async function uploadImg(file) {
   console.log(file)
   try {
@@ -2798,7 +2786,6 @@ async function markSalePayment (payload) {
 module.exports = {
   getReportServices,
   getPurchaseReportServices,
-  createCompanyService,
   getData,
   createBranch,
   createDefaultBranchService,

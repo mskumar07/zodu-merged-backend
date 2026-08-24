@@ -10,12 +10,10 @@ const repository = require('../repository/auth-repo');
 const businessRepo = require('../repository/business-repo');
 const axios = require('axios');
 const jwt = require('jsonwebtoken');
-const { APP_SECRET, RESTAURANT_SERVICE_URL, EMPLOYEE_SERVICE_URL } = require('../config');
+const { APP_SECRET, EMPLOYEE_SERVICE_URL } = require('../config');
 
 const REFRESH_SECRET  = APP_SECRET;
 const REFRESH_EXPIRY_DAYS = 7;
-
-console.log(RESTAURANT_SERVICE_URL)
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -72,7 +70,7 @@ async function CreateAccount(userInputs) {
   }
 
   try {
-    await axios.post(`${RESTAURANT_SERVICE_URL}/api/createcompany`, {
+    await businessRepo.createCompany({
       zodu_id,
       restaurant_name,
       mobile_no: phone_number,
@@ -80,21 +78,21 @@ async function CreateAccount(userInputs) {
       business_type: business_type || null,
     });
   } catch (err) {
-    console.error('restaurant-service failed — rolling back:', err.message);
+    console.error('company creation failed — rolling back:', err.message);
     await repository.deleteAccountByZoduId(zodu_id).catch(() => {});
     return FormateData({ error: 'Registration failed. Please try again.' });
   }
-console.log(same_for_branch)
+
   if (same_for_branch === true) {
     try {
-      await axios.post(`${RESTAURANT_SERVICE_URL}/api/branch/signup-default`, {
+      await businessRepo.createDefaultBranch({
+        branch_id: 'B1',
         zodu_id,
         branch_name: restaurant_name,
         branch_mobile_no: phone_number,
         branch_mail_id: email,
       });
     } catch (err) {
-      console.log(err)
       console.error('Default branch creation failed (non-fatal):', err.message);
     }
   }
@@ -340,7 +338,7 @@ async function AddCompany(userInputs, user_id) {
   const zodu_id = await repository.getNextZoduId();
 
   try {
-    await axios.post(`${RESTAURANT_SERVICE_URL}/api/createcompany`, {
+    await businessRepo.createCompany({
       zodu_id,
       restaurant_name,
       owner_admin_name,
@@ -379,7 +377,8 @@ async function AddCompany(userInputs, user_id) {
 
   if (same_for_branch === true) {
     try {
-      await axios.post(`${RESTAURANT_SERVICE_URL}/api/branch/signup-default`, {
+      await businessRepo.createDefaultBranch({
+        branch_id: 'B1',
         zodu_id,
         branch_name: restaurant_name,
         branch_mobile_no: phone_number,
@@ -413,16 +412,14 @@ async function AddBranch(userInputs, user_id) {
   }
 
   try {
-    const response = await axios.post(`${RESTAURANT_SERVICE_URL}/add/branch`, userInputs);
+    const branch = await businessRepo.createBranch(userInputs);
     return FormateData({
       message: 'Branch created successfully',
-      branch: response.data?.Data?.data ?? response.data?.data ?? response.data,
+      branch,
     });
   } catch (err) {
     console.error('add branch failed:', err.message);
-    return FormateData({
-      error: err.response?.data?.message || err.response?.data?.error || 'Failed to create branch. Please try again.',
-    });
+    return FormateData({ error: 'Failed to create branch. Please try again.' });
   }
 }
 
@@ -443,7 +440,7 @@ async function EditCompany(userInputs, user_id) {
   }
 
   try {
-    const response = await axios.put(`${RESTAURANT_SERVICE_URL}/api/company/${zodu_id}`, {
+    const company = await businessRepo.updateCompany(zodu_id, {
       ...rest,
       ...(phone_number !== undefined ? { mobile_no: phone_number } : {}),
       ...(email !== undefined ? { mail_id: email } : {}),
@@ -452,14 +449,11 @@ async function EditCompany(userInputs, user_id) {
 
     return FormateData({
       message: 'Company updated successfully',
-      company: response.data?.data ?? response.data,
+      company,
     });
   } catch (err) {
-    console.log(err)
     console.error('edit company failed:', err.message);
-    return FormateData({
-      error: err.response?.data?.message || err.response?.data?.error || 'Failed to update company. Please try again.',
-    });
+    return FormateData({ error: 'Failed to update company. Please try again.' });
   }
 }
 
@@ -476,17 +470,14 @@ async function EditBranch(userInputs, user_id) {
   }
 
   try {
-    const response = await axios.put(`${RESTAURANT_SERVICE_URL}/api/branch/${zodu_id}/${branch_id}`, rest);
+    const branch = await businessRepo.updateBranch(zodu_id, branch_id, rest);
     return FormateData({
       message: 'Branch updated successfully',
-      branch: response.data?.data ?? response.data,
+      branch,
     });
   } catch (err) {
-    console.log(err)
     console.error('edit branch failed:', err.message);
-    return FormateData({
-      error: err.response?.data?.message || err.response?.data?.error || 'Failed to update branch. Please try again.',
-    });
+    return FormateData({ error: 'Failed to update branch. Please try again.' });
   }
 }
 

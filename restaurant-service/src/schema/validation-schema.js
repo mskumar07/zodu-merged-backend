@@ -267,7 +267,7 @@ const vendor_create_v2 = Joi.object({
   city:             Joi.string().max(50).optional().allow(null, ""),
   state:            Joi.string().max(50).optional().allow(null, ""),
   pincode:          Joi.string().pattern(/^[0-9]{5,10}$/).optional().allow(null, ""),
-  type:             Joi.string().max(50).optional().allow(null, ""),
+  vendor_type:             Joi.string().max(50).optional().allow(null, ""),
 }).options({ abortEarly: false });
 
 const vendor_update_v2 = Joi.object({
@@ -280,7 +280,8 @@ const vendor_update_v2 = Joi.object({
   vendor_address_1: Joi.string().max(255).optional().allow(null, ""),
   vendor_address_2: Joi.string().max(255).optional().allow(null, ""),
   city:             Joi.string().max(50).optional().allow(null, ""),
-  state:            Joi.string().max(50).optional().allow(null, ""),
+  state: Joi.string().max(50).optional().allow(null, ""),
+  vendor_type: Joi.string().max(50).optional().allow(null, ""),
   pincode:          Joi.string().pattern(/^[0-9]{5,10}$/).optional().allow(null, ""),
 }).min(1).options({ abortEarly: false });
 

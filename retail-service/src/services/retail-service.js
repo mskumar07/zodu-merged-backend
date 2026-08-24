@@ -43,36 +43,6 @@ const normalizeBranchIds = (branchIds) => {
   return normalized;
 };
 
-// service — unchanged, but now receives correct error propagation
-async function createCompanyService(companyData) {
-  try {
-    const company = await repository.createCompany(companyData);
-
-    if (companyData.can_use_for_branch) {
-      const branchRepo = require('../repository/branch-repo.js');
-
-      const branch_id = 'B1';
-      // const createQr = await repository.createQRCode(branch_id);
-
-      await branchRepo.createBranch({
-        branch_id,
-        zodu_id:          company.zodu_id,
-        branch_name:      companyData.city || companyData.restaurant_name,
-        branch_mobile_no: companyData.mobile_no   || null,
-        branch_mail_id:   companyData.mail_id      || null,
-        address_id:       company.address_id       || null,
-        bank_details_id:  company.bank_details_id  || null,
-        // qr_code_id:       createQr.id,
-      });
-    }
-
-    return { success: true, message: 'Company created successfully', data: company };
-  } catch (err) {
-    console.error('Error inserting company:', err);
-    return { success: false, message: err.message };
-  }
-}
-
 async function uploadImg(file) {
   console.log(file)
   try {
@@ -2838,7 +2808,6 @@ async function markSalePayment (payload) {
 module.exports = {
   getReportServices,
   getPurchaseReportServices,
-  createCompanyService,
   getData,
   createBranch,
   createDefaultBranchService,

@@ -38,27 +38,6 @@ const bucketName = BUCKET_NAME;
 
 
 
-// route — remove the double BEGIN/COMMIT, let the service own its transaction
-router.post('/api/createcompany', async (req, res) => {
-  try {
-    const { errors, input } = await RequestValidator(schema.company_create, req.body);
-    if (errors) {
-      return res.status(400).json({ errors });
-    }
-
-    const data = await service.createCompanyService(input);
-    if (!data.success) {
-      return res.status(400).json({ message: data.message });
-    }
-
-    return res.status(200).json({ success: true, data: data.data });
-  } catch (error) {
-    console.error(error);
-    return res.status(STATUS_CODES.INTERNAL_ERROR).json({ error: error.message });
-  }
-});
-
-
 
 router.put("/api/company/:zodu_id", async (req, res) => {
   const { zodu_id } = req.params;
