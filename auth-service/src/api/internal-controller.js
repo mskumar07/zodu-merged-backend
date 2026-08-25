@@ -114,29 +114,4 @@ router.put('/branches/:zodu_id/:branch_id', async (req, res) => {
   }
 });
 
-// GET /internal/invoice-settings/:zodu_id/:branch_id
-router.get('/invoice-settings/:zodu_id/:branch_id', async (req, res) => {
-  try {
-    const { zodu_id, branch_id } = req.params;
-    const settings = await repo.getInvoiceSettings(zodu_id, branch_id);
-    if (!settings) return res.status(404).json({ success: false, message: 'Invoice settings not found' });
-    return res.status(200).json({ success: true, data: settings });
-  } catch (err) {
-    console.error('[internal] getInvoiceSettings:', err.message);
-    return res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-// PUT /internal/invoice-settings/:zodu_id/:branch_id  — upsert
-router.put('/invoice-settings/:zodu_id/:branch_id', async (req, res) => {
-  try {
-    const { zodu_id, branch_id } = req.params;
-    const settings = await repo.upsertInvoiceSettings(zodu_id, branch_id, req.body);
-    return res.status(200).json({ success: true, data: settings });
-  } catch (err) {
-    console.error('[internal] upsertInvoiceSettings:', err.message);
-    return res.status(500).json({ success: false, message: err.message });
-  }
-});
-
 module.exports = router;

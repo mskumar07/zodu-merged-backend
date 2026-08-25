@@ -243,6 +243,22 @@ exports.createBranch = async (data) => {
   try {
     await client.query('BEGIN');
 
+    // Always derive the next branch_id (B1, B2, B3, ...) for this company —
+    // the frontend never sends one. Locks existing branch rows for this
+    // company so two concurrent requests can't both compute the same next id.
+    const { rows: maxRows } = await client.query(
+      `SELECT branch_id FROM tbl_branch WHERE zodu_id = $1 ORDER BY branch_id DESC LIMIT 1 FOR UPDATE`,
+      [data.zodu_id]
+    );
+    const maxBranchId = maxRows[0]?.branch_id;
+    if (!maxBranchId) {
+      data.branch_id = 'B1';
+    } else {
+      const match = maxBranchId.match(/B(\d+)$/);
+      const nextNum = match ? parseInt(match[1], 10) + 1 : 1;
+      data.branch_id = maxBranchId.replace(/B\d+$/, 'B' + nextNum);
+    }
+
     // Fetch company address+bank for reuse
     const compRes = await client.query(
       `SELECT address_id, bank_details_id FROM tbl_business WHERE zodu_id = $1`, [data.zodu_id]
@@ -465,6 +481,7 @@ exports.getInvoiceSettings = async (zodu_id, branch_id) => {
 };
 
 exports.upsertInvoiceSettings = async (zodu_id, branch_id, fields) => {
+  console.log("fieldsssss",fields)
   const allowed = [
     'invoice_prefix',
     'default_tax_label', 'invoice_due_days', 'default_payment_method',

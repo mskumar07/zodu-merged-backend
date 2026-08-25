@@ -778,6 +778,23 @@ router.put("/api/customers/:cust_uuid", async (req, res) => {
   }
 });
 
+// Soft delete — marks the customer inactive (or active again, if the caller
+// passes is_active: true), row and history stay intact. Body is optional;
+// omitting it deletes (is_active becomes false).
+router.delete("/api/customers/:cust_uuid", async (req, res) => {
+  try {
+    const is_active = req.body?.is_active === true;
+    const data = await service.deleteCustomer(req.params.cust_uuid, is_active);
+    if (!data.success) {
+      return res.status(400).json({ message: data.message });
+    }
+    return res.status(200).json(data);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 router.put(
   "/api/edit/vendor",
   async (req, res) => {

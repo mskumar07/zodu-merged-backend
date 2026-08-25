@@ -2076,7 +2076,22 @@ async function updateCustomer(data) {
     return { success: false, message: err.message };
   }
 }
- 
+
+async function deleteCustomer(cust_uuid, is_active = false) {
+  try {
+    const customer = await repository.setCustomerActive(cust_uuid, is_active);
+    if (!customer) return { success: false, message: "Customer not found" };
+    return {
+      success: true,
+      message: is_active ? "Customer restored successfully" : "Customer deleted successfully",
+      customer,
+    };
+  } catch (err) {
+    console.error("deleteCustomer error:", err);
+    return { success: false, message: err.message };
+  }
+}
+
 // ============================================================
 //  payment.service.js
 // ============================================================
@@ -2865,6 +2880,8 @@ module.exports = {
   getCustomers,
   getCustomerLedger,
   createCustomer,
+  updateCustomer,
+  deleteCustomer,
   markPayment,
   updateOrder,
   updateCustomer

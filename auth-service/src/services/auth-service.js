@@ -10,10 +10,21 @@ const repository = require('../repository/auth-repo');
 const businessRepo = require('../repository/business-repo');
 const axios = require('axios');
 const jwt = require('jsonwebtoken');
-const { APP_SECRET, EMPLOYEE_SERVICE_URL } = require('../config');
+const { APP_SECRET, EMPLOYEE_SERVICE_URL, RESTAURANT_SERVICE_URL, RETAIL_SERVICE_URL } = require('../config');
 
 const REFRESH_SECRET  = APP_SECRET;
 const REFRESH_EXPIRY_DAYS = 7;
+
+// business_type → which service owns that company's units/GST/menu/inventory data
+function businessServiceUrlFor(business_type) {
+  return String(business_type).toLowerCase() === 'retail' ? RETAIL_SERVICE_URL : RESTAURANT_SERVICE_URL;
+}
+
+// Non-blocking — seeding defaults must never fail a signup that already succeeded.
+function seedBranchDefaults(business_type, zodu_id, branch_id) {
+  axios.post(`${businessServiceUrlFor(business_type)}/internal/seed-defaults`, { zodu_id, branch_id })
+    .catch(err => console.error('[seed-defaults] failed (non-fatal):', err.message));
+}
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -107,6 +118,10 @@ async function CreateAccount(userInputs) {
     phone:     phone_number || null,
     email:     email        || null,
   }).catch(err => console.error('[employee-service] create-admin failed (non-fatal):', err.message));
+
+  if (same_for_branch === true) {
+    seedBranchDefaults(business_type, zodu_id, 'B1');
+  }
 
   return FormateData({ insertData: { user_id: createdData.user_id } });
 }
@@ -386,6 +401,7 @@ async function AddCompany(userInputs, user_id) {
         branch_mobile_no: phone_number,
         branch_mail_id: email,
       });
+      seedBranchDefaults(type, zodu_id, 'B1');
     } catch (err) {
       console.error('Default branch creation failed (non-fatal):', err.message);
     }
@@ -415,6 +431,8 @@ async function AddBranch(userInputs, user_id) {
 
   try {
     const branch = await businessRepo.createBranch(userInputs);
+    const company = await businessRepo.getCompany(zodu_id).catch(() => null);
+    seedBranchDefaults(company?.business_type, zodu_id, branch.branch_id);
     return FormateData({
       message: 'Branch created successfully',
       branch,

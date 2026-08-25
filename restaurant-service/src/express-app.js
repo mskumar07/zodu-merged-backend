@@ -12,6 +12,7 @@ app.use(cors());
 app.use(httpLogger);
 
 app.use('/', resRouter);
+app.use('/internal', require('./api/internal-controller'));
 app.use('/api/dashboard', require('./api/dashboard-controller'));
 app.use('/api/branch', require('./api/branch-controller'));
 app.use('/api/menu', require('./api/menu-controller'));

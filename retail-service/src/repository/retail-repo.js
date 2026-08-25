@@ -2147,6 +2147,14 @@ exports.getGST = async (branch_id, zodu_id) => {
   }
 };
 
+// Default units + GST rates for a new branch — both multi-row inserts run
+// inside seed_branch_defaults() on the DB side (see
+// migrations/branch_default_units_gst.sql); this is just the one call that
+// invokes it.
+exports.seedDefaultsForBranch = async (zodu_id, branch_id) => {
+  await conn.query('SELECT seed_branch_defaults($1, $2)', [zodu_id, branch_id]);
+};
+
 // ADD GST
 exports.addGST = async (zodu_id, branch_id, gst_rate) => {
   try {
@@ -2263,14 +2271,20 @@ exports.getCustomers = async (filters) => {
     zodu_id,
     branch_id,
     search,       // searches cust_name, mobile_no, email_id
+    is_active,    // true = active only, false = inactive only, omitted = all
     page  = 1,
     limit = 20,
   } = filters;
- 
+
   const offset = (page - 1) * limit;
   const params = [zodu_id, branch_id];
   let   whereClause = `WHERE zodu_id = $1 AND branch_id = $2`;
- 
+
+  if (is_active !== undefined) {
+    params.push(is_active);
+    whereClause += ` AND is_active = $${params.length}`;
+  }
+
   if (search) {
     params.push(`%${search}%`);
     const idx = params.length;
@@ -2300,6 +2314,7 @@ exports.getCustomers = async (filters) => {
         gst,
         address_line1, address_line2,
         city, state, pincode,
+        is_active,
         created_at,
         shipping_address, same_as_billing_address,
         COALESCE((
@@ -2353,10 +2368,26 @@ exports.getCustomerById = async (cust_uuid) => {
         gst,
         address_line1, address_line2,
         city, state, pincode,
+        is_active,
         created_at
      FROM tbl_customer
      WHERE cust_uuid = $1`,
     [cust_uuid]
+  );
+  return result.rows[0] ?? null;
+};
+
+// ── SOFT DELETE / REACTIVATE CUSTOMER ──────────────────────────
+// Sets is_active to whatever the caller passes (default false, i.e. delete)
+// instead of removing the row — sale/purchase history keeps referencing the
+// same cust_uuid. Same endpoint doubles as "restore" when passed true.
+exports.setCustomerActive = async (cust_uuid, is_active = false) => {
+  const result = await conn.query(
+    `UPDATE tbl_customer
+     SET is_active = $2, updated_at = NOW()
+     WHERE cust_uuid = $1
+     RETURNING cust_uuid, is_active`,
+    [cust_uuid, is_active]
   );
   return result.rows[0] ?? null;
 };
