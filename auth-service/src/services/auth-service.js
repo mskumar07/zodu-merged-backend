@@ -48,7 +48,8 @@ function refreshTokenExpiresAt() {
 // ── CreateAccount ─────────────────────────────────────────────────────────────
 
 async function CreateAccount(userInputs) {
-  const { restaurant_name, phone_number, email, password, same_for_branch, business_type } = userInputs;
+  const email = userInputs.email?.toLowerCase() || null;
+  const { restaurant_name, phone_number, password, same_for_branch, business_type } = userInputs;
 
   if (phone_number) {
     const phoneCheck = await repository.findPhnExist({ phone_number });
@@ -129,7 +130,8 @@ async function CreateAccount(userInputs) {
 // ── AccountLogin ──────────────────────────────────────────────────────────────
 
 async function AccountLogin(userInputs, meta = {}) {
-  const { email, phone_number, password } = userInputs;
+  const { phone_number, password } = userInputs;
+  const email = userInputs.email?.toLowerCase() || null;
   // meta = { ip_address, user_agent } — passed in from the route
 
   if ((!email && !phone_number) || !password) {

@@ -685,6 +685,7 @@ const get_customers = Joi.object({
   search:    Joi.string().optional().allow("", null),
   page:      Joi.number().integer().min(1).default(1),
   limit:     Joi.number().integer().min(1).max(100).default(20),
+  is_active: Joi.boolean().optional(),
 });
  
 const get_customer_by_id = Joi.object({
