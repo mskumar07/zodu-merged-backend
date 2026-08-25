@@ -82,7 +82,7 @@ async function getStats(zodu_id, branch_id) {
       TRUNC(ea.expense_payable_balance + pa.purchase_payable_balance)        AS total_due_to_payable_amount
     FROM       sales_agg    sa
     CROSS JOIN purchase_agg pa
-    CROSS JOIN top_item      ti
+    LEFT JOIN  top_item      ti ON true
     CROSS JOIN items_total   it
     CROSS JOIN inventory_agg ia
     CROSS JOIN expense_agg   ea`,
