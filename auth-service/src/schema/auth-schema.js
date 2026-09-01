@@ -134,13 +134,37 @@ const schema = {
   edit_invoice_settings: joi.object({
     zodu_id: joi.string().required(),
     branch_id: joi.string().required(),
+
+    // Invoice numbering
     invoice_prefix: joi.string().max(20).allow(null, ''),
+    invoice_digit_count: joi.number().integer().min(1).max(10),
+    invoice_start_number: joi.number().integer().min(0),
+
+    // Tax / payment
     default_tax_label: joi.string().max(50).allow(null, ''),
     invoice_due_days: joi.number().integer().min(0),
     default_payment_method: joi.string().max(30).allow(null, ''),
+
+    // Print layout
     printer_inch: joi.string().max(10).allow(null, ''),
+    // Theme colour as '#RRGGBB' — normalised to uppercase; no null/'' so a bad
+    // value fails validation here instead of the column's CHECK constraint.
+    invoice_theme_color: joi.string().pattern(/^#[0-9A-Fa-f]{6}$/).uppercase(),
     show_company_logo: joi.boolean(),
     print_thank_you_message: joi.boolean(),
+    show_item_id: joi.boolean(),
+    show_description: joi.boolean(),
+    show_customer_details: joi.boolean(),
+    show_tax_details: joi.boolean(),
+    show_payment_details: joi.boolean(),
+    show_bank_details: joi.boolean(),
+    show_signature: joi.boolean(),
+
+    // Free-text blocks (shown only when their toggle is on)
+    show_terms_conditions: joi.boolean(),
+    terms_conditions: joi.string().max(2000).allow(null, ''),
+    show_notes: joi.boolean(),
+    notes: joi.string().max(2000).allow(null, ''),
   }).min(3),
 };
 

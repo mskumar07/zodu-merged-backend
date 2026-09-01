@@ -1,4 +1,5 @@
 const conn = require("../database/connection");
+const { withDescription } = require("../utils/description");
 
 exports.updateMenuItem = async (menuId, data) => {
   try {
@@ -21,8 +22,9 @@ exports.updateMenuItem = async (menuId, data) => {
         menu_unit = $13,
         favorites = $14,
         opening_stock = $15,
-        alert_stock = $16
-      WHERE menu_id = $17
+        alert_stock = $16,
+        description = $17
+      WHERE menu_id = $18
       RETURNING *;
     `;
     const values = [
@@ -30,6 +32,7 @@ exports.updateMenuItem = async (menuId, data) => {
       JSON.stringify(data.variants), data.sell_price, data.purchase_price,
       data.hsn_code, data.gst_tax, data.tax_include_or_exclude,
       data.menu_image, data.menu_code, data.menu_unit, data.favorites ?? null,data.opening_stock, data.alert_stock,
+      data.description ?? data.item_description ?? null,
       menuId
     ];
     const result = await conn.query(query, values);
@@ -86,8 +89,9 @@ exports.createMenuItem = async (menuData) => {
       INSERT INTO tbl_menu_items (
         zodu_id, branch_id, menu_category_id, menu_name, menu_type, food_type,
         variants, qr_code_id, sell_price, purchase_price,
-        hsn_code, gst_tax, tax_include_or_exclude, menu_image, menu_code, menu_id, menu_unit, favorites,opening_stock, alert_stock
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+        hsn_code, gst_tax, tax_include_or_exclude, menu_image, menu_code, menu_id, menu_unit, favorites,opening_stock, alert_stock,
+        description
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
       RETURNING *;
     `;
     const values = [
@@ -96,7 +100,8 @@ exports.createMenuItem = async (menuData) => {
       menuData.variants ? JSON.stringify(menuData.variants) : null,
       menuData.qr_code_id, menuData.sell_price, menuData.purchase_price,
       menuData.hsn_code, menuData.gst_tax, menuData.tax_include_or_exclude,
-      menuData.menu_image, menuData.menu_code, menuData.menu_id, menuData.menu_unit, menuData.favorites, menuData.opening_stock, menuData.alert_stock
+      menuData.menu_image, menuData.menu_code, menuData.menu_id, menuData.menu_unit, menuData.favorites, menuData.opening_stock, menuData.alert_stock,
+      menuData.description ?? menuData.item_description ?? null
     ];
     const result = await conn.query(query, values);
     const createdMenu = result.rows[0];
@@ -147,7 +152,7 @@ exports.getNextMenuId = async (zoduId, branchId) => {
 
 exports.getMenuById = async (menuId) => {
   const result = await conn.query(`SELECT * FROM tbl_menu_items WHERE menu_id = $1`, [menuId]);
-  return result.rows[0] || null;
+  return withDescription(result.rows[0] || null);
 };
 
 exports.createQRCode = async (qr_code) => {
@@ -193,7 +198,7 @@ exports.get_menuItem_data = async (zodu_id,branch_id, type, page, limit, search,
 
   const dataResult = await conn.query(
     `SELECT
-      m.zodu_id, m.branch_id, m.menu_id, m.menu_name, m.menu_code, m.menu_type, m.menu_image,
+      m.zodu_id, m.branch_id, m.menu_id, m.menu_name, m.description, m.menu_code, m.menu_type, m.menu_image,
       m.variants, m.sell_price, m.purchase_price, m.hsn_code,m.item_uuid,m.opening_stock,m.alert_stock,
       m.gst_tax AS gst_id, g.gst_rate AS gst_tax,
       m.menu_unit AS unit_id, u.name AS unit_name, u.short_name AS menu_unit,
@@ -211,7 +216,7 @@ exports.get_menuItem_data = async (zodu_id,branch_id, type, page, limit, search,
     [...params, limit, offset]
   );
 
-  return { total_count, total_pages, current_page: Number(page), limit: Number(limit), rows: dataResult.rows };
+  return { total_count, total_pages, current_page: Number(page), limit: Number(limit), rows: withDescription(dataResult.rows) };
 };
 
 exports.updateActive = async (menuId, active) => {

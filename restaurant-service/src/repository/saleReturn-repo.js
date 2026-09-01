@@ -21,7 +21,7 @@ class SaleReturnRepository {
   async findSaleItemsBySaleUuid(client, saleUuid) {
     const { rows } = await client.query(
       `SELECT
-          id, sale_uuid, item_id, item_name,
+          id, sale_uuid, item_id, item_name, description,
           unit, quantity, price, mrp,
           discount, hsn_code, gst_percentage,
           tax_amount, cgst, sgst, tax_inclusive
@@ -89,7 +89,7 @@ class SaleReturnRepository {
   async insertSaleReturnItem(client, payload) {
     const {
       return_uuid, original_item_id, item_id,
-      item_name, unit, return_qty, original_qty,
+      item_name, description, unit, return_qty, original_qty,
       price, tax_amount, gst_percentage, hsn_code,
     } = payload;
 
@@ -97,15 +97,17 @@ class SaleReturnRepository {
       `INSERT INTO tbl_sale_return_items (
           return_uuid, original_item_id, item_id,
           item_name, unit, return_qty, original_qty,
-          price, tax_amount, gst_percentage, hsn_code
+          price, tax_amount, gst_percentage, hsn_code,
+          description
        )
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
       [
         return_uuid, original_item_id, item_id,
         item_name, unit,
         return_qty, original_qty,
         price, tax_amount.toFixed(2),
         gst_percentage, hsn_code,
+        description ?? null,
       ]
     );
   }

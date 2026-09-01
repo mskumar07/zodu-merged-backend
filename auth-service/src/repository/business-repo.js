@@ -481,11 +481,18 @@ exports.getInvoiceSettings = async (zodu_id, branch_id) => {
 };
 
 exports.upsertInvoiceSettings = async (zodu_id, branch_id, fields) => {
-  console.log("fieldsssss",fields)
   const allowed = [
-    'invoice_prefix',
+    // Invoice numbering
+    'invoice_prefix', 'invoice_digit_count', 'invoice_start_number',
+    // Tax / payment
     'default_tax_label', 'invoice_due_days', 'default_payment_method',
-    'printer_inch', 'show_company_logo', 'print_thank_you_message',
+    // Print layout
+    'printer_inch', 'invoice_theme_color', 'show_company_logo', 'print_thank_you_message',
+    'show_item_id', 'show_description', 'show_customer_details',
+    'show_tax_details', 'show_payment_details', 'show_bank_details',
+    'show_signature',
+    // Free-text blocks
+    'show_terms_conditions', 'terms_conditions', 'show_notes', 'notes',
   ];
   const cols = Object.keys(fields).filter((k) => allowed.includes(k));
 

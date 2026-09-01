@@ -1,5 +1,6 @@
 const moment = require('moment/moment');
 const conn = require('../database/connection');
+const { withDescription } = require('../utils/description');
 const { randomUUID } = require("crypto");
 const { deleteFileFromMinIO } = require('../services/retail-service');
 // const { calculateItemTax } = require('../utils/gstcalcukator');
@@ -2222,6 +2223,7 @@ exports.get_pos_data = async (branch_id, zodu_id) => {
 
       p.category_id,
       c.name AS category_name,
+      p.description,
 
       p.sku,
       p.barcode,
@@ -3360,9 +3362,9 @@ exports.createSaleItems = async (orderData, sale, client) => {
           discount, discount_percentage,
           gst_percentage,
           tax_amount, cgst, sgst,
-          tax_inclusive, hsn_code, mrp
+          tax_inclusive, hsn_code, mrp, description
        )
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
        RETURNING *`,
       [
         sale.sale_uuid,
@@ -3387,6 +3389,7 @@ exports.createSaleItems = async (orderData, sale, client) => {
         taxData.tax_inclusive,
         item.hsn_code ?? null,
         item.mrp      ?? null,
+        item.description ?? item.item_description ?? null,
       ]
     );
  
@@ -3434,6 +3437,7 @@ exports.syncSaleItems = async (orderData, sale, client) => {
       tax_inclusive:   taxData.tax_inclusive,
       hsn_code:        item.hsn_code ?? null,
       mrp:             item.mrp      ?? null,
+      description:     item.description ?? item.item_description ?? null,
     };
   });
 
@@ -3463,7 +3467,7 @@ exports.syncSaleItems = async (orderData, sale, client) => {
          unit text, quantity numeric, price numeric,
          discount numeric, discount_percentage numeric, gst_percentage numeric,
          tax_amount numeric, cgst numeric, sgst numeric,
-         tax_inclusive boolean, hsn_code text, mrp numeric
+         tax_inclusive boolean, hsn_code text, mrp numeric, description text
        )
      ),
      updated AS (
@@ -3483,6 +3487,7 @@ exports.syncSaleItems = async (orderData, sale, client) => {
            tax_inclusive  = i.tax_inclusive,
            hsn_code       = i.hsn_code,
            mrp            = i.mrp,
+           description    = i.description,
            sale_id        = $2
        FROM incoming i
        WHERE si.sale_uuid = $1 AND si.item_id = i.item_id
@@ -3496,7 +3501,7 @@ exports.syncSaleItems = async (orderData, sale, client) => {
          unit, quantity, price,
          discount, discount_percentage, gst_percentage,
          tax_amount, cgst, sgst,
-         tax_inclusive, hsn_code, mrp
+         tax_inclusive, hsn_code, mrp, description
        )
        SELECT $1, $2,
               i.item_id, i.item_name,
@@ -3504,7 +3509,7 @@ exports.syncSaleItems = async (orderData, sale, client) => {
               i.unit, i.quantity, i.price,
               i.discount, i.discount_percentage, i.gst_percentage,
               i.tax_amount, i.cgst, i.sgst,
-              i.tax_inclusive, i.hsn_code, i.mrp
+              i.tax_inclusive, i.hsn_code, i.mrp, i.description
        FROM incoming i
        WHERE i.item_id NOT IN (SELECT item_id FROM updated)
        RETURNING *
@@ -3924,6 +3929,7 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
         m.item_uuid,
         m.tax_incl_type AS tax_inclusive,
         si.item_name,
+        COALESCE(si.description, m.description) AS description,
         si.variant_id,
         si.variant_name,
         si.unit,
@@ -4036,6 +4042,7 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
             'id', i.id,
             'item_id', i.item_id,
             'item_name', i.item_name,
+            'description', i.description,
             'unit', i.unit,
             'return_qty', i.return_qty,
             'original_qty', i.original_qty,
@@ -4061,9 +4068,9 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
   return {
     sale,
     customer,
-    items:           itemsResult.rows,
+    items:           withDescription(itemsResult.rows),
     payment_history: paymentResult.rows,
-    return_history:  returnResult.rows,
+    return_history:  returnResult.rows.map((r) => ({ ...r, items: withDescription(r.items) })),
     hsn_wise_tax:    hsnResult.rows,
   };
 };

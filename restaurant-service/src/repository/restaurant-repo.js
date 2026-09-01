@@ -1,6 +1,7 @@
 const moment = require('moment/moment');
 const { get, search } = require('../api/restaurant-controller');
 const conn = require('../database/connection');
+const { withDescription } = require('../utils/description');
 const { randomUUID } = require("crypto");
 const { deleteFileFromMinIO } = require('../services/restaurant-service');
 const { generatePublicOrderNo } = require('./generatePublicOrderNo');
@@ -3282,9 +3283,9 @@ exports.createSaleItems = async (orderData, sale, client) => {
           discount,
           gst_percentage,
           tax_amount, cgst, sgst,
-          tax_inclusive, hsn_code, mrp
+          tax_inclusive, hsn_code, mrp, description
        )
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
        RETURNING *`,
       [
         sale.sale_uuid,
@@ -3308,6 +3309,7 @@ exports.createSaleItems = async (orderData, sale, client) => {
         taxData.tax_inclusive,
         item.hsn_code ?? null,
         item.mrp      ?? null,
+        item.description ?? item.item_description ?? null,
       ]
     );
  
@@ -3613,6 +3615,7 @@ exports.getSaleById = async (api_order_id, zodu_id, branch_id) => {
         m.item_uuid,
         m.tax_include_or_exclude AS tax_inclusive,
         m.hsn_code,
+        m.description,
         si.item_name,
         si.variant_id,
         si.variant_name,
@@ -3666,7 +3669,7 @@ exports.getSaleById = async (api_order_id, zodu_id, branch_id) => {
 
   return {
     sale,
-    items:        itemsResult.rows,
+    items:        withDescription(itemsResult.rows),
     hsn_wise_tax: hsnResult.rows,
   };
 };

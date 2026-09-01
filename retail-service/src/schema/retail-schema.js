@@ -230,6 +230,9 @@ sale_time: Joi.string()
 
         item_name: Joi.string().optional().allow(null, ""),
 
+        description: Joi.string().max(1000).optional().allow(null, ""),
+        item_description: Joi.string().max(1000).optional().allow(null, ""),
+
         variant_id: Joi.string().optional().allow(null, ""),
 
         variant_name: Joi.string().optional().allow(null, ""),
@@ -320,6 +323,9 @@ sale_time: Joi.string()
 
         item_id: Joi.string().required(),
         item_name: Joi.string().required(),
+
+        description: Joi.string().max(1000).allow(null, ""),
+        item_description: Joi.string().max(1000).allow(null, ""),
 
         unit: Joi.string().default("NOS"),
 
@@ -630,6 +636,8 @@ const holdSchema = Joi.object({
       item_uuid:      Joi.string().allow(null, ""),
       item_id:        Joi.string().max(100).required(),
       item_name:      Joi.string().max(255).required(),
+      description:    Joi.string().max(1000).allow(null, ""),
+      item_description: Joi.string().max(1000).allow(null, ""),
       variant_id:     Joi.string().max(100).allow(null, ""),
       variant_name:   Joi.string().max(100).allow(null, ""),
       unit:           Joi.string().max(20).allow(null, ""),
@@ -732,6 +740,8 @@ const createSchema = Joi.object({
   item_id:        Joi.string().max(100).required(),
   item_type:      Joi.string().valid("product", "service", "S", "P").required(),
   item_name:      Joi.string().trim().max(255).required(),
+  description:    Joi.string().max(1000).allow(null, "").default(null),
+  item_description: Joi.string().max(1000).allow(null, ""),
   category_id:    Joi.number().integer().allow(null).default(null),
   unit:           Joi.number().integer().allow(null).default(null),
   mrp:            Joi.number().min(0).allow(null).default(null),
@@ -751,6 +761,8 @@ const createSchema = Joi.object({
 const editSchema = Joi.object({
   item_id: Joi.string().max(100),
   item_name:      Joi.string().trim().max(255),
+  description:    Joi.string().max(1000).allow(null, ""),
+  item_description: Joi.string().max(1000).allow(null, ""),
   item_type:      Joi.string().valid("product", "service", "S", "P"),
   category_id:    Joi.number().integer().allow(null),
   unit:           Joi.number().integer().allow(null),

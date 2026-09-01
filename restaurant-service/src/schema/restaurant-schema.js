@@ -214,6 +214,9 @@ sale_time: Joi.string()
 
         item_name: Joi.string().optional().allow(null, ""),
 
+        description: Joi.string().max(1000).optional().allow(null, ""),
+        item_description: Joi.string().max(1000).optional().allow(null, ""),
+
         variant_id: Joi.string().optional().allow(null, ""),
 
         variant_name: Joi.string().optional().allow(null, ""),
@@ -303,6 +306,9 @@ sale_time: Joi.string()
 
         item_id: Joi.string().required(),
         item_name: Joi.string().required(),
+
+        description: Joi.string().max(1000).allow(null, ""),
+        item_description: Joi.string().max(1000).allow(null, ""),
 
         unit: Joi.string().default("NOS"),
 
@@ -575,6 +581,8 @@ const holdSchema = Joi.object({
       Joi.object({
         item_name: Joi.string().max(100).required(),
         item_id: Joi.string().max(100).required(),
+        description: Joi.string().max(1000).allow(null, ""),
+        item_description: Joi.string().max(1000).allow(null, ""),
         item_unit: Joi.string().max(20).allow(null, ""),
         qty: Joi.number().precision(2).min(0).required(),
         price: Joi.number().precision(2).min(0).required(),
@@ -600,6 +608,8 @@ const holdUpdateSchema = Joi.object({
         id: Joi.number().integer().optional(),
         item_name: Joi.string().max(100).required(),
         item_id: Joi.string().max(100).required(),
+        description: Joi.string().max(1000).allow(null, ""),
+        item_description: Joi.string().max(1000).allow(null, ""),
         item_unit: Joi.string().max(20).allow(null, ""),
         qty: Joi.number().precision(2).min(0).required(),
         price: Joi.number().precision(2).min(0).required(),
@@ -731,6 +741,8 @@ const menu_item_create = Joi.object({
   branch_id:              Joi.string().max(50).required(),
   menu_category_id:       Joi.number().integer().required(),
   menu_name:              Joi.string().max(200).required(),
+  description:            Joi.string().max(1000).optional().allow(null, ""),
+  item_description:       Joi.string().max(1000).optional().allow(null, ""),
   menu_type:              Joi.string().max(50).required(),
   food_type:              Joi.string().max(50).optional().allow(null, ""),
   sell_price:             Joi.number().min(0).required(),
@@ -750,6 +762,8 @@ const menu_item_create = Joi.object({
 const menu_item_update = Joi.object({
   menu_category_id:       Joi.number().integer().optional(),
   menu_name:              Joi.string().max(200).optional(),
+  description:            Joi.string().max(1000).optional().allow(null, ""),
+  item_description:       Joi.string().max(1000).optional().allow(null, ""),
   menu_type:              Joi.string().max(50).optional(),
   food_type:              Joi.string().max(50).optional().allow(null, ""),
   sell_price:             Joi.number().min(0).optional(),

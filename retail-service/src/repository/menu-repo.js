@@ -1,4 +1,5 @@
 const conn = require("../database/connection");
+const { withDescription } = require("../utils/description");
 
 
 const round = (n) => Math.round(n * 100) / 100;
@@ -53,7 +54,8 @@ exports.createMenuItem = async (client, data) => {
         mrp,            sell_price,     purchase_price,
         gst_type,       tax_incl_type,
         sku,            barcode,        hsn_code,
-        item_img,       status
+        item_img,       status,
+        description
      ) VALUES (
         $1,$2,$3,
         $4,$5,
@@ -61,7 +63,8 @@ exports.createMenuItem = async (client, data) => {
         $8,$9,$10,
         $11,$12,
         $13,$14,$15,
-        $16,$17
+        $16,$17,
+        $18
      )
      RETURNING *`,
     [
@@ -82,6 +85,7 @@ exports.createMenuItem = async (client, data) => {
       data.hsn_code       || null,
       data.item_img       || null,
       data.status         ?? "active",
+      (data.description ?? data.item_description) || null,
     ]
   );
 
@@ -93,9 +97,15 @@ exports.createMenuItem = async (client, data) => {
  * Only columns present in `data` are updated.
  */
 exports.updateMenuItem = async (client, item_uuid, data) => {
+  // The item screen sends `description`, the billing screen `item_description`
+  // — both mean the same column.
+  if (data.item_description !== undefined && data.description === undefined) {
+    data = { ...data, description: data.item_description };
+  }
+
   const ALLOWED_FIELDS = [
     "item_id",
-    "item_name", "item_type", "category_id", "unit",
+    "item_name", "description", "item_type", "category_id", "unit",
     "mrp", "sell_price", "purchase_price",
     "gst_type", "tax_incl_type",
     "sku", "barcode", "hsn_code",
@@ -103,7 +113,7 @@ exports.updateMenuItem = async (client, item_uuid, data) => {
   ];
 
   const NUMERIC_FIELDS  = ["mrp", "sell_price", "purchase_price"];
-  const NULLABLE_FIELDS = ["sku", "barcode", "hsn_code", "item_img"];
+  const NULLABLE_FIELDS = ["sku", "barcode", "hsn_code", "item_img", "description"];
 
   const setClauses = [];
   const values     = [];
@@ -177,7 +187,7 @@ exports.getMenuItemByUuid = async (client, item_uuid) => {
     [item_uuid]
   );
 
-  return rows[0] ?? null;
+  return withDescription(rows[0] ?? null);
 };
 /**
  * Paginated list with optional search + filters.
@@ -230,7 +240,7 @@ exports.getMenuItems = async (client, { zodu_id, branch_id, search, category_ids
     [...values, limit, offset]
   );
 
-  return { rows, total };
+  return { rows: withDescription(rows), total };
 };
  
 /**
