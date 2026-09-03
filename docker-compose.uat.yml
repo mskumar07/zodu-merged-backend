@@ -16,6 +16,13 @@ services:
       DB_USERNAME: zodudb
       DB_PASSWORD: zodu@2025
       DB_NAME: retail_auth_service
+      MINIO_HOST: 72.60.206.59
+      MINIO_PORT: 9000
+      MINIO_ACCESSKEY: zoduminio
+      MINIO_SECRETKEY: zodu@2025
+      MINIO_BUCKET_NAME: zodu
+      PUBLIC_FILE_BASE_URL: https://api.myzodu.com
+
 
 
   # Restaurant Service
@@ -38,6 +45,8 @@ services:
       MINIO_ACCESSKEY: zoduminio
       MINIO_SECRETKEY: zodu@2025
       MINIO_BUCKET_NAME: zodu
+      PUBLIC_FILE_BASE_URL: https://api.myzodu.com
+
 
 
   # Employee Service
@@ -60,6 +69,8 @@ services:
       MINIO_ACCESSKEY: zoduminio
       MINIO_SECRETKEY: zodu@2025
       MINIO_BUCKET_NAME: zodu
+      PUBLIC_FILE_BASE_URL: https://api.myzodu.com
+
   
   restaurant-service:
     image: vicky0015/zodu-backend-restaurant-service:uat
@@ -80,6 +91,8 @@ services:
       MINIO_ACCESSKEY: zoduminio
       MINIO_SECRETKEY: zodu@2025
       MINIO_BUCKET_NAME: zodu
+      PUBLIC_FILE_BASE_URL: https://api.myzodu.com
+
 
 
   # Payroll Service
@@ -117,6 +130,8 @@ services:
       MINIO_ACCESSKEY: zoduminio
       MINIO_SECRETKEY: zodu@2025
       MINIO_BUCKET_NAME: zodu
+      PUBLIC_FILE_BASE_URL: https://api.myzodu.com
+
 
   # API Gateway
   apigateway:

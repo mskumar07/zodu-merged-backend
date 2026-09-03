@@ -11,11 +11,18 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
-      DB_HOSTNAME: postgres_prod
-      DB_PORT: 5432
+      DB_HOSTNAME: 72.60.206.59
+      DB_PORT:  5433
       DB_USERNAME: zoduprod
       DB_PASSWORD: zodu@2025
       DB_NAME: auth_service
+      MINIO_HOST:  72.60.206.59
+      MINIO_PORT: 9000
+      MINIO_ACCESSKEY: zoduminio
+      MINIO_SECRETKEY: zodu@2025
+      MINIO_BUCKET_NAME: zodu
+      PUBLIC_FILE_BASE_URL: https://api.zodu.in
+
 
 
   # Restaurant Service
@@ -28,16 +35,18 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3001
-      DB_HOSTNAME: postgres_prod
-      DB_PORT: 5432
+      DB_HOSTNAME: 72.60.206.59
+      DB_PORT:  5433
       DB_USERNAME: zoduprod
       DB_PASSWORD: zodu@2025
       DB_NAME: retail_service
-      MINIO_HOST: 72.60.206.59
+      MINIO_HOST:  72.60.206.59
       MINIO_PORT: 9000
       MINIO_ACCESSKEY: zoduminio
       MINIO_SECRETKEY: zodu@2025
       MINIO_BUCKET_NAME: zodu
+      PUBLIC_FILE_BASE_URL: https://api.zodu.in
+
 
   # Employee Service
   employee-service:
@@ -49,36 +58,40 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3002
-      DB_HOSTNAME: postgres_prod
-      DB_PORT: 5432
+      DB_HOSTNAME: 72.60.206.59
+      DB_PORT:  5433
       DB_USERNAME: zoduprod
       DB_PASSWORD: zodu@2025
       DB_NAME: employee-service
-      MINIO_HOST: 72.60.206.59
+      MINIO_HOST:  72.60.206.59
       MINIO_PORT: 9000
       MINIO_ACCESSKEY: zoduminio
       MINIO_SECRETKEY: zodu@2025
       MINIO_BUCKET_NAME: zodu
+      PUBLIC_FILE_BASE_URL: https://api.zodu.in
 
-    restaurant-service:
-      image: vicky0015/zodu-backemd-restaurant-service:latest
-      container_name: restaurant-service
-      restart: always
-      expose:
-        - "3004"
-      environment:
-        NODE_ENV: production
-        PORT: 3004
-        DB_HOSTNAME: postgres_prod
-        DB_PORT: 5432
-        DB_USERNAME: zoduprod
-        DB_PASSWORD: zodu@2025
-        DB_NAME: restaurant_service
-        MINIO_HOST: 72.60.206.59
-        MINIO_PORT: 9000
-        MINIO_ACCESSKEY: zoduminio
-        MINIO_SECRETKEY: zodu@2025
-        MINIO_BUCKET_NAME: zodu
+
+  restaurant-service:
+    image: vicky0015/zodu-backemd-restaurant-service:latest
+    container_name: restaurant-service
+    restart: always
+    expose:
+      - "3004"
+    environment:
+      NODE_ENV: production
+      PORT: 3004
+      DB_HOSTNAME: 72.60.206.59
+      DB_PORT:  5433
+      DB_USERNAME: zoduprod
+      DB_PASSWORD: zodu@2025
+      DB_NAME: restaurant_service
+      MINIO_HOST:  72.60.206.59
+      MINIO_PORT: 9000
+      MINIO_ACCESSKEY: zoduminio
+      MINIO_SECRETKEY: zodu@2025
+      MINIO_BUCKET_NAME: zodu
+      PUBLIC_FILE_BASE_URL: https://api.zodu.in
+
 
   payroll-service:
     image: vicky0015/zodu-backemd-payroll-service:latest
@@ -89,8 +102,8 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3003
-      DB_HOSTNAME: postgres_prod
-      DB_PORT: 5432
+      DB_HOSTNAME: 72.60.206.59
+      DB_PORT:  5433
       DB_USERNAME: zoduprod
       DB_PASSWORD: zodu@2025
       DB_NAME: payroll-service
@@ -104,36 +117,38 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3005
-      DB_HOSTNAME: postgres_prod
-      DB_PORT: 5432
+      DB_HOSTNAME: 72.60.206.59
+      DB_PORT:  5433
       DB_USERNAME: zoduprod
       DB_PASSWORD: zodu@2025
       DB_NAME: checklist-service
-      MINIO_HOST: 72.60.206.59
+      MINIO_HOST:  72.60.206.59
       MINIO_PORT: 9000
       MINIO_ACCESSKEY: zoduminio
       MINIO_SECRETKEY: zodu@2025
       MINIO_BUCKET_NAME: zodu
+      PUBLIC_FILE_BASE_URL: https://api.zodu.in
+
 
   # API Gateway
-    apigateway:
-      image: vicky0015/zodu-backemd-retail-apigateway:latest
-      container_name: retail-apigateway
-      restart: always
-      ports:
-        - "5000:5000"
-      environment:
-        PORT: 5000
-        AUTH_SERVICE_URL: http://auth-service:3000
-        RETAIL_SERVICE_URL: http://retail-service:3001
-        EMPLOYEE_SERVICE_URL: http://employee-service:3002
-        RESTAURANT_SERVICE_URL: http://restaurant-service:3004
-        PAYROLL_SERVICE_URL: http://payroll-service:3003
-        CHECKLIST_SERVICE_URL: http://checklist-service:3005
-      depends_on:
-        - auth-service
-        - retail-service
-        - employee-service
-        - restaurant-service
-        - payroll-service
-        - checklist-service
+  apigateway:
+    image: vicky0015/zodu-backemd-retail-apigateway:latest
+    container_name: retail-apigateway
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      PORT: 5000
+      AUTH_SERVICE_URL: http://auth-service:3000
+      RETAIL_SERVICE_URL: http://retail-service:3001
+      EMPLOYEE_SERVICE_URL: http://employee-service:3002
+      RESTAURANT_SERVICE_URL: http://restaurant-service:3004
+      PAYROLL_SERVICE_URL: http://payroll-service:3003
+      CHECKLIST_SERVICE_URL: http://checklist-service:3005
+    depends_on:
+      - auth-service
+      - retail-service
+      - employee-service
+      - restaurant-service
+      - payroll-service
+      - checklist-service
