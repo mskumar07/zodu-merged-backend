@@ -5,7 +5,10 @@ const conn = require('../database/connection.js');
 const repository = require('../repository/retail-repo.js');
 const { PDFDocument } = require('pdf-lib');
 const moment = require('moment/moment');
-const { MINIO_HOST, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY, BUCKET_NAME } = require('../config/index.js');
+const {
+  MINIO_HOST, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY, BUCKET_NAME,
+  PUBLIC_FILE_BASE_URL,
+} = require('../config/index.js');
 const { getDateRange } = require("../utils/Date_Folder/getDate.js");
 const { getPagination, getMeta } = require('../utils/pagination.js');
 const stockRepository = require('../repository/menu-repo.js');
@@ -24,6 +27,10 @@ const minioClient = new Minio.Client({
 });
 
 const bucketName = BUCKET_NAME;
+// Public origin the file URLs are built against — set per environment
+// (UAT: https://myzodu.com, prod: https://zodu.in). Trailing slash trimmed so a
+// value with or without one produces the same URL.
+const publicBaseUrl = String(PUBLIC_FILE_BASE_URL || 'https://myzodu.com').replace(/\/+$/, '');
 
 const normalizeBranchIds = (branchIds) => {
   const normalized = Array.isArray(branchIds)
@@ -90,7 +97,7 @@ async function uploadImg(file) {
       { "Content-Type": file.mimetype }
     );
 
-    const url = `https://api.myzodu.com/restaurant/file/${outputName}`;
+    const url = `${publicBaseUrl}/restaurant/file/${outputName}`;
 
     return { success: true, fileUrl: url };
 

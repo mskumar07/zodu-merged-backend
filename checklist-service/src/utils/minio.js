@@ -1,6 +1,9 @@
 const Minio    = require('minio');
 const mime     = require('mime-types');
-const { MINIO_HOST, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY, BUCKET_NAME } = require('../config');
+const {
+  MINIO_HOST, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY, BUCKET_NAME,
+  PUBLIC_FILE_BASE_URL,
+} = require('../config');
 
 const minioClient = new Minio.Client({
   endPoint:  MINIO_HOST,
@@ -11,6 +14,10 @@ const minioClient = new Minio.Client({
 });
 
 const bucketName = BUCKET_NAME || 'zodu';
+// Public origin the file URLs are built against — set per environment
+// (UAT: https://myzodu.com, prod: https://zodu.in). Trailing slash trimmed so a
+// value with or without one produces the same URL.
+const publicBaseUrl = String(PUBLIC_FILE_BASE_URL || 'https://myzodu.com').replace(/\/+$/, '');
 
 exports.uploadFile = async (file, folder = 'checklist-files') => {
   if (!file || !file.buffer) throw new Error('Invalid file input');
@@ -28,7 +35,7 @@ exports.uploadFile = async (file, folder = 'checklist-files') => {
 
   return {
     fileName: file.originalname,
-    fileUrl:  `https://api.myzodu.com/checklist/file/${encodedPath}`,
+    fileUrl:  `${publicBaseUrl}/checklist/file/${encodedPath}`,
     fileKey:  outputName,
     fileType: ext,
     fileSizeKb: Math.round(file.size / 1024),

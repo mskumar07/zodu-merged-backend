@@ -2,6 +2,10 @@ const joi = require("@hapi/joi");
 
 const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,30}$/;
 
+// Payment types offered at POS checkout. Same vocabulary as the CHECK
+// constraint on tbl_invoice_settings.payment_types — keep the two in step.
+const PAYMENT_TYPES = ['Cash', 'UPI', 'UPI + Cash', 'Cheque', 'Bank Transfer', 'Others'];
+
 const schema = {
   account_create: joi.object({
     restaurant_name: joi.string().max(50).required(),
@@ -54,6 +58,10 @@ const schema = {
     account_number: joi.string().max(30).allow(null, ''),
     account_type: joi.string().allow(null, ''),
     ifsc_code: joi.string().max(20).allow(null, ''),
+    // Normally set by the logo upload endpoint (or by sending the file with
+    // this request as multipart). Allowed here so the client can also point at
+    // an already-uploaded image, or clear it with null.
+    company_logo_url: joi.string().uri().allow(null, ''),
     can_use_for_branch: joi.boolean().default(true),
   }),
 
@@ -77,6 +85,10 @@ const schema = {
     account_number: joi.string().max(30).allow(null, ''),
     account_type: joi.string().allow(null, ''),
     ifsc_code: joi.string().max(20).allow(null, ''),
+    // Normally set by the logo upload endpoint (or by sending the file with
+    // this request as multipart). Allowed here so the client can also point at
+    // an already-uploaded image, or clear it with null.
+    company_logo_url: joi.string().uri().allow(null, ''),
     can_use_for_branch: joi.boolean(),
   }).min(2),
 
@@ -144,8 +156,19 @@ const schema = {
     default_tax_label: joi.string().max(50).allow(null, ''),
     invoice_due_days: joi.number().integer().min(0),
     default_payment_method: joi.string().max(30).allow(null, ''),
+    // Which types the POS offers. insensitive() lets the client send 'cash'
+    // and still store the canonical 'Cash'. At least one — a branch with no
+    // payment type cannot take money.
+    payment_types: joi
+      .array()
+      .items(joi.string().valid(...PAYMENT_TYPES).insensitive())
+      .min(1)
+      .unique((a, b) => String(a).toLowerCase() === String(b).toLowerCase()),
 
     // Print layout
+    // Which invoice layout to render. Free text on purpose: the template set
+    // lives in the frontend, so the API does not gate on a fixed list.
+    invoice_template: joi.string().allow(null, ''),
     printer_inch: joi.string().max(10).allow(null, ''),
     // Theme colour as '#RRGGBB' — normalised to uppercase; no null/'' so a bad
     // value fails validation here instead of the column's CHECK constraint.
@@ -159,13 +182,31 @@ const schema = {
     show_payment_details: joi.boolean(),
     show_bank_details: joi.boolean(),
     show_signature: joi.boolean(),
+    // Normally set by the signature upload endpoint; allowed here so the
+    // client can clear it (null) without a separate call.
+    signature_url: joi.string().uri().allow(null, ''),
 
     // Free-text blocks (shown only when their toggle is on)
     show_terms_conditions: joi.boolean(),
     terms_conditions: joi.string().max(2000).allow(null, ''),
     show_notes: joi.boolean(),
     notes: joi.string().max(2000).allow(null, ''),
-  }).min(3),
+  })
+    .min(3)
+    // A default the checkout no longer offers would leave the POS preselecting
+    // a type the cashier cannot pick. Only checked when one request changes both.
+    .custom((value, helpers) => {
+      const { payment_types, default_payment_method } = value;
+      if (!payment_types || !default_payment_method) return value;
+      const offered = payment_types.some(
+        (t) => String(t).toLowerCase() === String(default_payment_method).toLowerCase()
+      );
+      return offered
+        ? value
+        : helpers.message(
+            `"default_payment_method" (${default_payment_method}) must be one of the selected payment_types`
+          );
+    }, 'default payment method is offered'),
 };
 
 module.exports = schema;

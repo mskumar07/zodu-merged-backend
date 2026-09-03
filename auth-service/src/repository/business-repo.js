@@ -40,9 +40,10 @@ exports.createCompany = async (data, externalClient = null) => {
     //    subscription window untouched.
     const r = await client.query(
       `INSERT INTO tbl_business
-         (zodu_id, business_name, owner_admin_name, mobile_no, mail_id, gst_no, type, address_id, bank_details_id, status,
+         (zodu_id, business_name, owner_admin_name, mobile_no, mail_id, gst_no, type, address_id, bank_details_id,
+          company_logo_url, status,
           is_subscripted, subscription_start_date, subscription_expiry_date)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true,
                true, now(), now() + INTERVAL '5 years')
        ON CONFLICT (zodu_id) DO UPDATE
          SET business_name    = EXCLUDED.business_name,
@@ -53,11 +54,13 @@ exports.createCompany = async (data, externalClient = null) => {
              type             = COALESCE(EXCLUDED.type, tbl_business.type),
              address_id       = COALESCE(EXCLUDED.address_id, tbl_business.address_id),
              bank_details_id  = COALESCE(EXCLUDED.bank_details_id, tbl_business.bank_details_id),
+             company_logo_url = COALESCE(EXCLUDED.company_logo_url, tbl_business.company_logo_url),
              updated_at       = now()
        RETURNING *`,
       [data.zodu_id, data.restaurant_name || data.business_name,
        data.owner_admin_name || null, data.mobile_no || null, data.mail_id || null,
-       data.gst_no || null, data.type || data.business_type || null, address_id, bank_details_id]
+       data.gst_no || null, data.type || data.business_type || null, address_id, bank_details_id,
+       data.company_logo_url || null]
     );
 
     if (ownsTransaction) await client.query('COMMIT');
@@ -486,13 +489,17 @@ exports.upsertInvoiceSettings = async (zodu_id, branch_id, fields) => {
     'invoice_prefix', 'invoice_digit_count', 'invoice_start_number',
     // Tax / payment
     'default_tax_label', 'invoice_due_days', 'default_payment_method',
+    'payment_types',
     // Print layout
+    'invoice_template',
     'printer_inch', 'invoice_theme_color', 'show_company_logo', 'print_thank_you_message',
     'show_item_id', 'show_description', 'show_customer_details',
     'show_tax_details', 'show_payment_details', 'show_bank_details',
     'show_signature',
     // Free-text blocks
     'show_terms_conditions', 'terms_conditions', 'show_notes', 'notes',
+    // Signature image (uploaded to MinIO, see POST .../signature)
+    'signature_url',
   ];
   const cols = Object.keys(fields).filter((k) => allowed.includes(k));
 

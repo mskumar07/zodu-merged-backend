@@ -8,6 +8,7 @@ const {
 
 const repository = require('../repository/auth-repo');
 const businessRepo = require('../repository/business-repo');
+const minio = require('../utils/minio');
 const axios = require('axios');
 const jwt = require('jsonwebtoken');
 const { APP_SECRET, EMPLOYEE_SERVICE_URL, RESTAURANT_SERVICE_URL, RETAIL_SERVICE_URL } = require('../config');
@@ -329,7 +330,7 @@ async function Logout({ refresh_token }) {
 
 // ── AddCompany ────────────────────────────────────────────────────────────────
 
-async function AddCompany(userInputs, user_id) {
+async function AddCompany(userInputs, user_id, file = null) {
   const {
     restaurant_name,
     owner_admin_name,
@@ -351,10 +352,25 @@ async function AddCompany(userInputs, user_id) {
     bank_name,
     bank_branch,
     type,
+    company_logo_url,
     same_for_branch = true,
   } = userInputs;
 
   const zodu_id = await repository.getNextZoduId();
+
+  // The object key is namespaced by zodu_id, so the logo can only be uploaded
+  // once the id exists. A bad image fails the whole create rather than leaving
+  // a company the user thinks has a logo.
+  let logo_url = company_logo_url || null;
+  if (file) {
+    try {
+      const { fileUrl } = await minio.uploadCompanyLogo(file, zodu_id);
+      logo_url = fileUrl;
+    } catch (err) {
+      console.error('company logo upload failed:', err.message);
+      return FormateData({ error: err.message || 'Failed to upload company logo.' });
+    }
+  }
 
   try {
     await businessRepo.createCompany({
@@ -377,6 +393,7 @@ async function AddCompany(userInputs, user_id) {
       bank_name,
       bank_branch,
       can_use_for_branch: same_for_branch,
+      company_logo_url: logo_url,
       type
     });
   } catch (err) {
@@ -418,7 +435,7 @@ async function AddCompany(userInputs, user_id) {
     email:     email        || null,
   }).catch(err => console.error('[employee-service] create-admin failed (non-fatal):', err.message));
 
-  return FormateData({ zodu_id, restaurant_name });
+  return FormateData({ zodu_id, restaurant_name, company_logo_url: logo_url });
 }
 
 async function AddBranch(userInputs, user_id) {
@@ -445,12 +462,13 @@ async function AddBranch(userInputs, user_id) {
   }
 }
 
-async function EditCompany(userInputs, user_id) {
+async function EditCompany(userInputs, user_id, file = null) {
   const {
     zodu_id,
     phone_number,
     email,
     type,
+    company_logo_url,
     ...rest
   } = userInputs;
 
@@ -461,13 +479,44 @@ async function EditCompany(userInputs, user_id) {
     return FormateData({ error: 'You do not have access to edit this company' });
   }
 
+  // Three ways the logo can change on an edit: a file sent with the form, an
+  // already-uploaded URL, or an explicit null/'' to clear it. Anything else
+  // leaves the stored logo alone.
+  const touchesLogo = Boolean(file) || company_logo_url !== undefined;
+  let logoField = {};
+
+  if (touchesLogo) {
+    if (file) {
+      try {
+        const { fileUrl } = await minio.uploadCompanyLogo(file, zodu_id);
+        logoField = { company_logo_url: fileUrl };
+      } catch (err) {
+        console.error('company logo upload failed:', err.message);
+        return FormateData({ error: err.message || 'Failed to upload company logo.' });
+      }
+    } else {
+      logoField = { company_logo_url: company_logo_url || null };
+    }
+  }
+
   try {
+    // Read the old URL before the update so the replaced object can be removed
+    // afterwards — only once the new URL is safely committed.
+    const previous = touchesLogo
+      ? await businessRepo.getCompany(zodu_id).catch(() => null)
+      : null;
+
     const company = await businessRepo.updateCompany(zodu_id, {
       ...rest,
+      ...logoField,
       ...(phone_number !== undefined ? { mobile_no: phone_number } : {}),
       ...(email !== undefined ? { mail_id: email } : {}),
       ...(type !== undefined ? { type } : {}),
     });
+
+    if (touchesLogo && previous?.company_logo_url !== company?.company_logo_url) {
+      await minio.deleteFile(minio.keyFromUrl(previous?.company_logo_url));
+    }
 
     return FormateData({
       message: 'Company updated successfully',
@@ -476,6 +525,59 @@ async function EditCompany(userInputs, user_id) {
   } catch (err) {
     console.error('edit company failed:', err.message);
     return FormateData({ error: 'Failed to update company. Please try again.' });
+  }
+}
+
+// ── Company logo image ────────────────────────────────────────────────────────
+// Same contract as the invoice signature: the image lives in MinIO, tbl_business
+// only stores its URL, and the old object is removed only after the new URL is
+// committed so a failed upload never leaves the company without a logo.
+
+async function UploadCompanyLogo({ user_id, zodu_id, file }) {
+  const userCompanies = await repository.getUserCompanies({ user_id });
+  const hasAccess = userCompanies.some((company) => company.zodu_id === zodu_id);
+
+  if (!hasAccess) {
+    return FormateData({ error: 'You do not have access to edit this company' });
+  }
+
+  try {
+    const existing = await businessRepo.getCompany(zodu_id);
+    if (!existing) return FormateData({ error: 'Company not found' });
+
+    const { fileUrl } = await minio.uploadCompanyLogo(file, zodu_id);
+
+    const company = await businessRepo.updateCompany(zodu_id, { company_logo_url: fileUrl });
+
+    await minio.deleteFile(minio.keyFromUrl(existing.company_logo_url));
+
+    return FormateData({ message: 'Company logo uploaded successfully', company });
+  } catch (err) {
+    console.error('upload company logo failed:', err.message);
+    return FormateData({ error: err.message || 'Failed to upload company logo. Please try again.' });
+  }
+}
+
+async function DeleteCompanyLogo({ user_id, zodu_id }) {
+  const userCompanies = await repository.getUserCompanies({ user_id });
+  const hasAccess = userCompanies.some((company) => company.zodu_id === zodu_id);
+
+  if (!hasAccess) {
+    return FormateData({ error: 'You do not have access to edit this company' });
+  }
+
+  try {
+    const existing = await businessRepo.getCompany(zodu_id);
+    if (!existing) return FormateData({ error: 'Company not found' });
+
+    const company = await businessRepo.updateCompany(zodu_id, { company_logo_url: null });
+
+    await minio.deleteFile(minio.keyFromUrl(existing.company_logo_url));
+
+    return FormateData({ message: 'Company logo removed successfully', company });
+  } catch (err) {
+    console.error('delete company logo failed:', err.message);
+    return FormateData({ error: 'Failed to remove company logo. Please try again.' });
   }
 }
 
@@ -534,6 +636,60 @@ async function EditInvoiceSettings({ user_id, zodu_id, branch_id, ...fields }) {
   } catch (err) {
     console.error('update invoice settings failed:', err.message);
     return FormateData({ error: 'Failed to update invoice settings. Please try again.' });
+  }
+}
+
+// ── Invoice signature image ───────────────────────────────────────────────────
+// The image lives in MinIO; tbl_invoice_settings only stores its URL. The old
+// object is removed only after the new URL is committed, so a failed upload
+// never leaves the branch without a signature.
+
+async function UploadInvoiceSignature({ user_id, zodu_id, branch_id, file }) {
+  const userCompanies = await repository.getUserCompanies({ user_id });
+  const hasAccess = userCompanies.some((company) => company.zodu_id === zodu_id);
+
+  if (!hasAccess) {
+    return FormateData({ error: 'You do not have access to edit settings for this company' });
+  }
+
+  try {
+    const existing = await businessRepo.getInvoiceSettings(zodu_id, branch_id);
+    const { fileUrl } = await minio.uploadSignature(file, zodu_id, branch_id);
+
+    const settings = await businessRepo.upsertInvoiceSettings(zodu_id, branch_id, {
+      signature_url: fileUrl,
+    });
+
+    await minio.deleteFile(minio.keyFromUrl(existing?.signature_url));
+
+    return FormateData({ message: 'Signature uploaded successfully', settings });
+  } catch (err) {
+    console.error('upload invoice signature failed:', err.message);
+    return FormateData({ error: err.message || 'Failed to upload signature. Please try again.' });
+  }
+}
+
+async function DeleteInvoiceSignature({ user_id, zodu_id, branch_id }) {
+  const userCompanies = await repository.getUserCompanies({ user_id });
+  const hasAccess = userCompanies.some((company) => company.zodu_id === zodu_id);
+
+  if (!hasAccess) {
+    return FormateData({ error: 'You do not have access to edit settings for this company' });
+  }
+
+  try {
+    const existing = await businessRepo.getInvoiceSettings(zodu_id, branch_id);
+
+    const settings = await businessRepo.upsertInvoiceSettings(zodu_id, branch_id, {
+      signature_url: null,
+    });
+
+    await minio.deleteFile(minio.keyFromUrl(existing?.signature_url));
+
+    return FormateData({ message: 'Signature removed successfully', settings });
+  } catch (err) {
+    console.error('delete invoice signature failed:', err.message);
+    return FormateData({ error: 'Failed to remove signature. Please try again.' });
   }
 }
 
@@ -610,5 +766,9 @@ module.exports = {
   GetRoleAccess,
   GetInvoiceSettings,
   EditInvoiceSettings,
+  UploadInvoiceSignature,
+  DeleteInvoiceSignature,
+  UploadCompanyLogo,
+  DeleteCompanyLogo,
   GetAllSettings,
 };

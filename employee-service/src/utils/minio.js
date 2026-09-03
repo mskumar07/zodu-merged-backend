@@ -1,7 +1,10 @@
 const Minio  = require('minio');
 const sharp  = require('sharp');
 const mime   = require('mime-types');
-const { MINIO_HOST, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY, BUCKET_NAME } = require('../config');
+const {
+  MINIO_HOST, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY, BUCKET_NAME,
+  PUBLIC_FILE_BASE_URL,
+} = require('../config');
 
 const minioClient = new Minio.Client({
   endPoint:  MINIO_HOST  || 'localhost',
@@ -12,6 +15,10 @@ const minioClient = new Minio.Client({
 });
 
 const bucketName = BUCKET_NAME || 'zodu';
+// Public origin the file URLs are built against — set per environment
+// (UAT: https://myzodu.com, prod: https://zodu.in). Trailing slash trimmed so a
+// value with or without one produces the same URL.
+const publicBaseUrl = String(PUBLIC_FILE_BASE_URL || 'https://myzodu.com').replace(/\/+$/, '');
 
 // Upload file → returns { fileName, fileUrl }
 exports.uploadFile = async (file) => {
@@ -38,7 +45,7 @@ exports.uploadFile = async (file) => {
 
   return {
     fileName: file.originalname,
-    fileUrl:  `https://api.myzodu.com/employee/file/${outputName}`,
+    fileUrl:  `${publicBaseUrl}/employee/file/${outputName}`,
     fileKey:  outputName,
   };
 };
