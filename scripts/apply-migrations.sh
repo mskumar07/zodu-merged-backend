@@ -24,7 +24,7 @@ case "$ENV" in
     AUTH_DB=retail_auth_service
     RETAIL_DB=retail_restaurant_service
     RESTAURANT_DB=restaurant-service
-    PUBLIC_BASE=https://myzodu.com
+    PUBLIC_BASE=https://api.myzodu.com
     run_sql() { psql -h "$HOST" -p "$PORT" -U "$USER" -d "$1" -v ON_ERROR_STOP=1 -f "$2"; }
     ;;
   prod)
@@ -34,7 +34,7 @@ case "$ENV" in
     AUTH_DB=auth_service
     RETAIL_DB=retail_service
     RESTAURANT_DB=restaurant_service
-    PUBLIC_BASE=https://zodu.in
+    PUBLIC_BASE=https://api.zodu.in
     run_sql() {
       docker exec -i -e PGPASSWORD='zodu@2025' "$PGCONTAINER" \
         psql -U "$USER" -d "$1" -v ON_ERROR_STOP=1 < "$2"
@@ -70,19 +70,23 @@ apply "$AUTH_DB" auth-service/migrations/business_company_logo_url.sql
 apply "$RETAIL_DB"     retail-service/migrations/item_description.sql
 apply "$RESTAURANT_DB" restaurant-service/migrations/item_description.sql
 
-# Stored file URLs were written against api.myzodu.com, which does not resolve.
-# Repoint them at this environment's public origin. Idempotent: only rows still
-# carrying the dead host are touched.
+# Rows written while PUBLIC_FILE_BASE_URL was unset carry the code default
+# (https://myzodu.com), which does not resolve; rows restored from another
+# environment carry that environment's origin. Swap whatever origin sits in
+# front of /auth/file/ for this environment's, leaving the object key alone.
+# Idempotent: rows already on $PUBLIC_BASE are excluded.
 echo
 echo "=== $ENV / $AUTH_DB  <-  repoint file URLs to $PUBLIC_BASE"
 run_sql "$AUTH_DB" /dev/stdin <<SQL
 UPDATE tbl_invoice_settings
-   SET signature_url = replace(signature_url, 'https://api.myzodu.com', '$PUBLIC_BASE')
- WHERE signature_url LIKE 'https://api.myzodu.com/%';
+   SET signature_url = '$PUBLIC_BASE' || substring(signature_url from position('/auth/file/' in signature_url))
+ WHERE signature_url LIKE 'http%://%/auth/file/%'
+   AND signature_url NOT LIKE '$PUBLIC_BASE/%';
 
 UPDATE tbl_business
-   SET company_logo_url = replace(company_logo_url, 'https://api.myzodu.com', '$PUBLIC_BASE')
- WHERE company_logo_url LIKE 'https://api.myzodu.com/%';
+   SET company_logo_url = '$PUBLIC_BASE' || substring(company_logo_url from position('/auth/file/' in company_logo_url))
+ WHERE company_logo_url LIKE 'http%://%/auth/file/%'
+   AND company_logo_url NOT LIKE '$PUBLIC_BASE/%';
 SQL
 
 echo
