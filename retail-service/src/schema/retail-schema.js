@@ -221,10 +221,14 @@ sale_time: Joi.string()
 
   due_date: Joi.date().iso().optional().allow(null, ""),
 
+  // Stock Check toggle from POS settings — only when true does createOrder
+  // block the sale for insufficient stock; false lets it sell through.
+  stock_check: Joi.boolean().optional().default(false),
+
   items: Joi.array()
     .items(
       Joi.object({
-        // 🔥 FIXED 
+        // 🔥 FIXED
         item_uuid: Joi.string().required(),
         item_id: Joi.string().required(),
 
@@ -313,6 +317,10 @@ sale_time: Joi.string()
   notes: Joi.string()
     .allow(null, ""),
   due_date: Joi.date().iso().optional().allow(null, ""),
+
+  // Stock Check toggle from POS settings — only when true does updateOrder
+  // block the edit for insufficient stock; false lets it save through.
+  stock_check: Joi.boolean().optional().default(false),
 
   // ✅ ITEMS (VERY IMPORTANT)
   items: Joi.array()

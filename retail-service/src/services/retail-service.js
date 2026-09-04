@@ -1480,7 +1480,10 @@ if (!isQuotation) {
 
         const stock_before = Number(inv.rows[0].available_qty);
 
-        if (qty > stock_before) {
+        // Stock Check (POS settings) — only block the sale for insufficient
+        // stock when the branch has opted in; otherwise stock still moves
+        // (can go negative) but the sale is never rejected for it.
+        if (orderData.stock_check && qty > stock_before) {
           throw new Error(`Insufficient stock for ${item.item_name}`);
         }
 
@@ -1545,6 +1548,9 @@ async function applyStockAdjustments(client, {
   reference_id,
   transaction_type: defaultTransactionType,
   notes: defaultNotes,
+  // Stock Check (POS settings) — only block the edit for insufficient stock
+  // when the branch has opted in; otherwise stock still moves into negative.
+  stockCheck = false,
 }) {
   if (!adjustments.length) return;
 
@@ -1569,7 +1575,7 @@ async function applyStockAdjustments(client, {
     }
 
     const stock_after = stock_before + adj.qty_change;
-    if (stock_after < 0) {
+    if (stockCheck && stock_after < 0) {
       throw new Error(`Insufficient stock for ${adj.item_name}`);
     }
 
@@ -1719,6 +1725,7 @@ async function updateOrder(orderData) {
         reference_id:     saleId,
         transaction_type: 'quotation_converted_to_sale',
         notes:            'Quotation Converted to Sale',
+        stockCheck:       !!orderData.stock_check,
       });
 
     } else if (!isQuotation) {
@@ -1778,6 +1785,7 @@ async function updateOrder(orderData) {
         zodu_id:      orderData.zodu_id,
         branch_id:    orderData.branch_id,
         reference_id: saleId,
+        stockCheck:   !!orderData.stock_check,
       });
     }
  
