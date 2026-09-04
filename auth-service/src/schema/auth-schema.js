@@ -191,6 +191,10 @@ const schema = {
     terms_conditions: joi.string().max(2000).allow(null, ''),
     show_notes: joi.boolean(),
     notes: joi.string().max(2000).allow(null, ''),
+
+    // POS settings — Additional Settings
+    stock_check_enabled: joi.boolean(),
+    customer_mandatory: joi.boolean(),
   })
     .min(3)
     // A default the checkout no longer offers would leave the POS preselecting

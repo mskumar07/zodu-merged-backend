@@ -24,7 +24,7 @@ case "$ENV" in
     AUTH_DB=retail_auth_service
     RETAIL_DB=retail_restaurant_service
     RESTAURANT_DB=restaurant-service
-    PUBLIC_BASE=https://myzodu.com
+    PUBLIC_BASE=https://api.myzodu.com
     run_sql() { psql -h "$HOST" -p "$PORT" -U "$USER" -d "$1" -v ON_ERROR_STOP=1 -f "$2"; }
     ;;
   prod)
@@ -34,7 +34,7 @@ case "$ENV" in
     AUTH_DB=auth_service
     RETAIL_DB=retail_service
     RESTAURANT_DB=restaurant_service
-    PUBLIC_BASE=https://zodu.in
+    PUBLIC_BASE=https://api.zodu.in
     run_sql() {
       docker exec -i -e PGPASSWORD='zodu@2025' "$PGCONTAINER" \
         psql -U "$USER" -d "$1" -v ON_ERROR_STOP=1 < "$2"
@@ -61,6 +61,7 @@ apply "$AUTH_DB" auth-service/migrations/invoice_settings_theme_color.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_settings_signature_url.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_settings_payment_types.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_settings_template.sql
+apply "$AUTH_DB" auth-service/migrations/invoice_settings_pos_behaviours.sql
 
 # auth-service — company logo on tbl_business. The create-company INSERT names
 # this column, so an un-migrated database fails every company create.
@@ -70,19 +71,23 @@ apply "$AUTH_DB" auth-service/migrations/business_company_logo_url.sql
 apply "$RETAIL_DB"     retail-service/migrations/item_description.sql
 apply "$RESTAURANT_DB" restaurant-service/migrations/item_description.sql
 
-# Stored file URLs were written against api.myzodu.com, which does not resolve.
-# Repoint them at this environment's public origin. Idempotent: only rows still
-# carrying the dead host are touched.
+# Older rows were written before PUBLIC_FILE_BASE_URL existed, so they carry
+# whatever origin the code defaulted to at the time (myzodu.com, zodu.in, ...).
+# Repoint every stored file URL at this environment's public origin: swap the
+# scheme+host, keep the /auth/file/<key> path. Idempotent — rows already on
+# $PUBLIC_BASE are excluded, so re-running changes nothing.
 echo
 echo "=== $ENV / $AUTH_DB  <-  repoint file URLs to $PUBLIC_BASE"
 run_sql "$AUTH_DB" /dev/stdin <<SQL
 UPDATE tbl_invoice_settings
-   SET signature_url = replace(signature_url, 'https://api.myzodu.com', '$PUBLIC_BASE')
- WHERE signature_url LIKE 'https://api.myzodu.com/%';
+   SET signature_url = regexp_replace(signature_url, '^https?://[^/]+', '$PUBLIC_BASE')
+ WHERE signature_url ~ '^https?://'
+   AND signature_url NOT LIKE '$PUBLIC_BASE/%';
 
 UPDATE tbl_business
-   SET company_logo_url = replace(company_logo_url, 'https://api.myzodu.com', '$PUBLIC_BASE')
- WHERE company_logo_url LIKE 'https://api.myzodu.com/%';
+   SET company_logo_url = regexp_replace(company_logo_url, '^https?://[^/]+', '$PUBLIC_BASE')
+ WHERE company_logo_url ~ '^https?://'
+   AND company_logo_url NOT LIKE '$PUBLIC_BASE/%';
 SQL
 
 echo

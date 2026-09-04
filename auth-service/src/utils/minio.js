@@ -30,9 +30,9 @@ if (!MINIO_ACCESSKEY || !MINIO_SECRETKEY) {
 const bucketName = BUCKET_NAME || 'zodu';
 
 // Public origin the `/auth/file/:name` URLs are built against — set per
-// environment (UAT: https://myzodu.com, prod: https://zodu.in). Trailing slash
+// environment (UAT: https://api.myzodu.com, prod: https://api.zodu.in). Trailing slash
 // trimmed so a value with or without one produces the same URL.
-const publicBaseUrl = String(PUBLIC_FILE_BASE_URL || 'https://myzodu.com').replace(/\/+$/, '');
+const publicBaseUrl = String(PUBLIC_FILE_BASE_URL || 'https://api.myzodu.com').replace(/\/+$/, '');
 
 // Signatures are small; anything larger is a wrong-file mistake, not a signature.
 const SIGNATURE_MAX_BYTES = 2 * 1024 * 1024;

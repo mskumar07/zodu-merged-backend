@@ -500,6 +500,8 @@ exports.upsertInvoiceSettings = async (zodu_id, branch_id, fields) => {
     'show_terms_conditions', 'terms_conditions', 'show_notes', 'notes',
     // Signature image (uploaded to MinIO, see POST .../signature)
     'signature_url',
+    // POS settings — Additional Settings
+    'stock_check_enabled', 'customer_mandatory',
   ];
   const cols = Object.keys(fields).filter((k) => allowed.includes(k));
 

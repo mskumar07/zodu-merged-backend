@@ -24,8 +24,8 @@ module.exports = {
   BUCKET_NAME:         process.env.MINIO_BUCKET_NAME,
   // Origin the stored file URLs are built against. These URLs are handed to
   // browsers as plain <img src>, so it must be the public site, not an internal
-  // hostname: myzodu.com on UAT, zodu.in on prod.
-  PUBLIC_FILE_BASE_URL: process.env.PUBLIC_FILE_BASE_URL || 'https://myzodu.com',
+  // hostname: api.myzodu.com on UAT, api.zodu.in on prod.
+  PUBLIC_FILE_BASE_URL: process.env.PUBLIC_FILE_BASE_URL || 'https://api.myzodu.com',
   AUTH_SERVICE_URL:    process.env.AUTH_SERVICE_URL    || 'http://auth-service:4000',
   PAYROLL_SERVICE_URL: process.env.PAYROLL_SERVICE_URL || 'http://payroll-service:4004',
 };

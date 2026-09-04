@@ -16,9 +16,9 @@ const minioClient = new Minio.Client({
 
 const bucketName = BUCKET_NAME || 'zodu';
 // Public origin the file URLs are built against — set per environment
-// (UAT: https://myzodu.com, prod: https://zodu.in). Trailing slash trimmed so a
+// (UAT: https://api.myzodu.com, prod: https://api.zodu.in). Trailing slash trimmed so a
 // value with or without one produces the same URL.
-const publicBaseUrl = String(PUBLIC_FILE_BASE_URL || 'https://myzodu.com').replace(/\/+$/, '');
+const publicBaseUrl = String(PUBLIC_FILE_BASE_URL || 'https://api.myzodu.com').replace(/\/+$/, '');
 
 // Upload file → returns { fileName, fileUrl }
 exports.uploadFile = async (file) => {
