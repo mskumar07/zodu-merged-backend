@@ -18,12 +18,19 @@ const minioClient = new Minio.Client({
   secretKey: MINIO_SECRETKEY,
 });
 
-// Without credentials every putObject/getObject fails with AccessDenied, which
-// looks exactly like a missing file. Say so once at startup instead.
-if (!MINIO_ACCESSKEY || !MINIO_SECRETKEY) {
+// A deployment that forgets the MINIO_* block fails in a way that hides its own
+// cause: without MINIO_HOST the client quietly talks to localhost:9000 inside
+// its own container and every request dies with ECONNREFUSED, and without
+// credentials it fails with AccessDenied, which reads as a missing file. Name
+// the variables that are actually missing, once, at startup.
+const missingMinioEnv = ['MINIO_HOST', 'MINIO_PORT', 'MINIO_ACCESSKEY', 'MINIO_SECRETKEY']
+  .filter((name) => !process.env[name]);
+
+if (missingMinioEnv.length) {
   console.warn(
-    '[minio] MINIO_ACCESSKEY / MINIO_SECRETKEY are not set — every file upload and ' +
-    'download will fail with AccessDenied. Check the service environment.'
+    `[minio] ${missingMinioEnv.join(', ')} not set — falling back to ` +
+    `${minioClient.host}:${minioClient.port}. Every signature and company-logo ` +
+    'upload and download will fail until the service environment supplies these.'
   );
 }
 
