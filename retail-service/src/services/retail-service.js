@@ -1461,7 +1461,7 @@ if (!isQuotation) {
     const items = await repository.createSaleItems(orderData, sale, client);
 
     // 🚫 SKIP STOCK FOR QUOTATION
-    if (!isQuotation) {
+    if (!isQuotation && orderData.stock_check) {
       for (const item of orderData.items) {
         const qty = Number(item.quantity || 0);
 
@@ -1486,7 +1486,7 @@ if (!isQuotation) {
         if (orderData.stock_check && qty > stock_before) {
           throw new Error(`Insufficient stock for ${item.item_name}`);
         }
-
+        
         const stock_after = stock_before - qty;
 
         await client.query(
@@ -1507,7 +1507,9 @@ if (!isQuotation) {
           stock_after,
           notes: "Sale Order",
         });
+      
       }
+    
     }
 
     // 🚫 SKIP PAYMENT FOR QUOTATION
