@@ -150,7 +150,6 @@ async function AccountLogin(userInputs, meta = {}) {
   const dummyHash = '$2b$12$invalidhashusedtopreventtimingattack0000000000000000';
   const user      = result?.rows?.[0];
   const isValid   = await ValidatePassword(password, user?.password_hash || dummyHash);
-  console.log(isValid)
 
   if (!user || !isValid) {
     return FormateData({ error: 'Invalid credentials' });
@@ -639,6 +638,40 @@ async function EditInvoiceSettings({ user_id, zodu_id, branch_id, ...fields }) {
   }
 }
 
+// ── POS Settings ──────────────────────────────────────────────────────────────
+
+async function GetPosSettings({ user_id, zodu_id, branch_id }) {
+  const userCompanies = await repository.getUserCompanies({ user_id });
+  const hasAccess = userCompanies.some((company) => company.zodu_id === zodu_id);
+
+  if (!hasAccess) {
+    return FormateData({ error: 'You do not have access to view settings for this company' });
+  }
+
+  const settings = await businessRepo.getPosSettings(zodu_id, branch_id);
+  if (!settings) {
+    return FormateData({ error: 'POS settings not found' });
+  }
+  return FormateData({ settings });
+}
+
+async function EditPosSettings({ user_id, zodu_id, branch_id, ...fields }) {
+  const userCompanies = await repository.getUserCompanies({ user_id });
+  const hasAccess = userCompanies.some((company) => company.zodu_id === zodu_id);
+
+  if (!hasAccess) {
+    return FormateData({ error: 'You do not have access to edit settings for this company' });
+  }
+
+  try {
+    const settings = await businessRepo.upsertPosSettings(zodu_id, branch_id, fields);
+    return FormateData({ message: 'POS settings updated successfully', settings });
+  } catch (err) {
+    console.error('update POS settings failed:', err.message);
+    return FormateData({ error: 'Failed to update POS settings. Please try again.' });
+  }
+}
+
 // ── Invoice signature image ───────────────────────────────────────────────────
 // The image lives in MinIO; tbl_invoice_settings only stores its URL. The old
 // object is removed only after the new URL is committed, so a failed upload
@@ -706,10 +739,12 @@ async function GetAllSettings({ user_id, zodu_id, branch_id }) {
   }
 
   const invoice = await businessRepo.getInvoiceSettings(zodu_id, branch_id);
+  const pos     = await businessRepo.getPosSettings(zodu_id, branch_id);
 
   return FormateData({
     settings: {
       invoice: invoice || null,
+      pos:     pos     || null,
     },
   });
 }
@@ -766,6 +801,8 @@ module.exports = {
   GetRoleAccess,
   GetInvoiceSettings,
   EditInvoiceSettings,
+  GetPosSettings,
+  EditPosSettings,
   UploadInvoiceSignature,
   DeleteInvoiceSignature,
   UploadCompanyLogo,

@@ -221,6 +221,10 @@ sale_time: Joi.string()
 
   due_date: Joi.date().iso().optional().allow(null, ""),
 
+  // Delivery vehicle registration number — printed on the invoice's
+  // "Transport Copy" (see tbl_invoice_settings.invoice_copy_types).
+  vehicle_no: Joi.string().max(20).optional().allow(null, ""),
+
   // Stock Check toggle from POS settings — only when true does createOrder
   // block the sale for insufficient stock; false lets it sell through.
   stock_check: Joi.boolean().optional().default(false),
@@ -317,6 +321,10 @@ sale_time: Joi.string()
   notes: Joi.string()
     .allow(null, ""),
   due_date: Joi.date().iso().optional().allow(null, ""),
+
+  // Delivery vehicle registration number — printed on the invoice's
+  // "Transport Copy" (see tbl_invoice_settings.invoice_copy_types).
+  vehicle_no: Joi.string().max(20).optional().allow(null, ""),
 
   // Stock Check toggle from POS settings — only when true does updateOrder
   // block the edit for insufficient stock; false lets it save through.

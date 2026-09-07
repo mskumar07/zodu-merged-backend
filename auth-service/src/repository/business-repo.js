@@ -231,6 +231,13 @@ exports.createDefaultBranch = async ({ branch_id, zodu_id, qr_code_id, branch_na
       [zodu_id, branch_id]
     );
 
+    await client.query(
+      `INSERT INTO tbl_pos_settings (zodu_id, branch_id)
+       VALUES ($1, $2)
+       ON CONFLICT (zodu_id, branch_id) DO NOTHING`,
+      [zodu_id, branch_id]
+    );
+
     if (ownsTransaction) await client.query('COMMIT');
     return rows[0] || null;
   } catch (err) {
@@ -332,6 +339,14 @@ exports.createBranch = async (data) => {
     // ── Seed default invoice settings for this branch ──────────────────────
     await client.query(
       `INSERT INTO tbl_invoice_settings (zodu_id, branch_id)
+       VALUES ($1, $2)
+       ON CONFLICT (zodu_id, branch_id) DO NOTHING`,
+      [data.zodu_id, data.branch_id]
+    );
+
+    // ── Seed default POS settings for this branch ───────────────────────────
+    await client.query(
+      `INSERT INTO tbl_pos_settings (zodu_id, branch_id)
        VALUES ($1, $2)
        ON CONFLICT (zodu_id, branch_id) DO NOTHING`,
       [data.zodu_id, data.branch_id]
@@ -489,13 +504,13 @@ exports.upsertInvoiceSettings = async (zodu_id, branch_id, fields) => {
     'invoice_prefix', 'invoice_digit_count', 'invoice_start_number',
     // Tax / payment
     'default_tax_label', 'invoice_due_days', 'default_payment_method',
-    'payment_types',
+    'payment_types', 'invoice_copy_types',
     // Print layout
     'invoice_template',
     'printer_inch', 'invoice_theme_color', 'show_company_logo', 'print_thank_you_message',
     'show_item_id', 'show_description', 'show_customer_details',
     'show_tax_details', 'show_payment_details', 'show_bank_details',
-    'show_signature',
+    'show_signature', 'show_shipping_address',
     // Free-text blocks
     'show_terms_conditions', 'terms_conditions', 'show_notes', 'notes',
     // Signature image (uploaded to MinIO, see POST .../signature)
@@ -516,6 +531,39 @@ exports.upsertInvoiceSettings = async (zodu_id, branch_id, fields) => {
 
   const r = await conn.query(
     `INSERT INTO tbl_invoice_settings (${insertCols.join(', ')})
+     VALUES (${placeholders})
+     ON CONFLICT (zodu_id, branch_id) DO UPDATE SET ${updateSet}
+     RETURNING *`,
+    insertVals
+  );
+  return r.rows[0];
+};
+
+// ── POS SETTINGS ─────────────────────────────────────────────────────────────
+
+exports.getPosSettings = async (zodu_id, branch_id) => {
+  const r = await conn.query(
+    `SELECT * FROM tbl_pos_settings WHERE zodu_id=$1 AND branch_id=$2`,
+    [zodu_id, branch_id]
+  );
+  return r.rows[0] || null;
+};
+
+exports.upsertPosSettings = async (zodu_id, branch_id, fields) => {
+  const allowed = ['pos_types', 'default_pos_type'];
+  const cols = Object.keys(fields).filter((k) => allowed.includes(k));
+
+  if (cols.length === 0) {
+    return exports.getPosSettings(zodu_id, branch_id);
+  }
+
+  const insertCols = ['zodu_id', 'branch_id', ...cols];
+  const insertVals = [zodu_id, branch_id, ...cols.map((c) => fields[c])];
+  const placeholders = insertVals.map((_, i) => `$${i + 1}`).join(', ');
+  const updateSet = cols.map((c) => `${c} = EXCLUDED.${c}`).join(', ');
+
+  const r = await conn.query(
+    `INSERT INTO tbl_pos_settings (${insertCols.join(', ')})
      VALUES (${placeholders})
      ON CONFLICT (zodu_id, branch_id) DO UPDATE SET ${updateSet}
      RETURNING *`,

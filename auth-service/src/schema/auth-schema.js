@@ -6,6 +6,14 @@ const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,30}$/;
 // constraint on tbl_invoice_settings.payment_types — keep the two in step.
 const PAYMENT_TYPES = ['Cash', 'UPI', 'UPI + Cash', 'Cheque', 'Bank Transfer', 'Others'];
 
+// Which copy labels a branch prints per sale. Same vocabulary as the CHECK
+// constraint on tbl_invoice_settings.invoice_copy_types — keep the two in step.
+const INVOICE_COPY_TYPES = ['Original', 'Duplicate', 'Transport'];
+
+// Sale types the POS screen can offer. Same vocabulary as the CHECK
+// constraints on tbl_pos_settings — keep the two in step.
+const POS_TYPES = ['Invoice', 'Quotation', 'Proforma'];
+
 const schema = {
   account_create: joi.object({
     restaurant_name: joi.string().max(50).required(),
@@ -164,6 +172,13 @@ const schema = {
       .items(joi.string().valid(...PAYMENT_TYPES).insensitive())
       .min(1)
       .unique((a, b) => String(a).toLowerCase() === String(b).toLowerCase()),
+    // Which copy labels to print per sale — Original (customer), Duplicate
+    // (business's own copy), Transport Copy (delivery vehicle).
+    invoice_copy_types: joi
+      .array()
+      .items(joi.string().valid(...INVOICE_COPY_TYPES).insensitive())
+      .min(1)
+      .unique((a, b) => String(a).toLowerCase() === String(b).toLowerCase()),
 
     // Print layout
     // Which invoice layout to render. Free text on purpose: the template set
@@ -182,6 +197,7 @@ const schema = {
     show_payment_details: joi.boolean(),
     show_bank_details: joi.boolean(),
     show_signature: joi.boolean(),
+    show_shipping_address: joi.boolean(),
     // Normally set by the signature upload endpoint; allowed here so the
     // client can clear it (null) without a separate call.
     signature_url: joi.string().uri().allow(null, ''),
@@ -211,6 +227,38 @@ const schema = {
             `"default_payment_method" (${default_payment_method}) must be one of the selected payment_types`
           );
     }, 'default payment method is offered'),
+
+  edit_pos_settings: joi.object({
+    zodu_id: joi.string().required(),
+    branch_id: joi.string().required(),
+
+    // Which sale types the POS screen offers. insensitive() lets the client
+    // send 'invoice' and still store the canonical 'Invoice'. At least one —
+    // a POS with no sale type has nothing to open.
+    pos_types: joi
+      .array()
+      .items(joi.string().valid(...POS_TYPES).insensitive())
+      .min(1)
+      .unique((a, b) => String(a).toLowerCase() === String(b).toLowerCase()),
+
+    // Which of the enabled types the POS screen opens on by default.
+    default_pos_type: joi.string().valid(...POS_TYPES).insensitive(),
+  })
+    .min(3)
+    // A default the POS no longer offers would leave the screen preselecting
+    // a type the cashier cannot pick. Only checked when one request changes both.
+    .custom((value, helpers) => {
+      const { pos_types, default_pos_type } = value;
+      if (!pos_types || !default_pos_type) return value;
+      const offered = pos_types.some(
+        (t) => String(t).toLowerCase() === String(default_pos_type).toLowerCase()
+      );
+      return offered
+        ? value
+        : helpers.message(
+            `"default_pos_type" (${default_pos_type}) must be one of the selected pos_types`
+          );
+    }, 'default pos type is offered'),
 };
 
 module.exports = schema;

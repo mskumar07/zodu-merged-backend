@@ -3280,7 +3280,7 @@ exports.createOrder = async (orderData, client) => {
         discount_type, discount_value, discount_amount,
         total_amount, paid_amount, balance_amount,
         payment_status, notes, sale_date, sale_time,due_date,round_off,
-        discount_gst_mode
+        discount_gst_mode, vehicle_no
      )
      VALUES (
         $1,$2,$3,
@@ -3290,7 +3290,7 @@ exports.createOrder = async (orderData, client) => {
         $9,$10,$11,
         $12,$13,$14,
         $15,$16,$17,$18,$19,$20,
-        $21
+        $21, $22
      )
      RETURNING *`,
     [
@@ -3319,7 +3319,8 @@ exports.createOrder = async (orderData, client) => {
       orderData.sale_time ?? null,
       orderData.due_date ?? null,
       orderData.round_off ?? 0,
-      orderData.discount_gst_mode ?? null
+      orderData.discount_gst_mode ?? null,
+      orderData.vehicle_no ?? null
     ]
   );
  
@@ -3568,7 +3569,7 @@ exports.generateSaleId = async (branchId, saleType, zoduId, client) => {
   const db = client ?? conn;
   // ── 1. Normalise type ────────────────────────────────────────────────────
   const type =
-    saleType === 'Q' || saleType === 'quotation' ? 'Q' : 'S';
+    saleType === 'Q' || saleType === 'quotation' ? 'Q' : saleType ==='proforma' || saleType === 'Proforma' ? 'P' : 'S';
 
   // ── 2. Invoice prefix (auth-service is the single source of truth) ──────
   // digit_count and start_number are fixed — the Settings screen no longer
@@ -3588,7 +3589,7 @@ exports.generateSaleId = async (branchId, saleType, zoduId, client) => {
 
   // Quotations keep their own independent sequence, distinguished by a
   // "Q" suffix on the prefix so numbering never collides with sales.
-  const prefix = type === 'Q' ? `${invoicePrefix}Q` : invoicePrefix;
+  const prefix = type === 'Q' ? `${invoicePrefix}Q` : type === 'P' ? `${invoicePrefix}P` : invoicePrefix;
 
   // ── Branch suffix ─────────────────────────────────────────────────────────
   // Primary:  strip the known zoduId prefix   →  "ZODU035B1".replace("ZODU035","") = "B1"
@@ -3839,7 +3840,8 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
         s.round_off,
         s.discount_gst_mode,
         TO_CHAR(s.due_date,  'DD-Mon-YYYY')             AS due_date_fmt,
- 
+        s.vehicle_no,
+
         c.cust_uuid,
         c.cust_id AS customer_id,
         c.cust_name,
@@ -3896,6 +3898,7 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
     round_off: row.round_off,
     discount_gst_mode: row.discount_gst_mode,
     due_date_fmt: row.due_date_fmt,
+    vehicle_no: row.vehicle_no,
   };
  
   const customer = row.cust_uuid

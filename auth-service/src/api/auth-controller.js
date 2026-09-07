@@ -150,7 +150,6 @@ router.post('/api/create-account', async (req, res) => {
 router.post('/api/login', async (req, res) => {
   try {
     const { errors, input } = await RequestValidator(schema.login, req.body);
-    console.log(errors,input)
     if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
 
     // Pass request metadata for session tracking
@@ -160,10 +159,9 @@ router.post('/api/login', async (req, res) => {
     };
 
     const data = await authService.AccountLogin(input, meta);
-    if (data.error) {
+    if (data.data?.error) {
       return res.status(401).json(data);
     }
-    console.log(data);
     return res.status(STATUS_CODES.OK).json(data);
   } catch (error) {
     logger.error(error);
@@ -350,6 +348,45 @@ router.put('/api/invoice-settings/:zodu_id/:branch_id', ValidateSignature, async
       ...input,
     });
     if (data.error) return res.status(400).json(data);
+    return res.status(STATUS_CODES.OK).json(data);
+  } catch (error) {
+    logger.error(error);
+    return res.status(STATUS_CODES.INTERNAL_ERROR).json({ message: error.message });
+  }
+});
+
+// ── GET /api/pos-settings/:zodu_id/:branch_id ─────────────────────────────────
+router.get('/api/pos-settings/:zodu_id/:branch_id', ValidateSignature, async (req, res) => {
+  try {
+    const { zodu_id, branch_id } = req.params;
+    const data = await authService.GetPosSettings({
+      user_id: req.user.user_id,
+      zodu_id,
+      branch_id,
+    });
+    if (data.data?.error) return res.status(400).json(data);
+    return res.status(STATUS_CODES.OK).json(data);
+  } catch (error) {
+    logger.error(error);
+    return res.status(STATUS_CODES.INTERNAL_ERROR).json({ message: error.message });
+  }
+});
+
+// ── PUT /api/pos-settings/:zodu_id/:branch_id ─────────────────────────────────
+router.put('/api/pos-settings/:zodu_id/:branch_id', ValidateSignature, async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(schema.edit_pos_settings, {
+      ...req.body,
+      zodu_id: req.params.zodu_id,
+      branch_id: req.params.branch_id,
+    });
+    if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
+
+    const data = await authService.EditPosSettings({
+      user_id: req.user.user_id,
+      ...input,
+    });
+    if (data.data?.error) return res.status(400).json(data);
     return res.status(STATUS_CODES.OK).json(data);
   } catch (error) {
     logger.error(error);

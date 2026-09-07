@@ -17,7 +17,6 @@ module.exports.GeneratePassword = async (password, salt) => {
 };
 
 module.exports.ValidatePassword = async (enteredPassword, savedHashedPassword) => {
-  console.log(savedHashedPassword,enteredPassword)
   return await bcrypt.compare(enteredPassword, savedHashedPassword);
 };
 
