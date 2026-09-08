@@ -282,7 +282,7 @@ sale_time: Joi.string()
   branch_id: Joi.string().max(50).required(),
 
   sale_type: Joi.string()
-    .valid("retail", "credit",'quotation')
+    .valid("retail", "credit", 'quotation', 'proforma')
     .required(),
 
   sale_date: Joi.date().required(),

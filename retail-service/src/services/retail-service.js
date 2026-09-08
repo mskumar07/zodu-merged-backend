@@ -1406,6 +1406,10 @@ async function createOrder(orderData) {
     await client.query("BEGIN");
 
     const isQuotation = orderData.sale_type === "quotation";
+    // Proforma behaves like a regular sale (stock moves, payment collected) —
+    // it only gets its own numbering sequence and, on delete, is permanently
+    // removed instead of soft-cancelled. See deleteSale / generateSaleId.
+    const isProforma  = orderData.sale_type === "proforma";
 
     // ✅ CALCULATE TOTALS WITH GST MODE
     const totals = calculateOrderTotals(
@@ -1448,7 +1452,7 @@ if (!isQuotation) {
     const sale = await repository.createOrder(
       {
         ...orderData,
-        sale_type: isQuotation ? "Q" : "S",
+        sale_type: isQuotation ? "Q" : isProforma ? "P" : "S",
         paid_amount: paidAmount,
         payment_status: paymentStatus,
         ...totals,
@@ -1524,6 +1528,8 @@ if (!isQuotation) {
       success: true,
       message: isQuotation
         ? "Quotation created successfully"
+        : isProforma
+        ? "Proforma created successfully"
         : "Order created successfully",
       order: sale,
       items,
@@ -1654,16 +1660,18 @@ async function updateOrder(orderData) {
     if (!saleRes.rows.length) throw new Error('Sale not found');
  
     const sale              = saleRes.rows[0];
-    const existingSaleType  = sale.sale_type;         // 'S' or 'Q'
+    const existingSaleType  = sale.sale_type;         // 'S', 'Q' or 'P'
     const requestedSaleType = orderData.sale_type;
- 
+
     // ── Normalise to single-char codes ────────────────────────
     const normalizedSaleType =
       requestedSaleType === 'quotation' || requestedSaleType === 'Q' ? 'Q'
+      : requestedSaleType === 'proforma' || requestedSaleType === 'P' ? 'P'
       : requestedSaleType === 'retail'  ||
         requestedSaleType === 'sale'    ||
         requestedSaleType === 'S'       ? 'S'
       : existingSaleType  === 'quotation' || existingSaleType  === 'Q' ? 'Q'
+      : existingSaleType  === 'proforma'  || existingSaleType  === 'P' ? 'P'
       : 'S';
  
     const isQuotation         = existingSaleType  === 'Q' || existingSaleType  === 'quotation';
@@ -1911,6 +1919,8 @@ async function updateOrder(orderData) {
         ? 'Quotation converted to Sale successfully'
         : isQuotation
         ? 'Quotation updated successfully'
+        : normalizedSaleType === 'P'
+        ? 'Proforma updated successfully'
         : 'Order updated successfully',
       sale_id: newSaleId,
     };

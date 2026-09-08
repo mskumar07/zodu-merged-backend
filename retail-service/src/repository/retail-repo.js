@@ -3569,7 +3569,9 @@ exports.generateSaleId = async (branchId, saleType, zoduId, client) => {
   const db = client ?? conn;
   // ── 1. Normalise type ────────────────────────────────────────────────────
   const type =
-    saleType === 'Q' || saleType === 'quotation' ? 'Q' : saleType ==='proforma' || saleType === 'Proforma' ? 'P' : 'S';
+    saleType === 'Q' || saleType === 'quotation' ? 'Q'
+    : saleType === 'P' || saleType === 'proforma' || saleType === 'Proforma' ? 'P'
+    : 'S';
 
   // ── 2. Invoice prefix (auth-service is the single source of truth) ──────
   // digit_count and start_number are fixed — the Settings screen no longer
@@ -4106,169 +4108,209 @@ exports.deleteSale = async (sale_id, zodu_id, branch_id) => {
       return { alreadyCancelled: true, ...sale };
     }
 
-    const soldItemsResult = await client.query(
-      `SELECT
-          si.item_id,
-          COALESCE(mi.item_uuid, inv.item_uuid) AS item_uuid,
-          COALESCE(mi.item_name, inv.item_name, MAX(si.item_name)) AS item_name,
-          SUM(COALESCE(si.quantity, 0))::numeric AS sold_qty
-       FROM tbl_sale_items si
-       LEFT JOIN tbl_menu_items mi
-         ON mi.item_id = si.item_id
-        AND mi.branch_id = $3
-        AND mi.zodu_id = $2
-       LEFT JOIN tbl_inventory inv
-         ON inv.item_id = si.item_id
-        AND inv.branch_id = $3
-        AND inv.zodu_id = $2
-       WHERE si.sale_uuid = $1
-       GROUP BY si.item_id, mi.item_uuid, inv.item_uuid, mi.item_name, inv.item_name`,
-      [sale.sale_uuid, zodu_id, branch_id]
-    );
-
-    const returnItemsResult = await client.query(
-      `SELECT
-          sri.item_id,
-          COALESCE(mi.item_uuid, inv.item_uuid) AS item_uuid,
-          COALESCE(mi.item_name, inv.item_name, MAX(sri.item_name)) AS item_name,
-          SUM(COALESCE(sri.return_qty, 0))::numeric AS return_qty
-       FROM tbl_sale_return_items sri
-       INNER JOIN tbl_sale_returns sr
-         ON sr.return_uuid = sri.return_uuid
-       LEFT JOIN tbl_menu_items mi
-         ON mi.item_id = sri.item_id
-        AND mi.branch_id = $3
-        AND mi.zodu_id = $2
-       LEFT JOIN tbl_inventory inv
-         ON inv.item_id = sri.item_id
-        AND inv.branch_id = $3
-        AND inv.zodu_id = $2
-       WHERE sr.original_sale_uuid = $1
-       GROUP BY sri.item_id, mi.item_uuid, inv.item_uuid, mi.item_name, inv.item_name`,
-      [sale.sale_uuid, zodu_id, branch_id]
-    );
-
-    const netQtyByItem = new Map();
-
-    for (const row of soldItemsResult.rows) {
-      netQtyByItem.set(String(row.item_id), {
-        item_id: row.item_id,
-        item_uuid: row.item_uuid,
-        item_name: row.item_name,
-        net_qty: Number(row.sold_qty || 0),
-      });
+    // Stock only moved at sale time when the branch had Stock Check on (see
+    // createOrder's `!isQuotation && orderData.stock_check` gate) — reversing
+    // it here regardless would add back inventory that was never deducted.
+    // Read the branch's *current* setting; toggling it between the sale and
+    // its deletion is an edge case we accept.
+    let stockCheckEnabled = false;
+    try {
+      const res = await authClient.getInvoiceSettings(zodu_id, branch_id);
+      stockCheckEnabled = !!res?.data?.stock_check_enabled;
+    } catch (err) {
+      console.error('[deleteSale] invoice settings lookup failed, assuming stock check off:', err.message);
     }
 
-    for (const row of returnItemsResult.rows) {
-      const key = String(row.item_id);
-      const existing = netQtyByItem.get(key) || {
-        item_id: row.item_id,
-        item_uuid: row.item_uuid,
-        item_name: row.item_name,
-        net_qty: 0,
-      };
-
-      existing.item_uuid = existing.item_uuid || row.item_uuid;
-      existing.item_name = existing.item_name || row.item_name;
-      existing.net_qty -= Number(row.return_qty || 0);
-      netQtyByItem.set(key, existing);
-    }
-
-    const itemsToReverse = [...netQtyByItem.values()].filter(
-      (item) => item.item_id && item.net_qty !== 0
-    );
-
-    if (itemsToReverse.length > 0) {
-      const inventoryRowsResult = await client.query(
-        `SELECT inventory_uuid, item_uuid, item_id, item_name, available_qty
-         FROM tbl_inventory
-         WHERE item_id = ANY($1::text[])
-           AND zodu_id = $2
-           AND branch_id = $3
-         FOR UPDATE`,
-        [itemsToReverse.map((item) => item.item_id), zodu_id, branch_id]
+    if (stockCheckEnabled) {
+      const soldItemsResult = await client.query(
+        `SELECT
+            si.item_id,
+            COALESCE(mi.item_uuid, inv.item_uuid) AS item_uuid,
+            COALESCE(mi.item_name, inv.item_name, MAX(si.item_name)) AS item_name,
+            SUM(COALESCE(si.quantity, 0))::numeric AS sold_qty
+         FROM tbl_sale_items si
+         LEFT JOIN tbl_menu_items mi
+           ON mi.item_id = si.item_id
+          AND mi.branch_id = $3
+          AND mi.zodu_id = $2
+         LEFT JOIN tbl_inventory inv
+           ON inv.item_id = si.item_id
+          AND inv.branch_id = $3
+          AND inv.zodu_id = $2
+         WHERE si.sale_uuid = $1
+         GROUP BY si.item_id, mi.item_uuid, inv.item_uuid, mi.item_name, inv.item_name`,
+        [sale.sale_uuid, zodu_id, branch_id]
       );
 
-      const inventoryByItemId = new Map(
-        inventoryRowsResult.rows.map((row) => [String(row.item_id), row])
+      const returnItemsResult = await client.query(
+        `SELECT
+            sri.item_id,
+            COALESCE(mi.item_uuid, inv.item_uuid) AS item_uuid,
+            COALESCE(mi.item_name, inv.item_name, MAX(sri.item_name)) AS item_name,
+            SUM(COALESCE(sri.return_qty, 0))::numeric AS return_qty
+         FROM tbl_sale_return_items sri
+         INNER JOIN tbl_sale_returns sr
+           ON sr.return_uuid = sri.return_uuid
+         LEFT JOIN tbl_menu_items mi
+           ON mi.item_id = sri.item_id
+          AND mi.branch_id = $3
+          AND mi.zodu_id = $2
+         LEFT JOIN tbl_inventory inv
+           ON inv.item_id = sri.item_id
+          AND inv.branch_id = $3
+          AND inv.zodu_id = $2
+         WHERE sr.original_sale_uuid = $1
+         GROUP BY sri.item_id, mi.item_uuid, inv.item_uuid, mi.item_name, inv.item_name`,
+        [sale.sale_uuid, zodu_id, branch_id]
       );
 
-      const inventoryUuids = [];
-      const stockAfters = [];
-      const ledgerItemUuids = [];
-      const ledgerItemIds = [];
-      const ledgerItemNames = [];
-      const ledgerQtyChanges = [];
-      const ledgerStockBefores = [];
-      const ledgerStockAfters = [];
+      const netQtyByItem = new Map();
 
-      for (const item of itemsToReverse) {
-        const inventory = inventoryByItemId.get(String(item.item_id));
-        if (!inventory) continue;
-
-        const stockBefore = Number(inventory.available_qty || 0);
-        const stockAfter = stockBefore + Number(item.net_qty);
-
-        inventoryUuids.push(inventory.inventory_uuid);
-        stockAfters.push(stockAfter);
-
-        ledgerItemUuids.push(inventory.item_uuid);
-        ledgerItemIds.push(item.item_id);
-        ledgerItemNames.push(item.item_name);
-        ledgerQtyChanges.push(Number(item.net_qty));
-        ledgerStockBefores.push(stockBefore);
-        ledgerStockAfters.push(stockAfter);
+      for (const row of soldItemsResult.rows) {
+        netQtyByItem.set(String(row.item_id), {
+          item_id: row.item_id,
+          item_uuid: row.item_uuid,
+          item_name: row.item_name,
+          net_qty: Number(row.sold_qty || 0),
+        });
       }
 
-      if (inventoryUuids.length > 0) {
-        await client.query(
-          `UPDATE tbl_inventory AS inv
-           SET available_qty = data.stock_after,
-               last_stock_update = CURRENT_TIMESTAMP
-           FROM (
-             SELECT UNNEST($1::uuid[]) AS inventory_uuid,
-                    UNNEST($2::numeric[]) AS stock_after
-           ) AS data
-           WHERE inv.inventory_uuid = data.inventory_uuid`,
-          [inventoryUuids, stockAfters]
+      for (const row of returnItemsResult.rows) {
+        const key = String(row.item_id);
+        const existing = netQtyByItem.get(key) || {
+          item_id: row.item_id,
+          item_uuid: row.item_uuid,
+          item_name: row.item_name,
+          net_qty: 0,
+        };
+
+        existing.item_uuid = existing.item_uuid || row.item_uuid;
+        existing.item_name = existing.item_name || row.item_name;
+        existing.net_qty -= Number(row.return_qty || 0);
+        netQtyByItem.set(key, existing);
+      }
+
+      const itemsToReverse = [...netQtyByItem.values()].filter(
+        (item) => item.item_id && item.net_qty !== 0
+      );
+
+      if (itemsToReverse.length > 0) {
+        const inventoryRowsResult = await client.query(
+          `SELECT inventory_uuid, item_uuid, item_id, item_name, available_qty
+           FROM tbl_inventory
+           WHERE item_id = ANY($1::text[])
+             AND zodu_id = $2
+             AND branch_id = $3
+           FOR UPDATE`,
+          [itemsToReverse.map((item) => item.item_id), zodu_id, branch_id]
         );
 
-        await client.query(
-          `INSERT INTO tbl_stock_ledger (
-            item_uuid, item_id, zodu_id, branch_id,
-            item_name, transaction_type,
-            reference_id, qty_change,
-            stock_before, stock_after, notes
-          )
-          SELECT
-            data.item_uuid, data.item_id, $1, $2,
-            data.item_name, 'sale_deleted',
-            $3, data.qty_change,
-            data.stock_before, data.stock_after,
-            $4
-          FROM (
+        const inventoryByItemId = new Map(
+          inventoryRowsResult.rows.map((row) => [String(row.item_id), row])
+        );
+
+        const inventoryUuids = [];
+        const stockAfters = [];
+        const ledgerItemUuids = [];
+        const ledgerItemIds = [];
+        const ledgerItemNames = [];
+        const ledgerQtyChanges = [];
+        const ledgerStockBefores = [];
+        const ledgerStockAfters = [];
+
+        for (const item of itemsToReverse) {
+          const inventory = inventoryByItemId.get(String(item.item_id));
+          if (!inventory) continue;
+
+          const stockBefore = Number(inventory.available_qty || 0);
+          const stockAfter = stockBefore + Number(item.net_qty);
+
+          inventoryUuids.push(inventory.inventory_uuid);
+          stockAfters.push(stockAfter);
+
+          ledgerItemUuids.push(inventory.item_uuid);
+          ledgerItemIds.push(item.item_id);
+          ledgerItemNames.push(item.item_name);
+          ledgerQtyChanges.push(Number(item.net_qty));
+          ledgerStockBefores.push(stockBefore);
+          ledgerStockAfters.push(stockAfter);
+        }
+
+        if (inventoryUuids.length > 0) {
+          await client.query(
+            `UPDATE tbl_inventory AS inv
+             SET available_qty = data.stock_after,
+                 last_stock_update = CURRENT_TIMESTAMP
+             FROM (
+               SELECT UNNEST($1::uuid[]) AS inventory_uuid,
+                      UNNEST($2::numeric[]) AS stock_after
+             ) AS data
+             WHERE inv.inventory_uuid = data.inventory_uuid`,
+            [inventoryUuids, stockAfters]
+          );
+
+          await client.query(
+            `INSERT INTO tbl_stock_ledger (
+              item_uuid, item_id, zodu_id, branch_id,
+              item_name, transaction_type,
+              reference_id, qty_change,
+              stock_before, stock_after, notes
+            )
             SELECT
-              UNNEST($5::uuid[]) AS item_uuid,
-              UNNEST($6::text[]) AS item_id,
-              UNNEST($7::text[]) AS item_name,
-              UNNEST($8::numeric[]) AS qty_change,
-              UNNEST($9::numeric[]) AS stock_before,
-              UNNEST($10::numeric[]) AS stock_after
-          ) AS data`,
-          [
-            zodu_id,
-            branch_id,
-            sale.sale_uuid,
-            `Stock reversed on deletion of sale ${sale.sale_id}`,
-            ledgerItemUuids,
-            ledgerItemIds,
-            ledgerItemNames,
-            ledgerQtyChanges,
-            ledgerStockBefores,
-            ledgerStockAfters,
-          ]
-        );
+              data.item_uuid, data.item_id, $1, $2,
+              data.item_name, 'sale_deleted',
+              $3, data.qty_change,
+              data.stock_before, data.stock_after,
+              $4
+            FROM (
+              SELECT
+                UNNEST($5::uuid[]) AS item_uuid,
+                UNNEST($6::text[]) AS item_id,
+                UNNEST($7::text[]) AS item_name,
+                UNNEST($8::numeric[]) AS qty_change,
+                UNNEST($9::numeric[]) AS stock_before,
+                UNNEST($10::numeric[]) AS stock_after
+            ) AS data`,
+            [
+              zodu_id,
+              branch_id,
+              sale.sale_uuid,
+              `Stock reversed on deletion of sale ${sale.sale_id}`,
+              ledgerItemUuids,
+              ledgerItemIds,
+              ledgerItemNames,
+              ledgerQtyChanges,
+              ledgerStockBefores,
+              ledgerStockAfters,
+            ]
+          );
+        }
       }
+    }
+
+    // Proforma is a non-binding draft — "delete" means gone for good, not a
+    // cancelled-but-visible row like a real sale or quotation. tbl_sale_items
+    // cascades on the FK; tbl_sale_payment has no FK so it needs an explicit
+    // delete first.
+    if (sale.sale_type === 'P') {
+      const returnsResult = await client.query(
+        `SELECT 1 FROM tbl_sale_returns WHERE original_sale_uuid = $1 LIMIT 1`,
+        [sale.sale_uuid]
+      );
+      if (returnsResult.rows.length > 0) {
+        await client.query("ROLLBACK");
+        throw new Error('Cannot permanently delete a proforma that already has sale returns against it');
+      }
+
+      await client.query(`DELETE FROM tbl_sale_payment WHERE sale_id = $1`, [sale.sale_id]);
+
+      const deletedResult = await client.query(
+        `DELETE FROM tbl_sales WHERE sale_uuid = $1 RETURNING *`,
+        [sale.sale_uuid]
+      );
+
+      await client.query("COMMIT");
+      return deletedResult.rows[0] ?? null;
     }
 
     const cancelledSaleResult = await client.query(

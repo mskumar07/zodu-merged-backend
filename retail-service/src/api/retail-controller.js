@@ -598,7 +598,9 @@ router.delete("/api/sales/:sale_id", async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: "Sale deleted successfully",
+      message: data.data?.sale_type === 'P'
+        ? "Proforma permanently deleted"
+        : "Sale deleted successfully",
       data: data.data,
     });
   } catch (error) {
