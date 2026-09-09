@@ -125,12 +125,8 @@ exports.createPurchase = async (data) => {
       return { success: false, message: `Item(s) not found in menu: ${missing.join(", ")}` };
     }
 
-    const purchase_id = "PUR-" + Date.now();
-
-    const purchase = await repo.createPurchase(client, {
-      ...data,
-      purchase_id,
-    });
+    const purchase = await repo.createPurchase(client, data);
+    const purchase_id = purchase.purchase_id;
 
     await repo.createPurchaseItems(client, data.items, purchase_id);
 
