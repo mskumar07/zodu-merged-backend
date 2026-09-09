@@ -23,6 +23,19 @@
 --    dropped the column DEFAULT, not the sequence object itself)
 DROP SEQUENCE IF EXISTS tbl_customer_cust_id_seq;
 
+-- 0b. customer_id_generator.sql created a GLOBAL unique index on cust_id
+--     alone. That's wrong for the new format: CUS-B1-001 is meant to repeat
+--     once per zodu_id (each tenant restarts its own branch sequence at
+--     001), so a bare UNIQUE(cust_id) causes spurious
+--     "duplicate key value violates unique constraint" errors the moment a
+--     second tenant reuses the same branch_id (e.g. Z042/B1 and Z116/B1
+--     both producing "CUS-B1-001"). Replace it with a composite unique
+--     index scoped by tenant.
+DROP INDEX IF EXISTS uq_tbl_customer_cust_id;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_tbl_customer_zodu_cust_id
+    ON tbl_customer (zodu_id, cust_id);
+
 -- 1. Same counter table used by purchase/expense sequences (safe if it
 --    already exists from that migration)
 CREATE TABLE IF NOT EXISTS tbl_doc_id_seq (
