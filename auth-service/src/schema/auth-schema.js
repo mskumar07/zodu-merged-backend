@@ -198,6 +198,7 @@ const schema = {
     show_bank_details: joi.boolean(),
     show_signature: joi.boolean(),
     show_shipping_address: joi.boolean(),
+    show_serial_no: joi.boolean(),
     // Normally set by the signature upload endpoint; allowed here so the
     // client can clear it (null) without a separate call.
     signature_url: joi.string().uri().allow(null, ''),

@@ -392,12 +392,15 @@ const add_customer = Joi.object({
   cpy_name:  Joi.string().optional().allow(null, ""),
  
   // jsonb arrays — accept array of strings or single string
+  // Mobile number is optional: null / "" / [] all mean "no mobile number",
+  // not just omitting the field entirely.
   mobile_no: Joi.alternatives()
     .try(
-      Joi.array().items(Joi.string().pattern(/^[0-9]{10}$/)).min(1),
+      Joi.array().items(Joi.string().pattern(/^[0-9]{10}$/)),
       Joi.string().pattern(/^[0-9]{10}$/)
     )
-    .optional(),
+    .optional()
+    .allow(null, ''),
  
   email_id: Joi.alternatives()
     .try(
@@ -722,12 +725,15 @@ const update_customer = Joi.object({
   cpy_name:  Joi.string().optional().allow(null, ""),
   zodu_id:   Joi.string().optional(),
     branch_id: Joi.string().optional(),
+  // Mobile number is optional: null / "" / [] all mean "no mobile number",
+  // not just omitting the field entirely.
   mobile_no: Joi.alternatives()
     .try(
-      Joi.array().items(Joi.string().pattern(/^[0-9]{10}$/)).min(1),
+      Joi.array().items(Joi.string().pattern(/^[0-9]{10}$/)),
       Joi.string().pattern(/^[0-9]{10}$/)
     )
-    .optional(),
+    .optional()
+    .allow(null, ''),
   email_id: Joi.alternatives()
     .try(
       Joi.array().items(Joi.string().email({ tlds: false })),

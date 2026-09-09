@@ -3589,9 +3589,10 @@ exports.generateSaleId = async (branchId, saleType, zoduId, client) => {
     console.error('[generateSaleId] invoice settings lookup failed, using defaults:', err.message);
   }
 
-  // Quotations keep their own independent sequence, distinguished by a
-  // "Q" suffix on the prefix so numbering never collides with sales.
-  const prefix = type === 'Q' ? `${invoicePrefix}Q` : type === 'P' ? `${invoicePrefix}P` : invoicePrefix;
+  // Quotations keep their own independent sequence under a fixed "QUO"
+  // prefix (not the branch's invoice_prefix) so they read as quotations
+  // regardless of what the branch has its invoice prefix set to.
+  const prefix = type === 'Q' ? 'QUO' : type === 'P' ? `${invoicePrefix}P` : invoicePrefix;
 
   // ── Branch suffix ─────────────────────────────────────────────────────────
   // Primary:  strip the known zoduId prefix   →  "ZODU035B1".replace("ZODU035","") = "B1"

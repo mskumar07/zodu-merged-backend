@@ -65,6 +65,7 @@ apply "$AUTH_DB" auth-service/migrations/invoice_settings_pos_behaviours.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_settings_shipping_address.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_settings_copy_types.sql
 apply "$AUTH_DB" auth-service/migrations/pos_settings.sql
+apply "$AUTH_DB" auth-service/migrations/invoice_settings_serial_no.sql
 
 # auth-service — company logo on tbl_business. The create-company INSERT names
 # this column, so an un-migrated database fails every company create.
@@ -100,12 +101,12 @@ SQL
 echo
 echo "=== verification ==="
 run_sql "$AUTH_DB" /dev/stdin <<'SQL'
-SELECT 'invoice settings columns present: ' || count(*) || '/19'
+SELECT 'invoice settings columns present: ' || count(*) || '/20'
 FROM information_schema.columns
 WHERE table_name = 'tbl_invoice_settings'
   AND column_name IN ('invoice_digit_count','invoice_start_number','show_item_id','show_description',
                       'show_customer_details','show_tax_details','show_payment_details','show_bank_details',
-                      'show_signature','show_shipping_address','show_terms_conditions','terms_conditions','show_notes','notes',
+                      'show_signature','show_shipping_address','show_serial_no','show_terms_conditions','terms_conditions','show_notes','notes',
                       'invoice_theme_color','signature_url','payment_types','invoice_copy_types','invoice_template');
 SELECT 'tbl_business.company_logo_url present: ' || count(*) || '/1'
 FROM information_schema.columns
