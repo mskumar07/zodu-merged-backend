@@ -54,9 +54,8 @@ exports.createExpense = async (data) => {
   try {
     await client.query("BEGIN");
 
-    const expense_id = "EXP-" + Date.now();
-
-    const expense = await repo.createExpense(client, { ...data, expense_id });
+    const expense = await repo.createExpense(client, data);
+    const expense_id = expense.expense_id;
 
     if (data.items && data.items.length > 0) {
       await repo.createExpenseLineItems(client, data.items, expense_id, data.category_id);

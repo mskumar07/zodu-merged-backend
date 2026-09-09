@@ -28,8 +28,9 @@ exports.createVendor = async (data) => {
     if (!data?.zodu_id || !data?.branch_id || !data?.vendor_name) {
       throw new Error("zodu_id, branch_id and vendor_name are required");
     }
-
-    const vendor_type = data.type !== undefined && data.type !== null ? data.type : "Purchase";
+    console.log(data)
+    console.log(data.vendor_type,"----------------------")
+    const vendor_type = data.vendor_type !== undefined && data.vendor_type !== null ? data.vendor_type : "Purchase";
 
     if (data.vendor_phone || data.vendor_email) {
       const { rows: existing } = await client.query(
