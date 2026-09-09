@@ -622,9 +622,10 @@ router.post("/api/customers", async (req, res) => {
       return res.status(400).json({ errors: error.details.map(d => d.message) });
     }
  
-    // Normalise: single string mobile/email → array
-    if (typeof value.mobile_no === "string") value.mobile_no = [value.mobile_no];
-    if (typeof value.email_id  === "string") value.email_id  = [value.email_id];
+    // Normalise: single string mobile/email → array. An empty string means
+    // "no number/email", not an array holding one empty string.
+    if (typeof value.mobile_no === "string") value.mobile_no = value.mobile_no ? [value.mobile_no] : [];
+    if (typeof value.email_id  === "string") value.email_id  = value.email_id  ? [value.email_id]  : [];
  
     const data = await service.createCustomer(value);
     if (!data.success) return res.status(400).json({ message: data.message });
@@ -761,9 +762,10 @@ router.put("/api/customers/:cust_uuid", async (req, res) => {
       });
     }
 
-    // Normalise: single string mobile/email → array
-    if (typeof value.mobile_no === "string") value.mobile_no = [value.mobile_no];
-    if (typeof value.email_id  === "string") value.email_id  = [value.email_id];
+    // Normalise: single string mobile/email → array. An empty string means
+    // "no number/email", not an array holding one empty string.
+    if (typeof value.mobile_no === "string") value.mobile_no = value.mobile_no ? [value.mobile_no] : [];
+    if (typeof value.email_id  === "string") value.email_id  = value.email_id  ? [value.email_id]  : [];
 
     const data = await service.updateCustomer(value);
 

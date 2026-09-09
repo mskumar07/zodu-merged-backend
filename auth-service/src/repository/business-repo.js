@@ -510,7 +510,7 @@ exports.upsertInvoiceSettings = async (zodu_id, branch_id, fields) => {
     'printer_inch', 'invoice_theme_color', 'show_company_logo', 'print_thank_you_message',
     'show_item_id', 'show_description', 'show_customer_details',
     'show_tax_details', 'show_payment_details', 'show_bank_details',
-    'show_signature', 'show_shipping_address',
+    'show_signature', 'show_shipping_address', 'show_serial_no',
     // Free-text blocks
     'show_terms_conditions', 'terms_conditions', 'show_notes', 'notes',
     // Signature image (uploaded to MinIO, see POST .../signature)

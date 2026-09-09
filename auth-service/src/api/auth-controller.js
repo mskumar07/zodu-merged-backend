@@ -341,6 +341,7 @@ router.put('/api/invoice-settings/:zodu_id/:branch_id', ValidateSignature, async
       zodu_id: req.params.zodu_id,
       branch_id: req.params.branch_id,
     });
+    console.log("input",input,errors);
     if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
 
     const data = await authService.EditInvoiceSettings({
