@@ -19,9 +19,13 @@
 -- that old logic — nothing from the old generator keeps running afterward.
 
 -- 0. Drop the leftover auto-increment sequence, if the column still has one
---    from before customer_id_generator.sql first ran (that migration only
---    dropped the column DEFAULT, not the sequence object itself)
-DROP SEQUENCE IF EXISTS tbl_customer_cust_id_seq;
+--    from before customer_id_generator.sql first ran. On some databases that
+--    migration never ran (or didn't get this far), so the column's DEFAULT
+--    still references this sequence — plain DROP SEQUENCE then fails with
+--    "cannot drop sequence ... other objects depend on it". CASCADE removes
+--    that dependent default too, which is exactly what we want: cust_id is
+--    fully trigger-driven from here on, no column default at all.
+DROP SEQUENCE IF EXISTS tbl_customer_cust_id_seq CASCADE;
 
 -- 0b. customer_id_generator.sql created a GLOBAL unique index on cust_id
 --     alone. That's wrong for the new format: CUS-B1-001 is meant to repeat

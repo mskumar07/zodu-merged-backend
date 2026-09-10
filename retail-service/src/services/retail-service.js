@@ -1958,9 +1958,9 @@ async function getSalesHistorySummary(filters) {
   }
 }
  
-async function getSaleById(sale_id, zodu_id, branch_id) {
+async function getSaleById(sale_id, zodu_id, branch_id, sale_type) {
   try {
-    const data = await repository.getSaleById(sale_id, zodu_id, branch_id);
+    const data = await repository.getSaleById(sale_id, zodu_id, branch_id, sale_type);
     if (!data) return { success: false, message: "Sale not found" };
     return { success: true, data };
   } catch (err) {
@@ -1969,9 +1969,9 @@ async function getSaleById(sale_id, zodu_id, branch_id) {
   }
 }
 
-async function deleteSale(sale_id, zodu_id, branch_id) {
+async function deleteSale(sale_id, zodu_id, branch_id, sale_type) {
   try {
-    const result = await repository.deleteSale(sale_id, zodu_id, branch_id);
+    const result = await repository.deleteSale(sale_id, zodu_id, branch_id, sale_type);
     if (!result) return { success: false, message: "Sale not found" };
     if (result.alreadyCancelled) return { success: false, message: "Sale is already cancelled" };
     return { success: true, data: result };
@@ -1981,6 +1981,26 @@ async function deleteSale(sale_id, zodu_id, branch_id) {
   }
 }
 
+
+async function getDocSequence(zodu_id, branch_id, doc_type) {
+  try {
+    const data = await repository.peekDocSequence(zodu_id, branch_id, doc_type);
+    return { success: true, data };
+  } catch (err) {
+    console.error("getDocSequence Error:", err);
+    return { success: false, message: err.message };
+  }
+}
+
+async function updateDocSequence(zodu_id, branch_id, doc_type, last_seq) {
+  try {
+    const data = await repository.setDocSequence(zodu_id, branch_id, doc_type, last_seq);
+    return { success: true, data, message: "Sequence updated successfully" };
+  } catch (err) {
+    console.error("updateDocSequence Error:", err);
+    return { success: false, message: err.message };
+  }
+}
 
 async function getCustomers(filters) {
   try {
@@ -2931,6 +2951,8 @@ module.exports = {
   getSalesHistorySummary,
   getSaleById,
   deleteSale,
+  getDocSequence,
+  updateDocSequence,
   markSalePayment,
   getCustomers,
   getCustomerLedger,

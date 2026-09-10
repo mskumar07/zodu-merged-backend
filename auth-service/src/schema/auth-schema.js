@@ -160,7 +160,6 @@ const schema = {
     // Lets a branch save a prefix without applying it (toggle off = no
     // prefix on generated sale IDs / order numbers).
     invoice_prefix_enabled: joi.boolean(),
-    invoice_digit_count: joi.number().integer().min(1).max(10),
     invoice_start_number: joi.number().integer().min(0),
 
     // Tax / payment
@@ -216,7 +215,7 @@ const schema = {
     stock_check_enabled: joi.boolean(),
     customer_mandatory: joi.boolean(),
   })
-    .min(3)
+    .min(1)
     // A default the checkout no longer offers would leave the POS preselecting
     // a type the cashier cannot pick. Only checked when one request changes both.
     .custom((value, helpers) => {
@@ -230,7 +229,14 @@ const schema = {
         : helpers.message(
             `"default_payment_method" (${default_payment_method}) must be one of the selected payment_types`
           );
-    }, 'default payment method is offered'),
+    }, 'default payment method is offered')
+    // RequestValidator calls validateAsync with stripUnknown: true globally,
+    // which would otherwise delete an unrecognized field (typo, deprecated
+    // field like the old invoice_digit_count, or a field that actually
+    // belongs on edit_pos_settings) before .min(3) ever runs — surfacing a
+    // confusing "must have at least 3 keys" instead of naming the bad field.
+    // This override makes Joi reject unknown keys by name instead.
+    .prefs({ stripUnknown: false }),
 
   edit_pos_settings: joi.object({
     zodu_id: joi.string().required(),
@@ -252,8 +258,24 @@ const schema = {
     // _enabled lets a branch save a suffix without applying it yet.
     invoice_suffix: joi.string().max(20).allow(null, ''),
     invoice_suffix_enabled: joi.boolean(),
+
+    // Per-type ID prefixes — Invoice uses tbl_invoice_settings.invoice_prefix
+    // instead (see edit_invoice_settings); these two make Quotation/Proforma
+    // numbering settings-driven too, instead of hard-coded "QUO"/"...P".
+    quotation_prefix: joi.string().max(20).allow(null, ''),
+    proforma_prefix: joi.string().max(20).allow(null, ''),
+    // Mirrors invoice_prefix_enabled — lets a branch save a Quotation/
+    // Proforma prefix without applying it.
+    quotation_prefix_enabled: joi.boolean(),
+    proforma_prefix_enabled: joi.boolean(),
+    // Mirrors invoice_suffix/invoice_suffix_enabled — storage only for now,
+    // not yet applied to generated ids.
+    quotation_suffix: joi.string().max(20).allow(null, ''),
+    quotation_suffix_enabled: joi.boolean(),
+    proforma_suffix: joi.string().max(20).allow(null, ''),
+    proforma_suffix_enabled: joi.boolean(),
   })
-    .min(3)
+    .min(1)
     // A default the POS no longer offers would leave the screen preselecting
     // a type the cashier cannot pick. Only checked when one request changes both.
     .custom((value, helpers) => {
@@ -267,7 +289,12 @@ const schema = {
         : helpers.message(
             `"default_pos_type" (${default_pos_type}) must be one of the selected pos_types`
           );
-    }, 'default pos type is offered'),
+    }, 'default pos type is offered')
+    // See edit_invoice_settings' identical override — without this, an
+    // unrecognized field (e.g. sent to the wrong settings endpoint) gets
+    // silently stripped before .min(3) runs, giving a confusing "must have
+    // at least 3 keys" instead of naming the actual bad field.
+    .prefs({ stripUnknown: false }),
 };
 
 module.exports = schema;

@@ -184,6 +184,14 @@ const order_create = Joi.object({
 
   sale_type: Joi.string().optional().allow(null, ""),
 
+  // Manual override for the sequence number portion of the generated
+  // sale_id (Invoice/Quotation/Proforma, whichever sale_type this is) — for
+  // when a branch has skipped some numbers and wants this specific sale to
+  // use a particular number instead of the next auto-incremented one.
+  // tbl_doc_id_seq's counter is bumped to at least this value so later
+  // auto-generated numbers continue forward from here, never colliding.
+  invoice_no: Joi.number().integer().min(1).optional().allow(null),
+
   customer_id: Joi.string().uuid().optional().allow(null, ""),
 
   customer_name: Joi.string().optional().allow(null, ""),
@@ -714,6 +722,27 @@ const sale_by_id_params = Joi.object({
   sale_id:   Joi.string().required(),
   zodu_id:   Joi.string().required(),
   branch_id: Joi.string().required(),
+  // sale_id is only unique per (branch_id, sale_type) — pass this to
+  // disambiguate when two sale types share the same generated id text.
+  // Optional: omitted requests fall back to the most recent match.
+  sale_type: Joi.string().valid("S", "Q", "P").optional().allow(null, ""),
+});
+
+const DOC_SEQUENCE_TYPES = ['INV', 'QUO', 'PRO', 'PUR', 'EXP', 'CUS'];
+
+const doc_sequence_params = Joi.object({
+  zodu_id:   Joi.string().required(),
+  branch_id: Joi.string().required(),
+  doc_type:  Joi.string().valid(...DOC_SEQUENCE_TYPES).required(),
+});
+
+const doc_sequence_update = Joi.object({
+  zodu_id:   Joi.string().required(),
+  branch_id: Joi.string().required(),
+  doc_type:  Joi.string().valid(...DOC_SEQUENCE_TYPES).required(),
+  // The next generated id will be last_seq + 1 — set this to the number of
+  // the last one actually issued/used (on paper or elsewhere) to skip ahead.
+  last_seq:  Joi.number().integer().min(0).required(),
 });
 
 const get_customers = Joi.object({
@@ -847,6 +876,8 @@ module.exports = {
   sales_history_query,
   sales_history_summary_query,
   sale_by_id_params,
+  doc_sequence_params,
+  doc_sequence_update,
   get_customers,
   get_customer_by_id,
   add_customer,

@@ -140,4 +140,18 @@ router.put('/invoice-settings/:zodu_id/:branch_id', async (req, res) => {
   }
 });
 
+// GET /internal/pos-settings/:zodu_id/:branch_id  — used by retail-service for
+// quotation_prefix/proforma_prefix (see generateSaleId's authClient call)
+router.get('/pos-settings/:zodu_id/:branch_id', async (req, res) => {
+  try {
+    const { zodu_id, branch_id } = req.params;
+    const settings = await repo.getPosSettings(zodu_id, branch_id);
+    if (!settings) return res.status(404).json({ success: false, message: 'POS settings not found' });
+    return res.status(200).json({ success: true, data: settings });
+  } catch (err) {
+    console.error('[internal] getPosSettings:', err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 module.exports = router;

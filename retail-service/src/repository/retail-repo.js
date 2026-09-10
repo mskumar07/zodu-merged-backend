@@ -3268,7 +3268,8 @@ exports.createOrder = async (orderData, client) => {
     orderData.branch_id,
     orderData.sale_type,
     orderData.zodu_id,
-    db
+    db,
+    orderData.invoice_no ?? null
   );
 
   console.log(sale_id);
@@ -3569,92 +3570,176 @@ exports.createSalesPayment = async (orderData, sale, client) => {
 };
  
 
-exports.generateSaleId = async (branchId, saleType, zoduId, client) => {
-  const db = client ?? conn;
-  // ── 1. Normalise type ────────────────────────────────────────────────────
+// Shared by generateSaleId and peekDocSequence — settings-driven prefix +
+// suffix + doc_type for a sale type. Nothing here is hardcoded to a specific
+// business's convention: Invoice/Quotation/Proforma prefixes and suffixes all
+// come from auth-service (invoice_prefix on tbl_invoice_settings; invoice_suffix,
+// quotation_prefix/proforma_prefix, quotation_suffix/proforma_suffix on
+// tbl_pos_settings), each independently toggleable/settable. Falls back to
+// sane defaults only when the settings lookup itself fails (auth-service
+// down), never as a silent override.
+async function resolveSaleNumbering(branchId, saleType, zoduId) {
   const type =
     saleType === 'Q' || saleType === 'quotation' ? 'Q'
     : saleType === 'P' || saleType === 'proforma' || saleType === 'Proforma' ? 'P'
     : 'S';
 
-  // ── 2. Invoice prefix (auth-service is the single source of truth) ──────
-  // digit_count and start_number are fixed — the Settings screen no longer
-  // exposes them, numbering always starts at 001 and pads to 3 digits.
-  const digitCount = 3;
-  const startNumber = 1;
   let invoicePrefix = 'INV';
+  let quotationPrefix = 'QUO';
+  let proformaPrefix = 'PRO';
+  let invoiceSuffix = '';
+  let quotationSuffix = '';
+  let proformaSuffix = '';
   try {
-    const res = await authClient.getInvoiceSettings(zoduId, branchId);
-    const settings = res?.data;
-    // Toggled off means the branch wants no prefix at all — takes priority
-    // over whatever text is saved in invoice_prefix. Missing/true (including
-    // rows from before this column existed) keeps today's always-on behavior.
-    if (settings?.invoice_prefix_enabled === false) {
+    const [invRes, posRes] = await Promise.all([
+      authClient.getInvoiceSettings(zoduId, branchId).catch(() => null),
+      authClient.getPosSettings(zoduId, branchId).catch(() => null),
+    ]);
+    const invoiceSettings = invRes?.data;
+    const posSettings = posRes?.data;
+    // Toggled off means the branch wants no prefix at all for that type —
+    // takes priority over whatever text is saved in the *_prefix field.
+    if (invoiceSettings?.invoice_prefix_enabled === false) {
       invoicePrefix = '';
-    } else if (settings?.invoice_prefix) {
-      invoicePrefix = settings.invoice_prefix;
+    } else if (invoiceSettings?.invoice_prefix) {
+      invoicePrefix = invoiceSettings.invoice_prefix;
+    }
+    if (posSettings?.quotation_prefix_enabled === false) {
+      quotationPrefix = '';
+    } else if (posSettings?.quotation_prefix) {
+      quotationPrefix = posSettings.quotation_prefix;
+    }
+    if (posSettings?.proforma_prefix_enabled === false) {
+      proformaPrefix = '';
+    } else if (posSettings?.proforma_prefix) {
+      proformaPrefix = posSettings.proforma_prefix;
+    }
+    // Suffixes default OFF (invoice_suffix_enabled/quotation_suffix_enabled/
+    // proforma_suffix_enabled all DEFAULT FALSE) — only applied when the
+    // branch explicitly turns them on AND has text saved for them.
+    if (posSettings?.invoice_suffix_enabled === true && posSettings?.invoice_suffix) {
+      invoiceSuffix = posSettings.invoice_suffix;
+    }
+    if (posSettings?.quotation_suffix_enabled === true && posSettings?.quotation_suffix) {
+      quotationSuffix = posSettings.quotation_suffix;
+    }
+    if (posSettings?.proforma_suffix_enabled === true && posSettings?.proforma_suffix) {
+      proformaSuffix = posSettings.proforma_suffix;
     }
   } catch (err) {
-    console.error('[generateSaleId] invoice settings lookup failed, using defaults:', err.message);
+    console.error('[resolveSaleNumbering] settings lookup failed, using defaults:', err.message);
   }
 
-  // Quotations keep their own independent sequence under a fixed "QUO"
-  // prefix (not the branch's invoice_prefix) so they read as quotations
-  // regardless of what the branch has its invoice prefix set to.
-  const prefix = type === 'Q' ? 'QUO' : type === 'P' ? `${invoicePrefix}P` : invoicePrefix;
+  const prefix = type === 'Q' ? quotationPrefix : type === 'P' ? proformaPrefix : invoicePrefix;
+  const suffix = type === 'Q' ? quotationSuffix : type === 'P' ? proformaSuffix : invoiceSuffix;
+  const docType = type === 'Q' ? 'QUO' : type === 'P' ? 'PRO' : 'INV';
 
-  // ── Branch suffix ─────────────────────────────────────────────────────────
-  // Primary:  strip the known zoduId prefix   →  "ZODU035B1".replace("ZODU035","") = "B1"
-  // Fallback: regex match on trailing B+digits →  handles any format
-  let branchSuffix;
-  if (zoduId && branchId.startsWith(zoduId)) {
-    branchSuffix = branchId.slice(zoduId.length);
-  } else {
-    const match = branchId.match(/B\d+$/i);
-    branchSuffix = match ? match[0].toUpperCase() : branchId;
-  }
-
-  // ── 3. Next number: derived from tbl_sales itself, no separate counter ────
-  // Look at the highest existing number for this branch+type ACROSS ALL
-  // PREFIXES (not just the current one) and increment from there — changing
-  // the prefix in Settings must not restart numbering, e.g. INV-B1-143 then
-  // switching to IXV must produce IXV-B1-144, not IXV-B1-001. Falls back to
-  // invoice_start_number only when this branch+type has never had a sale.
-  // Runs inside the same DB transaction as the INSERT into tbl_sales, with a
-  // transaction-scoped advisory lock keyed on (zodu_id, branch_id, type) so
-  // two concurrent sales for the same branch can't read the same max and
-  // collide on the same sale_id.
-  await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${zoduId}:${branchId}:${type}`]);
-
-  const { rows } = await db.query(
-    // Matches "<prefix>-B1-144" (contains "-B1-") and, for a branch that has
-    // invoice_prefix_enabled = false, the no-prefix "B1-144" (starts "B1-")
-    // — otherwise disabling the prefix would look like this branch/type has
-    // never had a sale and numbering would restart at 001 every time.
-    `SELECT sale_id FROM tbl_sales
-     WHERE zodu_id = $1 AND branch_id = $2 AND sale_type = $3
-       AND (sale_id LIKE $4 OR sale_id LIKE $5)
-     ORDER BY (regexp_match(sale_id, '-(\\d+)$'))[1]::int DESC
-     LIMIT 1`,
-    [zoduId, branchId, type, `%-${branchSuffix}-%`, `${branchSuffix}-%`]
-  );
-
-  let nextNumber = startNumber;
-  if (rows[0]) {
-    const match = rows[0].sale_id.match(/-(\d+)$/);
-    if (match) nextNumber = parseInt(match[1], 10) + 1;
-  }
-
-  // ── 4. Format ─────────────────────────────────────────────────────────────
-  // No prefix (branch toggled it off, sale_type 'S'/type 'S' only — 'QUO' and
-  // the proforma 'P' suffix are never empty) drops the leading segment
-  // instead of leaving a stray leading hyphen.
-  return prefix
-    ? `${prefix}-${branchSuffix}-${String(nextNumber).padStart(digitCount, '0')}`
-    : `${branchSuffix}-${String(nextNumber).padStart(digitCount, '0')}`;
-  // → "IXV-B1-144"  (prefix from settings, number continues across prefix changes)
-  // → "B1-144"      (invoice_prefix_enabled = false)
+  return { prefix, suffix, docType };
 }
+
+// No branch mention — numbering is already scoped per (zodu_id, branch_id,
+// doc_type) in tbl_doc_id_seq, and tbl_sales' unique constraint includes
+// branch_id as its own column, so the branch doesn't need to be spelled out
+// in the id text too.
+function formatDocId(prefix, seq, suffix = '', digitCount = 3) {
+  const padded = String(seq).padStart(digitCount, '0');
+  // No prefix (invoice_prefix_enabled = false, sale type only) is just the
+  // bare padded number; suffix (e.g. a fiscal-year tag) is appended only
+  // when the branch has enabled it and saved text for it.
+  let id = prefix ? `${prefix} ${padded}` : padded;
+  if (suffix) id = `${id} ${suffix}`;
+  return id;
+}
+
+exports.generateSaleId = async (branchId, saleType, zoduId, client, manualSeq) => {
+  const db = client ?? conn;
+  const { prefix, suffix, docType } = await resolveSaleNumbering(branchId, saleType, zoduId);
+
+  let nextNumber;
+  if (manualSeq != null) {
+    // Manual override (e.g. request body's invoice_no) — a branch skipped
+    // some numbers and wants THIS sale to use a specific one instead of the
+    // next auto-incremented value. Bump the counter to at least manualSeq
+    // (GREATEST, never rewinds it) so later auto-generated numbers continue
+    // forward from here instead of colliding with the one just used.
+    await db.query(
+      `INSERT INTO tbl_doc_id_seq (zodu_id, branch_id, doc_type, last_seq)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (zodu_id, branch_id, doc_type)
+       DO UPDATE SET last_seq = GREATEST(tbl_doc_id_seq.last_seq, EXCLUDED.last_seq)`,
+      [zoduId, branchId, docType, manualSeq]
+    );
+    nextNumber = manualSeq;
+  } else {
+    // Next number comes from the same shared tbl_doc_id_seq counter table
+    // used for purchase_id/expense_id/cust_id (see
+    // purchase_expense_id_sequence.sql) — one row per (zodu_id, branch_id,
+    // doc_type), atomically bumped here via INSERT ... ON CONFLICT, so no
+    // separate advisory lock is needed (the table's own primary key
+    // serializes concurrent bumps for the same key). Runs inside the same DB
+    // transaction as the INSERT into tbl_sales, so a rolled-back sale
+    // doesn't burn a number. Can also be corrected ahead of time with
+    // PUT /api/doc-sequence/:zodu_id/:branch_id/:doc_type.
+    const { rows } = await db.query(
+      `INSERT INTO tbl_doc_id_seq (zodu_id, branch_id, doc_type, last_seq)
+       VALUES ($1, $2, $3, 1)
+       ON CONFLICT (zodu_id, branch_id, doc_type)
+       DO UPDATE SET last_seq = tbl_doc_id_seq.last_seq + 1
+       RETURNING last_seq`,
+      [zoduId, branchId, docType]
+    );
+    nextNumber = rows[0].last_seq;
+  }
+
+  return formatDocId(prefix, nextNumber, suffix);
+  // → "INV-144"         (invoice_prefix from settings)
+  // → "QUO-144"         (quotation_prefix from settings, default "QUO")
+  // → "PRO-144"         (proforma_prefix from settings, default "PRO")
+  // → "144"             (invoice_prefix_enabled = false, sale type)
+  // → "INV-144-26-27"   (invoice_suffix_enabled = true, invoice_suffix = "26-27")
+}
+
+// GET /api/doc-sequence/:zodu_id/:branch_id/:doc_type — current last_seq and
+// a preview of the next id, without incrementing anything. Lets the POS show
+// "Next Invoice: INV-B1-145" before the sale is actually created.
+exports.peekDocSequence = async (zodu_id, branch_id, doc_type) => {
+  const r = await conn.query(
+    `SELECT last_seq FROM tbl_doc_id_seq WHERE zodu_id = $1 AND branch_id = $2 AND doc_type = $3`,
+    [zodu_id, branch_id, doc_type]
+  );
+  const lastSeq = r.rows[0]?.last_seq ?? 0;
+  const nextSeq = lastSeq + 1;
+
+  let nextId = null;
+  if (doc_type === 'INV' || doc_type === 'QUO' || doc_type === 'PRO') {
+    const saleType = doc_type === 'QUO' ? 'Q' : doc_type === 'PRO' ? 'P' : 'S';
+    const { prefix, suffix } = await resolveSaleNumbering(branch_id, saleType, zodu_id);
+    nextId = formatDocId(prefix, nextSeq, suffix);
+  } else if (doc_type === 'PUR' || doc_type === 'EXP' || doc_type === 'CUS') {
+    // Fixed prefixes stamped by the DB triggers in purchase_expense_id_sequence.sql
+    // / customer_id_sequence.sql — not settings-driven, so just mirror their format.
+    nextId = `${doc_type}-${branch_id}-${String(nextSeq).padStart(3, '0')}`;
+  }
+
+  return { doc_type, last_seq: lastSeq, next_seq: nextSeq, next_id: nextId };
+};
+
+// PUT /api/doc-sequence/:zodu_id/:branch_id/:doc_type — manual override.
+// Lets a branch's numbering be nudged to match paper/external records when
+// they've skipped some numbers — the next generated id continues from
+// last_seq + 1. Works for any doc_type sharing tbl_doc_id_seq (sales' INV/
+// QUO/PRO as well as PUR/EXP/CUS).
+exports.setDocSequence = async (zodu_id, branch_id, doc_type, last_seq) => {
+  const r = await conn.query(
+    `INSERT INTO tbl_doc_id_seq (zodu_id, branch_id, doc_type, last_seq)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (zodu_id, branch_id, doc_type)
+     DO UPDATE SET last_seq = EXCLUDED.last_seq
+     RETURNING *`,
+    [zodu_id, branch_id, doc_type, last_seq]
+  );
+  return r.rows[0];
+};
 
 exports.getSalesHistory = async (filters) => {
   const {
@@ -3834,10 +3919,15 @@ exports.getSalesHistorySummary = async (filters) => {
   };
 };
 
-exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
-  console.log("Fetching sale by ID-------------:", sale_id, zodu_id, branch_id);
-  
-  console.log(sale_id,zodu_id,branch_id)
+exports.getSaleById = async (sale_id, zodu_id, branch_id, sale_type) => {
+  console.log("Fetching sale by ID-------------:", sale_id, zodu_id, branch_id, sale_type);
+
+  // sale_id is only unique per (branch_id, sale_type) now — a business that
+  // configures the same prefix for two sale types (e.g. quotation_prefix ==
+  // invoice_prefix) can produce the same displayed id for both. Pass
+  // sale_type when it's known to fetch the exact row; without it, fall back
+  // to the most recent match so behavior stays deterministic instead of
+  // depending on incidental row order.
   const saleResult = await conn.query(
     `SELECT
         s.sale_uuid,
@@ -3889,8 +3979,10 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
      WHERE s.sale_id   = $1
        AND s.zodu_id   = $2
        AND s.branch_id = $3
+       ${sale_type ? "AND s.sale_type = $4" : ""}
+     ORDER BY s.created_at DESC
      LIMIT 1`,
-    [sale_id, zodu_id, branch_id]
+    sale_type ? [sale_id, zodu_id, branch_id, sale_type] : [sale_id, zodu_id, branch_id]
   );
  
   if (saleResult.rows.length === 0) return null;
@@ -4105,20 +4197,26 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
   };
 };
 
-exports.deleteSale = async (sale_id, zodu_id, branch_id) => {
+exports.deleteSale = async (sale_id, zodu_id, branch_id, sale_type) => {
   const client = await conn.connect();
 
   try {
     await client.query("BEGIN");
 
+    // sale_id is only unique per (branch_id, sale_type) now — pass sale_type
+    // when known to target the exact row; without it, fall back to the most
+    // recent match (see getSaleById for why).
     const saleResult = await client.query(
       `SELECT sale_uuid, sale_id, sale_type, cancelled_inv
        FROM tbl_sales
        WHERE sale_id = $1
          AND zodu_id = $2
          AND branch_id = $3
+         ${sale_type ? "AND sale_type = $4" : ""}
+       ORDER BY created_at DESC
+       LIMIT 1
        FOR UPDATE`,
-      [sale_id, zodu_id, branch_id]
+      sale_type ? [sale_id, zodu_id, branch_id, sale_type] : [sale_id, zodu_id, branch_id]
     );
 
     if (!saleResult.rows.length) {

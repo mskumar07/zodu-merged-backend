@@ -26,3 +26,8 @@ exports.getInvoiceSettings = (zodu_id, branch_id) =>
 
 exports.upsertInvoiceSettings = (zodu_id, branch_id, data) =>
   call(() => client.put(`/invoice-settings/${zodu_id}/${branch_id}`, data));
+
+// ── POS Settings ──────────────────────────────────────────────────────────────
+// Used for quotation_prefix/proforma_prefix (see generateSaleId).
+exports.getPosSettings = (zodu_id, branch_id) =>
+  call(() => client.get(`/pos-settings/${zodu_id}/${branch_id}`));

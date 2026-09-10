@@ -564,13 +564,14 @@ router.get("/api/sales/:sale_id", async (req, res) => {
       sale_id:   req.params.sale_id,
       zodu_id:   req.query.zodu_id,
       branch_id: req.query.branch_id,
+      sale_type: req.query.sale_type,
     });
-    
+
     if (errors) return res.status(400).json({ errors });
- 
-    const data = await service.getSaleById(input.sale_id, input.zodu_id, input.branch_id);
+
+    const data = await service.getSaleById(input.sale_id, input.zodu_id, input.branch_id, input.sale_type);
     if (!data.success) return res.status(404).json({ message: data.message });
- 
+
     return res.status(200).json(data);
   } catch (error) {
     console.error(error);
@@ -584,6 +585,7 @@ router.delete("/api/sales/:sale_id", async (req, res) => {
       sale_id: req.params.sale_id,
       zodu_id: req.query.zodu_id,
       branch_id: req.query.branch_id,
+      sale_type: req.query.sale_type,
     });
 
     if (errors) return res.status(400).json({ errors });
@@ -591,7 +593,8 @@ router.delete("/api/sales/:sale_id", async (req, res) => {
     const data = await service.deleteSale(
       input.sale_id,
       input.zodu_id,
-      input.branch_id
+      input.branch_id,
+      input.sale_type
     );
 
     if (!data.success) return res.status(404).json({ message: data.message });
@@ -609,6 +612,45 @@ router.delete("/api/sales/:sale_id", async (req, res) => {
   }
 });
 
+
+// GET /api/doc-sequence/:zodu_id/:branch_id/:doc_type — current last_seq and a
+// preview of the next id (e.g. "INV-B1-145") without incrementing anything.
+// doc_type: INV | QUO | PRO | PUR | EXP | CUS.
+router.get("/api/doc-sequence/:zodu_id/:branch_id/:doc_type", async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(schema.doc_sequence_params, req.params);
+    if (errors) return res.status(400).json({ errors });
+
+    const data = await service.getDocSequence(input.zodu_id, input.branch_id, input.doc_type);
+    if (!data.success) return res.status(400).json({ message: data.message });
+
+    return res.status(200).json(data);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// PUT /api/doc-sequence/:zodu_id/:branch_id/:doc_type — manual override, body
+// { last_seq }. Nudges the counter so the next generated id is last_seq + 1,
+// for a branch that has skipped numbers on paper/elsewhere.
+router.put("/api/doc-sequence/:zodu_id/:branch_id/:doc_type", async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(schema.doc_sequence_update, {
+      ...req.params,
+      last_seq: req.body.last_seq,
+    });
+    if (errors) return res.status(400).json({ errors });
+
+    const data = await service.updateDocSequence(input.zodu_id, input.branch_id, input.doc_type, input.last_seq);
+    if (!data.success) return res.status(400).json({ message: data.message });
+
+    return res.status(200).json(data);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
 
 router.post("/api/sales/:sale_id/payment", async (req, res) => {
   try {
