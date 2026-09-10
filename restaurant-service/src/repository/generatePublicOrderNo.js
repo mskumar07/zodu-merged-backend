@@ -19,7 +19,12 @@ exports.generatePublicOrderNo = async (branch_id, zodu_id, client) => {
   try {
     const res = await authClient.getInvoiceSettings(zodu_id, branch_id);
     const settings = res?.data;
-    if (settings?.invoice_prefix) {
+    // Toggled off means the branch wants no prefix at all — takes priority
+    // over whatever text is saved in invoice_prefix. Missing/true (including
+    // rows from before this column existed) keeps today's always-on behavior.
+    if (settings?.invoice_prefix_enabled === false) {
+      invoicePrefix = '';
+    } else if (settings?.invoice_prefix) {
       invoicePrefix = settings.invoice_prefix;
     }
   } catch (err) {
@@ -31,11 +36,16 @@ exports.generatePublicOrderNo = async (branch_id, zodu_id, client) => {
   await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${zodu_id}:${branch_id}`]);
 
   const { rows } = await db.query(
+    // Matches "<prefix>-B1-144" (contains "-B1-") and, for a branch that has
+    // invoice_prefix_enabled = false, the no-prefix "B1-144" (starts "B1-")
+    // — otherwise disabling the prefix would look like this branch has never
+    // had an order and numbering would restart at 001 every time.
     `SELECT public_order_no FROM tbl_orders
-     WHERE zodu_id = $1 AND branch_id = $2 AND public_order_no LIKE $3
+     WHERE zodu_id = $1 AND branch_id = $2
+       AND (public_order_no LIKE $3 OR public_order_no LIKE $4)
      ORDER BY (regexp_match(public_order_no, '-(\\d+)$'))[1]::int DESC
      LIMIT 1`,
-    [zodu_id, branch_id, `%-${branch_id}-%`]
+    [zodu_id, branch_id, `%-${branch_id}-%`, `${branch_id}-%`]
   );
 
   let nextNumber = startNumber;
@@ -44,5 +54,7 @@ exports.generatePublicOrderNo = async (branch_id, zodu_id, client) => {
     if (match) nextNumber = parseInt(match[1], 10) + 1;
   }
 
-  return `${invoicePrefix}-${branch_id}-${String(nextNumber).padStart(digitCount, '0')}`;
+  return invoicePrefix
+    ? `${invoicePrefix}-${branch_id}-${String(nextNumber).padStart(digitCount, '0')}`
+    : `${branch_id}-${String(nextNumber).padStart(digitCount, '0')}`;
 };

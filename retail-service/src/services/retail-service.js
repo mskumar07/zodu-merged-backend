@@ -1850,7 +1850,9 @@ async function updateOrder(orderData) {
          updated_at            = NOW(),
          due_date              = $19,
          discount_gst_mode     = $21,
-         vehicle_no            = $22
+         vehicle_no            = $22,
+         purchase_order_no     = $23,
+         purchase_order_date   = $24
        WHERE sale_uuid = $20`,
       [
         newSaleId,
@@ -1878,6 +1880,8 @@ async function updateOrder(orderData) {
         saleId,                     // WHERE sale_uuid = $20,
         orderData.discount_gst_mode ?? null,
         orderData.vehicle_no ?? null,
+        orderData.purchase_order_no ?? null,
+        orderData.purchase_order_date ? new Date(orderData.purchase_order_date).toISOString().slice(0, 10) : null,
       ]
     );
  

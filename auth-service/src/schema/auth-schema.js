@@ -157,6 +157,9 @@ const schema = {
 
     // Invoice numbering
     invoice_prefix: joi.string().max(20).allow(null, ''),
+    // Lets a branch save a prefix without applying it (toggle off = no
+    // prefix on generated sale IDs / order numbers).
+    invoice_prefix_enabled: joi.boolean(),
     invoice_digit_count: joi.number().integer().min(1).max(10),
     invoice_start_number: joi.number().integer().min(0),
 
@@ -244,6 +247,11 @@ const schema = {
 
     // Which of the enabled types the POS screen opens on by default.
     default_pos_type: joi.string().valid(...POS_TYPES).insensitive(),
+
+    // Trailing text on the invoice ID, e.g. a fiscal year ("26-27").
+    // _enabled lets a branch save a suffix without applying it yet.
+    invoice_suffix: joi.string().max(20).allow(null, ''),
+    invoice_suffix_enabled: joi.boolean(),
   })
     .min(3)
     // A default the POS no longer offers would leave the screen preselecting

@@ -3270,6 +3270,8 @@ exports.createOrder = async (orderData, client) => {
     orderData.zodu_id,
     db
   );
+
+  console.log(sale_id);
  
   const result = await db.query(
     `INSERT INTO tbl_sales (
@@ -3280,7 +3282,7 @@ exports.createOrder = async (orderData, client) => {
         discount_type, discount_value, discount_amount,
         total_amount, paid_amount, balance_amount,
         payment_status, notes, sale_date, sale_time,due_date,round_off,
-        discount_gst_mode, vehicle_no
+        discount_gst_mode, vehicle_no, purchase_order_no, purchase_order_date
      )
      VALUES (
         $1,$2,$3,
@@ -3290,7 +3292,7 @@ exports.createOrder = async (orderData, client) => {
         $9,$10,$11,
         $12,$13,$14,
         $15,$16,$17,$18,$19,$20,
-        $21, $22
+        $21, $22, $23, $24
      )
      RETURNING *`,
     [
@@ -3320,10 +3322,12 @@ exports.createOrder = async (orderData, client) => {
       orderData.due_date ?? null,
       orderData.round_off ?? 0,
       orderData.discount_gst_mode ?? null,
-      orderData.vehicle_no ?? null
+      orderData.vehicle_no ?? null,
+      orderData.purchase_order_no ?? null,
+      orderData.purchase_order_date ? new Date(orderData.purchase_order_date).toISOString().slice(0, 10) : null
     ]
   );
- 
+
   const row = result.rows[0];
 
   return {
@@ -3582,7 +3586,12 @@ exports.generateSaleId = async (branchId, saleType, zoduId, client) => {
   try {
     const res = await authClient.getInvoiceSettings(zoduId, branchId);
     const settings = res?.data;
-    if (settings?.invoice_prefix) {
+    // Toggled off means the branch wants no prefix at all — takes priority
+    // over whatever text is saved in invoice_prefix. Missing/true (including
+    // rows from before this column existed) keeps today's always-on behavior.
+    if (settings?.invoice_prefix_enabled === false) {
+      invoicePrefix = '';
+    } else if (settings?.invoice_prefix) {
       invoicePrefix = settings.invoice_prefix;
     }
   } catch (err) {
@@ -3618,11 +3627,16 @@ exports.generateSaleId = async (branchId, saleType, zoduId, client) => {
   await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${zoduId}:${branchId}:${type}`]);
 
   const { rows } = await db.query(
+    // Matches "<prefix>-B1-144" (contains "-B1-") and, for a branch that has
+    // invoice_prefix_enabled = false, the no-prefix "B1-144" (starts "B1-")
+    // — otherwise disabling the prefix would look like this branch/type has
+    // never had a sale and numbering would restart at 001 every time.
     `SELECT sale_id FROM tbl_sales
-     WHERE zodu_id = $1 AND branch_id = $2 AND sale_type = $3 AND sale_id LIKE $4
+     WHERE zodu_id = $1 AND branch_id = $2 AND sale_type = $3
+       AND (sale_id LIKE $4 OR sale_id LIKE $5)
      ORDER BY (regexp_match(sale_id, '-(\\d+)$'))[1]::int DESC
      LIMIT 1`,
-    [zoduId, branchId, type, `%-${branchSuffix}-%`]
+    [zoduId, branchId, type, `%-${branchSuffix}-%`, `${branchSuffix}-%`]
   );
 
   let nextNumber = startNumber;
@@ -3632,8 +3646,14 @@ exports.generateSaleId = async (branchId, saleType, zoduId, client) => {
   }
 
   // ── 4. Format ─────────────────────────────────────────────────────────────
-  return `${prefix}-${branchSuffix}-${String(nextNumber).padStart(digitCount, '0')}`;
+  // No prefix (branch toggled it off, sale_type 'S'/type 'S' only — 'QUO' and
+  // the proforma 'P' suffix are never empty) drops the leading segment
+  // instead of leaving a stray leading hyphen.
+  return prefix
+    ? `${prefix}-${branchSuffix}-${String(nextNumber).padStart(digitCount, '0')}`
+    : `${branchSuffix}-${String(nextNumber).padStart(digitCount, '0')}`;
   // → "IXV-B1-144"  (prefix from settings, number continues across prefix changes)
+  // → "B1-144"      (invoice_prefix_enabled = false)
 }
 
 exports.getSalesHistory = async (filters) => {
@@ -3844,6 +3864,8 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
         s.discount_gst_mode,
         TO_CHAR(s.due_date,  'DD-Mon-YYYY')             AS due_date_fmt,
         s.vehicle_no,
+        s.purchase_order_no,
+        TO_CHAR(s.purchase_order_date, 'DD Mon YYYY')   AS purchase_order_date_fmt,
 
         c.cust_uuid,
         c.cust_id AS customer_id,
@@ -3902,6 +3924,8 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
     discount_gst_mode: row.discount_gst_mode,
     due_date_fmt: row.due_date_fmt,
     vehicle_no: row.vehicle_no,
+    purchase_order_no: row.purchase_order_no,
+    purchase_order_date_fmt: row.purchase_order_date_fmt,
   };
  
   const customer = row.cust_uuid

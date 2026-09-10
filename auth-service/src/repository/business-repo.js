@@ -501,7 +501,7 @@ exports.getInvoiceSettings = async (zodu_id, branch_id) => {
 exports.upsertInvoiceSettings = async (zodu_id, branch_id, fields) => {
   const allowed = [
     // Invoice numbering
-    'invoice_prefix', 'invoice_digit_count', 'invoice_start_number',
+    'invoice_prefix', 'invoice_prefix_enabled', 'invoice_digit_count', 'invoice_start_number',
     // Tax / payment
     'default_tax_label', 'invoice_due_days', 'default_payment_method',
     'payment_types', 'invoice_copy_types',
@@ -550,7 +550,7 @@ exports.getPosSettings = async (zodu_id, branch_id) => {
 };
 
 exports.upsertPosSettings = async (zodu_id, branch_id, fields) => {
-  const allowed = ['pos_types', 'default_pos_type'];
+  const allowed = ['pos_types', 'default_pos_type', 'invoice_suffix', 'invoice_suffix_enabled'];
   const cols = Object.keys(fields).filter((k) => allowed.includes(k));
 
   if (cols.length === 0) {

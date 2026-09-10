@@ -66,6 +66,8 @@ apply "$AUTH_DB" auth-service/migrations/invoice_settings_shipping_address.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_settings_copy_types.sql
 apply "$AUTH_DB" auth-service/migrations/pos_settings.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_settings_serial_no.sql
+apply "$AUTH_DB" auth-service/migrations/pos_settings_invoice_suffix.sql
+apply "$AUTH_DB" auth-service/migrations/invoice_settings_prefix_enabled.sql
 
 # auth-service — company logo on tbl_business. The create-company INSERT names
 # this column, so an un-migrated database fails every company create.
@@ -78,6 +80,17 @@ apply "$RESTAURANT_DB" restaurant-service/migrations/item_description.sql
 # retail-service — vehicle number on tbl_sales, printed on the invoice's
 # Transport Copy (see auth-service/migrations/invoice_settings_copy_types.sql).
 apply "$RETAIL_DB" retail-service/migrations/sales_vehicle_no.sql
+
+# retail-service — customer's purchase order no/date on tbl_sales.
+apply "$RETAIL_DB" retail-service/migrations/sales_purchase_order.sql
+
+# retail-service / restaurant-service — sequential purchase/expense/customer
+# IDs (tbl_doc_id_seq). customer_id_sequence.sql reuses the counter table
+# purchase_expense_id_sequence.sql creates, so that one runs first.
+apply "$RETAIL_DB"     retail-service/migrations/purchase_expense_id_sequence.sql
+apply "$RESTAURANT_DB" restaurant-service/migrations/purchase_expense_id_sequence.sql
+apply "$RETAIL_DB"     retail-service/migrations/customer_id_sequence.sql
+apply "$RESTAURANT_DB" restaurant-service/migrations/customer_id_sequence.sql
 
 # Older rows were written before PUBLIC_FILE_BASE_URL existed, so they carry
 # whatever origin the code defaulted to at the time (myzodu.com, zodu.in, ...).
@@ -101,19 +114,19 @@ SQL
 echo
 echo "=== verification ==="
 run_sql "$AUTH_DB" /dev/stdin <<'SQL'
-SELECT 'invoice settings columns present: ' || count(*) || '/20'
+SELECT 'invoice settings columns present: ' || count(*) || '/21'
 FROM information_schema.columns
 WHERE table_name = 'tbl_invoice_settings'
-  AND column_name IN ('invoice_digit_count','invoice_start_number','show_item_id','show_description',
+  AND column_name IN ('invoice_digit_count','invoice_start_number','invoice_prefix_enabled','show_item_id','show_description',
                       'show_customer_details','show_tax_details','show_payment_details','show_bank_details',
                       'show_signature','show_shipping_address','show_serial_no','show_terms_conditions','terms_conditions','show_notes','notes',
                       'invoice_theme_color','signature_url','payment_types','invoice_copy_types','invoice_template');
 SELECT 'tbl_business.company_logo_url present: ' || count(*) || '/1'
 FROM information_schema.columns
 WHERE table_name = 'tbl_business' AND column_name = 'company_logo_url';
-SELECT 'tbl_pos_settings columns present: ' || count(*) || '/2'
+SELECT 'tbl_pos_settings columns present: ' || count(*) || '/4'
 FROM information_schema.columns
-WHERE table_name = 'tbl_pos_settings' AND column_name IN ('pos_types','default_pos_type');
+WHERE table_name = 'tbl_pos_settings' AND column_name IN ('pos_types','default_pos_type','invoice_suffix','invoice_suffix_enabled');
 SQL
 
 for db in "$RETAIL_DB" "$RESTAURANT_DB"; do
@@ -129,7 +142,18 @@ run_sql "$RETAIL_DB" /dev/stdin <<'SQL'
 SELECT 'tbl_sales.vehicle_no present: ' || count(*) || '/1'
 FROM information_schema.columns
 WHERE table_name = 'tbl_sales' AND column_name = 'vehicle_no';
+SELECT 'tbl_sales purchase_order columns present: ' || count(*) || '/2'
+FROM information_schema.columns
+WHERE table_name = 'tbl_sales' AND column_name IN ('purchase_order_no','purchase_order_date');
 SQL
+
+for db in "$RETAIL_DB" "$RESTAURANT_DB"; do
+  run_sql "$db" /dev/stdin <<SQL
+SELECT '$db tbl_doc_id_seq present: ' || count(*) || '/1'
+FROM information_schema.tables
+WHERE table_name = 'tbl_doc_id_seq';
+SQL
+done
 
 echo
 echo "done — $ENV migrated"
