@@ -229,3 +229,13 @@ exports.deleteDocument = async (id, employee_id) => {
   );
   return rows[0] || null;
 };
+
+// ========== Branch Purge (delete branch cascade) ==========
+
+exports.purgeBranch = async (zodu_id, branch_id) => {
+  const { rows } = await db.query(
+    `SELECT * FROM fn_purge_branch($1, $2)`,
+    [zodu_id, branch_id]
+  );
+  return rows;
+};

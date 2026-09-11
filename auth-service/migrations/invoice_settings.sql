@@ -59,6 +59,21 @@ CREATE TRIGGER trg_touch_invoice_settings_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION fn_touch_invoice_settings_updated_at();
 
+-- Ensure the unique constraint exists even if tbl_invoice_settings
+-- pre-existed before this migration (CREATE TABLE IF NOT EXISTS above is a
+-- no-op then, so this constraint is never added by the CREATE TABLE) — the
+-- ON CONFLICT backfill below requires it.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'uq_invoice_settings_zodu_branch'
+    ) THEN
+        ALTER TABLE tbl_invoice_settings
+            ADD CONSTRAINT uq_invoice_settings_zodu_branch UNIQUE (zodu_id, branch_id);
+    END IF;
+END;
+$$;
+
 -- Backfill: seed a default settings row for every branch that already
 -- exists and doesn't have one yet (branches created before this migration).
 -- New branches going forward are seeded by business-repo.js's

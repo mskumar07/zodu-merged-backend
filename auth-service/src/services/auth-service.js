@@ -604,6 +604,51 @@ async function EditBranch(userInputs, user_id) {
   }
 }
 
+// Hard-deletes a branch and every row scoped to it, everywhere: retail,
+// restaurant, employee, payroll, checklist databases, then this database's
+// own tbl_pos_settings/tbl_invoice_settings/tbl_roles/tbl_branch (see
+// business-repo.js's purgeBranch). auth-service purges its own tables and
+// removes tbl_branch LAST, only after every other service has confirmed
+// success — so tbl_branch (the source of truth other services check against)
+// never disappears while some other service still holds data for it.
+//
+// Stops at the first service that fails and reports which one — every
+// purge endpoint is idempotent, so retrying this call after fixing the
+// failure safely continues rather than double-deleting or erroring.
+async function DeleteBranch({ zodu_id, branch_id, user_id }) {
+  const userCompanies = await repository.getUserCompanies({ user_id });
+  const hasAccess = userCompanies.some((company) => company.zodu_id === zodu_id);
+
+  if (!hasAccess) {
+    return FormateData({ error: 'You do not have access to delete a branch for this company' });
+  }
+
+  const { purgeBranchAcrossServices } = require('../utils/branchPurgeClient');
+  const outcome = await purgeBranchAcrossServices(zodu_id, branch_id);
+
+  if (!outcome.success) {
+    console.error(`delete branch failed at ${outcome.failedService}:`, outcome.error);
+    return FormateData({
+      error: `Failed to delete branch data in ${outcome.failedService}: ${outcome.error}. No further services were purged — safe to retry once the issue is fixed.`,
+      partial_results: outcome.results,
+    });
+  }
+
+  try {
+    const authResults = await businessRepo.purgeBranch(zodu_id, branch_id);
+    return FormateData({
+      message: 'Branch deleted successfully',
+      results: [...outcome.results, { service: 'auth-service', data: authResults }],
+    });
+  } catch (err) {
+    console.error('delete branch failed in auth-service:', err.message);
+    return FormateData({
+      error: `Every other service was purged, but auth-service's own cleanup failed: ${err.message}. Safe to retry — earlier steps are idempotent.`,
+      partial_results: outcome.results,
+    });
+  }
+}
+
 // ── Invoice Settings ──────────────────────────────────────────────────────────
 
 async function GetInvoiceSettings({ user_id, zodu_id, branch_id }) {
@@ -797,6 +842,7 @@ module.exports = {
   AddBranch,
   EditCompany,
   EditBranch,
+  DeleteBranch,
   GetMyCompanies,
   GetRoleAccess,
   GetInvoiceSettings,

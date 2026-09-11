@@ -6551,3 +6551,13 @@ exports.computeSummary = (salesRows, returnRows) => {
     net_outstanding: +(totalBalance + totalReturns).toFixed(2),
   };
 };
+
+// ========== Branch Purge (delete branch cascade) ==========
+
+exports.purgeBranch = async (zodu_id, branch_id) => {
+  const { rows } = await conn.query(
+    `SELECT * FROM fn_purge_branch($1, $2)`,
+    [zodu_id, branch_id]
+  );
+  return rows;
+};
