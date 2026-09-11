@@ -58,7 +58,7 @@ exports.createExpense = async (data) => {
     const expense_id = expense.expense_id;
 
     if (data.items && data.items.length > 0) {
-      await repo.createExpenseLineItems(client, data.items, expense_id, data.category_id);
+      await repo.createExpenseLineItems(client, data.items, expense_id, data.category_id, data.zodu_id);
     }
 
     if (data.paid_amount && data.paid_amount > 0) {
@@ -151,7 +151,7 @@ exports.updateExpense = async (expense_id, data) => {
     await repo.updateExpense(client, expense_id, data);
 
     if (data.items && data.items.length > 0) {
-      await repo.createExpenseLineItems(client, data.items, expense_id, data.category_id);
+      await repo.createExpenseLineItems(client, data.items, expense_id, data.category_id, old.zodu_id);
     }
 
     const oldPaid  = Number(old.paid_amount || 0);

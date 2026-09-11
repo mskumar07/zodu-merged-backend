@@ -578,3 +578,21 @@ exports.upsertPosSettings = async (zodu_id, branch_id, fields) => {
   );
   return r.rows[0];
 };
+
+// ── BRANCH PURGE ─────────────────────────────────────────────────────────────
+// Hard-deletes this database's own branch-scoped rows: tbl_pos_settings,
+// tbl_invoice_settings, tbl_roles, then tbl_branch itself. Scope intentionally
+// excludes tbl_access_control/tbl_user_roles per product decision — see
+// auth-service/migrations/branch_purge_function.sql.
+//
+// Called LAST in the delete-branch flow (branchDeleteService.js), after every
+// other service has already purged its own data for this branch — tbl_branch
+// is the source of truth other services validate against, so it only
+// disappears once everything referencing it elsewhere is confirmed gone.
+exports.purgeBranch = async (zodu_id, branch_id) => {
+  const { rows } = await conn.query(
+    `SELECT * FROM fn_purge_branch($1, $2)`,
+    [zodu_id, branch_id]
+  );
+  return rows;
+};

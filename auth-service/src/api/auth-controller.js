@@ -124,6 +124,26 @@ async function handleEditBranch(req, res) {
   }
 }
 
+// Hard-deletes a branch and every row scoped to it across every service's
+// database. See authService.DeleteBranch for the full cascade/ordering
+// rationale. This is destructive and irreversible — the frontend must
+// confirm with the user before calling this.
+async function handleDeleteBranch(req, res) {
+  try {
+    const { zodu_id, branch_id } = req.params;
+    const data = await authService.DeleteBranch({
+      zodu_id,
+      branch_id,
+      user_id: req.user.user_id,
+    });
+    if (data.error) return res.status(400).json(data);
+    return res.status(200).json(data);
+  } catch (error) {
+    logger.error(error);
+    return res.status(STATUS_CODES.INTERNAL_ERROR).json({ message: error.message });
+  }
+}
+
 // ── POST /api/create-account ──────────────────────────────────────────────────
 router.post('/api/create-account', async (req, res) => {
   try {
@@ -221,6 +241,7 @@ router.post('/api/create-company', ValidateSignature, handleCompanyLogoUpload, h
 router.post('/api/branch/add', ValidateSignature, handleAddBranch);
 router.put('/api/company/edit/:zodu_id', ValidateSignature, handleCompanyLogoUpload, handleEditCompany);
 router.put('/api/branch/edit/:zodu_id/:branch_id', ValidateSignature, handleEditBranch);
+router.delete('/api/branch/:zodu_id/:branch_id', ValidateSignature, handleDeleteBranch);
 
 // ── POST /api/company/:zodu_id/logo ───────────────────────────────────────────
 // multipart/form-data, image in the `company_logo` field. Replaces whatever

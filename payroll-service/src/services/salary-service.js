@@ -21,6 +21,11 @@ exports.getSalary = async (employee_id) => {
   return { success: true, data: salary || null };
 };
 
+exports.purgeBranch = async (zodu_id, branch_id) => {
+  const results = await repo.purgeBranch(zodu_id, branch_id);
+  return { success: true, data: results };
+};
+
 exports.getSalaryHistory = async (employee_id) => {
   const data = await repo.findHistory(employee_id);
   return { success: true, data };

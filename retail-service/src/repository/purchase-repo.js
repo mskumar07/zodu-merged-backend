@@ -28,16 +28,16 @@ exports.createPurchase = async (client, data) => {
   return rows[0];
 };
 
-exports.createPurchaseItems = async (client, items, purchase_id) => {
+exports.createPurchaseItems = async (client, items, purchase_id, zodu_id) => {
   for (const item of items) {
     await client.query(
       `INSERT INTO tbl_purchase_items (
         purchase_id, item_id, item_name,
         qty, unit, purchase_price,
         gst_percentage, tax_amount, cgst, sgst,
-        category_id, item_uuid
+        category_id, item_uuid, zodu_id
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
       [
         purchase_id,
         item.item_id || null,
@@ -51,6 +51,7 @@ exports.createPurchaseItems = async (client, items, purchase_id) => {
         item.sgst || null,
         item.category_id || null,
         item.item_uuid || null,
+        zodu_id,
       ]
     );
   }

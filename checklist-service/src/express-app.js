@@ -12,6 +12,7 @@ app.use(cors());
 app.use(httpLogger);
 
 app.use('/api/checklists', require('./api/checklist-controller'));
+app.use('/internal', require('./api/internal-controller'));
 
 // GET /file/* — stream file from MinIO
 app.get('/file/*', async (req, res) => {

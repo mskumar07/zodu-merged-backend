@@ -2,11 +2,26 @@
 #
 # Applies every invoice-settings / item-description migration to one environment.
 #
+#   ./scripts/apply-migrations.sh local   # localhost:5432, run from the repo root
 #   ./scripts/apply-migrations.sh uat     # runs from anywhere: UAT DB is on a reachable host
 #   ./scripts/apply-migrations.sh prod    # RUN ON THE PROD HOST: postgres_prod is docker-internal
 #
+# checklist-service / employee-service / payroll-service / api-gateway have no
+# migrations/*.sql yet — CHECKLIST_DB/EMPLOYEE_DB/PAYROLL_DB are wired up in
+# every env case below so adding their first migration only needs one new
+# `apply "$X_DB" x-service/migrations/foo.sql` line, no connection-plumbing.
+#
 # Every file is ADD COLUMN IF NOT EXISTS / CREATE OR REPLACE / DROP ... IF EXISTS,
 # so re-running is safe and a partially-migrated database converges.
+#
+# Each apply() call is tracked in a per-database tbl_schema_migrations table
+# (created automatically on first use). A file already recorded there is
+# SKIPPED on subsequent runs — only newly added `apply` lines actually
+# execute. This means re-running this script after everything is up to date
+# is fast and touches nothing, and a fresh new migration file you add is the
+# only thing that runs next time. The file-URL repoint and verification
+# blocks near the bottom are plain idempotent UPDATE/SELECT statements, not
+# schema migrations — they intentionally run every time, untracked.
 #
 # These must be applied BEFORE the new images serve traffic: the menu, sale and
 # sale-return queries name `description` explicitly and the invoice-settings
@@ -17,6 +32,27 @@ ENV="${1:-}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 case "$ENV" in
+  local)
+    # Local Postgres on this machine, same host/db names used manually via
+    # psql during development. checklist-service/employee-service/
+    # payroll-service/api-gateway have no migrations/*.sql yet — their DB
+    # vars are wired up here so future migrations only need an `apply` line.
+    HOST=localhost; PORT=5432; USER=postgres
+    export PGPASSWORD='postgres'   # uncomment to skip the interactive prompt
+    AUTH_DB=retail_auth_service
+    RETAIL_DB=retail_restaurant_service
+    RESTAURANT_DB=restaurant_service
+    CHECKLIST_DB=checklist-service
+    EMPLOYEE_DB=employee-service
+    PAYROLL_DB=payroll-service
+    # api-gateway (not the frontend on 5173) — it proxies /auth/* to
+    # auth-service, so /auth/file/<key> is reachable through here, matching
+    # how uat/prod point at their public gateway origins below.
+    PUBLIC_BASE=http://localhost:5001
+    run_sql() { psql -h "$HOST" -p "$PORT" -U "$USER" -d "$1" -v ON_ERROR_STOP=1 -f "$2"; }
+    run_sql_str() { psql -h "$HOST" -p "$PORT" -U "$USER" -d "$1" -v ON_ERROR_STOP=1 -tAc "$2"; }
+    run_sql_stdin() { psql -h "$HOST" -p "$PORT" -U "$USER" -d "$1" -v ON_ERROR_STOP=1; }
+    ;;
   uat)
     # UAT postgres is exposed on the host, so psql can reach it directly.
     HOST=72.60.206.59; PORT=5432; USER=zodudb
@@ -24,8 +60,13 @@ case "$ENV" in
     AUTH_DB=retail_auth_service
     RETAIL_DB=retail_restaurant_service
     RESTAURANT_DB=restaurant-service
+    CHECKLIST_DB=checklist-service
+    EMPLOYEE_DB=employee-service
+    PAYROLL_DB=payroll-service
     PUBLIC_BASE=https://api.myzodu.com
     run_sql() { psql -h "$HOST" -p "$PORT" -U "$USER" -d "$1" -v ON_ERROR_STOP=1 -f "$2"; }
+    run_sql_str() { psql -h "$HOST" -p "$PORT" -U "$USER" -d "$1" -v ON_ERROR_STOP=1 -tAc "$2"; }
+    run_sql_stdin() { psql -h "$HOST" -p "$PORT" -U "$USER" -d "$1" -v ON_ERROR_STOP=1; }
     ;;
   prod)
     # postgres_prod is a docker-network hostname — pipe the file into psql
@@ -34,22 +75,64 @@ case "$ENV" in
     AUTH_DB=auth_service
     RETAIL_DB=retail_service
     RESTAURANT_DB=restaurant_service
+    CHECKLIST_DB=checklist_service
+    EMPLOYEE_DB=employee_service
+    PAYROLL_DB=payroll_service
     PUBLIC_BASE=https://api.zodu.in
     run_sql() {
       docker exec -i -e PGPASSWORD='zodu@2025' "$PGCONTAINER" \
         psql -U "$USER" -d "$1" -v ON_ERROR_STOP=1 < "$2"
     }
+    run_sql_str() {
+      docker exec -i -e PGPASSWORD='zodu@2025' "$PGCONTAINER" \
+        psql -U "$USER" -d "$1" -v ON_ERROR_STOP=1 -tAc "$2"
+    }
+    run_sql_stdin() {
+      docker exec -i -e PGPASSWORD='zodu@2025' "$PGCONTAINER" \
+        psql -U "$USER" -d "$1" -v ON_ERROR_STOP=1
+    }
     ;;
   *)
-    echo "usage: $0 {uat|prod}" >&2
+    echo "usage: $0 {local|uat|prod}" >&2
     exit 2
     ;;
 esac
 
+ensure_tracking_table() {  # ensure_tracking_table <db>
+  run_sql_str "$1" "
+    CREATE TABLE IF NOT EXISTS tbl_schema_migrations (
+        migration_file VARCHAR(255) PRIMARY KEY,
+        applied_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  " > /dev/null
+}
+
+already_applied() {  # already_applied <db> <path> -> exit 0 if applied
+  local result
+  result="$(run_sql_str "$1" "SELECT 1 FROM tbl_schema_migrations WHERE migration_file = '$2';")"
+  [ "$result" = "1" ]
+}
+
+record_applied() {  # record_applied <db> <path>
+  run_sql_str "$1" "
+    INSERT INTO tbl_schema_migrations (migration_file) VALUES ('$2')
+    ON CONFLICT (migration_file) DO NOTHING;
+  " > /dev/null
+}
+
 apply() {  # apply <db> <path-relative-to-repo-root>
+  ensure_tracking_table "$1"
+
+  if already_applied "$1" "$2"; then
+    echo
+    echo "=== $ENV / $1  <-  $2  (already applied, skipping)"
+    return
+  fi
+
   echo
   echo "=== $ENV / $1  <-  $2"
   run_sql "$1" "$ROOT/$2"
+  record_applied "$1" "$2"
 }
 
 # auth-service — invoice settings. The base table first so a database that has
@@ -109,6 +192,25 @@ apply "$RETAIL_DB" retail-service/migrations/sales_id_unique_include_type.sql
 apply "$RETAIL_DB"     retail-service/migrations/customer_id_sequence.sql
 apply "$RESTAURANT_DB" restaurant-service/migrations/customer_id_sequence.sql
 
+# tbl_purchase.purchase_id / tbl_expense.expense_id were globally unique
+# (tbl_expense.expense_id was literally the PK) instead of scoped per
+# zodu_id, causing spurious duplicate-key errors the moment two tenants
+# shared a branch code. Must run before any new purchase/expense insert
+# collides — see the migration file for full detail on the PK swap.
+apply "$RETAIL_DB"     retail-service/migrations/purchase_expense_id_tenant_scoped_unique.sql
+apply "$RESTAURANT_DB" restaurant-service/migrations/purchase_expense_id_tenant_scoped_unique.sql
+
+# fn_purge_branch(zodu_id, branch_id) per database — hard-deletes every row
+# scoped to one branch, called by auth-service's delete-branch orchestrator
+# (auth-service/src/services/auth-service.js DeleteBranch). Independent per
+# database, no ordering dependency between them.
+apply "$AUTH_DB"       auth-service/migrations/branch_purge_function.sql
+apply "$RETAIL_DB"     retail-service/migrations/branch_purge_function.sql
+apply "$RESTAURANT_DB" restaurant-service/migrations/branch_purge_function.sql
+apply "$EMPLOYEE_DB"   employee-service/migrations/branch_purge_function.sql
+apply "$PAYROLL_DB"    payroll-service/migrations/branch_purge_function.sql
+apply "$CHECKLIST_DB"  checklist-service/migrations/branch_purge_function.sql
+
 # Older rows were written before PUBLIC_FILE_BASE_URL existed, so they carry
 # whatever origin the code defaulted to at the time (myzodu.com, zodu.in, ...).
 # Repoint every stored file URL at this environment's public origin: swap the
@@ -116,7 +218,7 @@ apply "$RESTAURANT_DB" restaurant-service/migrations/customer_id_sequence.sql
 # $PUBLIC_BASE are excluded, so re-running changes nothing.
 echo
 echo "=== $ENV / $AUTH_DB  <-  repoint file URLs to $PUBLIC_BASE"
-run_sql "$AUTH_DB" /dev/stdin <<SQL
+run_sql_stdin "$AUTH_DB" <<SQL
 UPDATE tbl_invoice_settings
    SET signature_url = regexp_replace(signature_url, '^https?://[^/]+', '$PUBLIC_BASE')
  WHERE signature_url ~ '^https?://'
@@ -130,7 +232,7 @@ SQL
 
 echo
 echo "=== verification ==="
-run_sql "$AUTH_DB" /dev/stdin <<'SQL'
+run_sql_stdin "$AUTH_DB" <<'SQL'
 SELECT 'invoice settings columns present: ' || count(*) || '/20'
 FROM information_schema.columns
 WHERE table_name = 'tbl_invoice_settings'
@@ -153,7 +255,7 @@ WHERE table_name = 'tbl_pos_settings' AND column_name IN ('pos_types','default_p
 SQL
 
 for db in "$RETAIL_DB" "$RESTAURANT_DB"; do
-  run_sql "$db" /dev/stdin <<SQL
+  run_sql_stdin "$db" <<SQL
 SELECT '$db description on: ' || COALESCE(string_agg(table_name, ', ' ORDER BY table_name), '(none)')
 FROM information_schema.columns
 WHERE column_name = 'description'
@@ -161,7 +263,7 @@ WHERE column_name = 'description'
 SQL
 done
 
-run_sql "$RETAIL_DB" /dev/stdin <<'SQL'
+run_sql_stdin "$RETAIL_DB" <<'SQL'
 SELECT 'tbl_sales.vehicle_no present: ' || count(*) || '/1'
 FROM information_schema.columns
 WHERE table_name = 'tbl_sales' AND column_name = 'vehicle_no';
@@ -173,7 +275,7 @@ FROM pg_constraint WHERE conname = 'unique_sale_per_branch_type';
 SQL
 
 for db in "$RETAIL_DB" "$RESTAURANT_DB"; do
-  run_sql "$db" /dev/stdin <<SQL
+  run_sql_stdin "$db" <<SQL
 SELECT '$db tbl_doc_id_seq present: ' || count(*) || '/1'
 FROM information_schema.tables
 WHERE table_name = 'tbl_doc_id_seq';
