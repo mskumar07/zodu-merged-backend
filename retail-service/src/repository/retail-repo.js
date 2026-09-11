@@ -3646,8 +3646,8 @@ function formatDocId(prefix, seq, suffix = '', digitCount = 3) {
   // No prefix (invoice_prefix_enabled = false, sale type only) is just the
   // bare padded number; suffix (e.g. a fiscal-year tag) is appended only
   // when the branch has enabled it and saved text for it.
-  let id = prefix ? `${prefix} ${padded}` : padded;
-  if (suffix) id = `${id} ${suffix}`;
+  let id = prefix ? `${prefix}${padded}` : padded;
+  if (suffix) id = `${id}${suffix}`;
   return id;
 }
 
@@ -3919,15 +3919,12 @@ exports.getSalesHistorySummary = async (filters) => {
   };
 };
 
-exports.getSaleById = async (sale_id, zodu_id, branch_id, sale_type) => {
-  console.log("Fetching sale by ID-------------:", sale_id, zodu_id, branch_id, sale_type);
+exports.getSaleById = async (sale_uuid, zodu_id, branch_id) => {
+  console.log("Fetching sale by UUID-------------:", sale_uuid, zodu_id, branch_id);
 
-  // sale_id is only unique per (branch_id, sale_type) now — a business that
-  // configures the same prefix for two sale types (e.g. quotation_prefix ==
-  // invoice_prefix) can produce the same displayed id for both. Pass
-  // sale_type when it's known to fetch the exact row; without it, fall back
-  // to the most recent match so behavior stays deterministic instead of
-  // depending on incidental row order.
+  // Looked up by sale_uuid (tbl_sales' primary key) instead of sale_id — a
+  // UUID is unique on its own, so unlike the old sale_id lookup this needs no
+  // sale_type disambiguation and no ORDER BY fallback.
   const saleResult = await conn.query(
     `SELECT
         s.sale_uuid,
@@ -3976,19 +3973,16 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id, sale_type) => {
  
      FROM tbl_sales s
      LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid AND c.branch_id = s.branch_id
-     WHERE s.sale_id   = $1
+     WHERE s.sale_uuid = $1
        AND s.zodu_id   = $2
        AND s.branch_id = $3
-       ${sale_type ? "AND s.sale_type = $4" : ""}
-     ORDER BY s.created_at DESC
      LIMIT 1`,
-    sale_type ? [sale_id, zodu_id, branch_id, sale_type] : [sale_id, zodu_id, branch_id]
+    [sale_uuid, zodu_id, branch_id]
   );
- 
+
   if (saleResult.rows.length === 0) return null;
- 
-  const row       = saleResult.rows[0];
-  const sale_uuid = row.sale_uuid;
+
+  const row = saleResult.rows[0];
 
  
   const sale = {
@@ -4139,7 +4133,9 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id, sale_type) => {
        AND sp.zodu_id   = $2
        AND sp.branch_id = $3
      ORDER BY sp.created_at DESC, sp.id DESC`,
-    [sale_id, zodu_id, branch_id]
+    // tbl_sale_payment has no sale_uuid column — it keys on the text sale_id,
+    // so use the one we just fetched on `row` rather than the uuid parameter.
+    [row.sale_id, zodu_id, branch_id]
   );
  
   // ✅ Return history for this sale
@@ -4197,26 +4193,22 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id, sale_type) => {
   };
 };
 
-exports.deleteSale = async (sale_id, zodu_id, branch_id, sale_type) => {
+exports.deleteSale = async (sale_uuid, zodu_id, branch_id) => {
   const client = await conn.connect();
 
   try {
     await client.query("BEGIN");
 
-    // sale_id is only unique per (branch_id, sale_type) now — pass sale_type
-    // when known to target the exact row; without it, fall back to the most
-    // recent match (see getSaleById for why).
+    // Looked up by sale_uuid (tbl_sales' primary key) — unique on its own, so
+    // unlike the old sale_id lookup this needs no sale_type disambiguation.
     const saleResult = await client.query(
       `SELECT sale_uuid, sale_id, sale_type, cancelled_inv
        FROM tbl_sales
-       WHERE sale_id = $1
+       WHERE sale_uuid = $1
          AND zodu_id = $2
          AND branch_id = $3
-         ${sale_type ? "AND sale_type = $4" : ""}
-       ORDER BY created_at DESC
-       LIMIT 1
        FOR UPDATE`,
-      sale_type ? [sale_id, zodu_id, branch_id, sale_type] : [sale_id, zodu_id, branch_id]
+      [sale_uuid, zodu_id, branch_id]
     );
 
     if (!saleResult.rows.length) {
@@ -4499,15 +4491,18 @@ exports.markPayment = async (data) => {
  
     const round = (n) => Math.round(n * 100) / 100;
  
-    // 1. Fetch the current sale to verify it exists + get totals
+    // 1. Fetch the current sale to verify it exists + get totals. Looked up
+    // by sale_uuid (tbl_sales' primary key) instead of the text sale_id,
+    // which can contain characters (e.g. "/") that break as a URL path
+    // segment — see getSaleById/deleteSale for the same fix.
     const saleResult = await conn.query(
       `SELECT sale_uuid, sale_id, total_amount, paid_amount, balance_amount, payment_status
        FROM tbl_sales
-       WHERE sale_id   = $1
+       WHERE sale_uuid = $1
          AND zodu_id   = $2
          AND branch_id = $3
        FOR UPDATE`,
-      [data.sale_id, data.zodu_id, data.branch_id]
+      [data.sale_uuid, data.zodu_id, data.branch_id]
     );
  
     if (saleResult.rows.length === 0) {
@@ -4542,13 +4537,12 @@ exports.markPayment = async (data) => {
        SET paid_amount    = $1,
            balance_amount = $2,
            payment_status = $3
-       WHERE sale_id   = $4
-         AND zodu_id   = $5
-         AND branch_id = $6`,
-      [newTotalPaid, newBalance, newPaymentStatus, data.sale_id, data.zodu_id, data.branch_id]
+       WHERE sale_uuid = $4`,
+      [newTotalPaid, newBalance, newPaymentStatus, sale.sale_uuid]
     );
- 
-    // 4. Insert into tbl_sale_payment
+
+    // 4. Insert into tbl_sale_payment — keyed by the text sale_id (that table
+    // has no sale_uuid column), sourced from the row we just fetched above.
     const paymentResult = await conn.query(
       `INSERT INTO tbl_sale_payment (
           sale_id, zodu_id, branch_id,
@@ -4561,7 +4555,7 @@ exports.markPayment = async (data) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
        RETURNING *`,
       [
-        data.sale_id,
+        sale.sale_id,
         data.zodu_id,
         data.branch_id,
         newPayment,

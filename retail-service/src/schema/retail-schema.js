@@ -448,7 +448,7 @@ const add_customer = Joi.object({
 const mark_payment = Joi.object({
   zodu_id:          Joi.string().required(),
   branch_id:        Joi.string().required(),
-  sale_id:          Joi.string().required(),
+  sale_uuid:        Joi.string().guid().required(),
   paid_amount:      Joi.number().positive().required(),
   transaction_type: Joi.string().valid("Cash", "Card", "UPI", "Credit").required(),
   transaction_id:   Joi.string().optional().allow(null, ""),
@@ -728,6 +728,17 @@ const sale_by_id_params = Joi.object({
   sale_type: Joi.string().valid("S", "Q", "P").optional().allow(null, ""),
 });
 
+// GET /api/sales/:sale_uuid — looked up by tbl_sales' primary key instead of
+// the human-readable sale_id, which can contain characters (e.g. "/" from an
+// invoice_prefix like "MA/") that don't survive as a single URL path segment.
+// sale_uuid is already unique on its own, so no sale_type disambiguation is
+// needed here the way sale_by_id_params needs it.
+const sale_by_uuid_params = Joi.object({
+  sale_uuid: Joi.string().guid().required(),
+  zodu_id:   Joi.string().required(),
+  branch_id: Joi.string().required(),
+});
+
 const DOC_SEQUENCE_TYPES = ['INV', 'QUO', 'PRO', 'PUR', 'EXP', 'CUS'];
 
 const doc_sequence_params = Joi.object({
@@ -876,6 +887,7 @@ module.exports = {
   sales_history_query,
   sales_history_summary_query,
   sale_by_id_params,
+  sale_by_uuid_params,
   doc_sequence_params,
   doc_sequence_update,
   get_customers,

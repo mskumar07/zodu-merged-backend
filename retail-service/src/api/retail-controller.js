@@ -557,19 +557,21 @@ router.get("/api/sales/history/summary", async (req, res) => {
   }
 });
 
-// GET /api/sales/:sale_id?zodu_id=&branch_id=
-router.get("/api/sales/:sale_id", async (req, res) => {
+// GET /api/sales/:sale_uuid?zodu_id=&branch_id= — looked up by tbl_sales'
+// primary key instead of the human-readable sale_id, which can contain
+// characters (e.g. "/" from an invoice_prefix like "MA/") that don't survive
+// as a single URL path segment and 404 before this handler is ever reached.
+router.get("/api/sales/:sale_uuid", async (req, res) => {
   try {
-    const { errors, input } = await RequestValidator(schema.sale_by_id_params, {
-      sale_id:   req.params.sale_id,
+    const { errors, input } = await RequestValidator(schema.sale_by_uuid_params, {
+      sale_uuid: req.params.sale_uuid,
       zodu_id:   req.query.zodu_id,
       branch_id: req.query.branch_id,
-      sale_type: req.query.sale_type,
     });
 
     if (errors) return res.status(400).json({ errors });
 
-    const data = await service.getSaleById(input.sale_id, input.zodu_id, input.branch_id, input.sale_type);
+    const data = await service.getSaleById(input.sale_uuid, input.zodu_id, input.branch_id);
     if (!data.success) return res.status(404).json({ message: data.message });
 
     return res.status(200).json(data);
@@ -579,22 +581,23 @@ router.get("/api/sales/:sale_id", async (req, res) => {
   }
 });
 
-router.delete("/api/sales/:sale_id", async (req, res) => {
+// DELETE /api/sales/:sale_uuid?zodu_id=&branch_id= — looked up by tbl_sales'
+// primary key for the same reason as the GET route above (sale_id can contain
+// "/" and 404 before reaching this handler).
+router.delete("/api/sales/:sale_uuid", async (req, res) => {
   try {
-    const { errors, input } = await RequestValidator(schema.sale_by_id_params, {
-      sale_id: req.params.sale_id,
+    const { errors, input } = await RequestValidator(schema.sale_by_uuid_params, {
+      sale_uuid: req.params.sale_uuid,
       zodu_id: req.query.zodu_id,
       branch_id: req.query.branch_id,
-      sale_type: req.query.sale_type,
     });
 
     if (errors) return res.status(400).json({ errors });
 
     const data = await service.deleteSale(
-      input.sale_id,
+      input.sale_uuid,
       input.zodu_id,
-      input.branch_id,
-      input.sale_type
+      input.branch_id
     );
 
     if (!data.success) return res.status(404).json({ message: data.message });
@@ -652,10 +655,12 @@ router.put("/api/doc-sequence/:zodu_id/:branch_id/:doc_type", async (req, res) =
   }
 });
 
-router.post("/api/sales/:sale_id/payment", async (req, res) => {
+// POST /api/sales/:sale_uuid/payment — looked up by tbl_sales' primary key
+// for the same reason as the GET/DELETE routes above.
+router.post("/api/sales/:sale_uuid/payment", async (req, res) => {
   try {
     const { error, value } = schema.mark_payment.validate(
-      { ...req.body, sale_id: req.params.sale_id },
+      { ...req.body, sale_uuid: req.params.sale_uuid },
       { abortEarly: false }
     );
     if (error) {

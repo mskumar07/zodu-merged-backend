@@ -1958,9 +1958,9 @@ async function getSalesHistorySummary(filters) {
   }
 }
  
-async function getSaleById(sale_id, zodu_id, branch_id, sale_type) {
+async function getSaleById(sale_uuid, zodu_id, branch_id) {
   try {
-    const data = await repository.getSaleById(sale_id, zodu_id, branch_id, sale_type);
+    const data = await repository.getSaleById(sale_uuid, zodu_id, branch_id);
     if (!data) return { success: false, message: "Sale not found" };
     return { success: true, data };
   } catch (err) {
@@ -1969,9 +1969,9 @@ async function getSaleById(sale_id, zodu_id, branch_id, sale_type) {
   }
 }
 
-async function deleteSale(sale_id, zodu_id, branch_id, sale_type) {
+async function deleteSale(sale_uuid, zodu_id, branch_id) {
   try {
-    const result = await repository.deleteSale(sale_id, zodu_id, branch_id, sale_type);
+    const result = await repository.deleteSale(sale_uuid, zodu_id, branch_id);
     if (!result) return { success: false, message: "Sale not found" };
     if (result.alreadyCancelled) return { success: false, message: "Sale is already cancelled" };
     return { success: true, data: result };
