@@ -268,12 +268,18 @@ const schema = {
     // Proforma prefix without applying it.
     quotation_prefix_enabled: joi.boolean(),
     proforma_prefix_enabled: joi.boolean(),
-    // Mirrors invoice_suffix/invoice_suffix_enabled — storage only for now,
-    // not yet applied to generated ids.
+    // Mirrors invoice_suffix/invoice_suffix_enabled.
     quotation_suffix: joi.string().max(20).allow(null, ''),
     quotation_suffix_enabled: joi.boolean(),
     proforma_suffix: joi.string().max(20).allow(null, ''),
     proforma_suffix_enabled: joi.boolean(),
+
+    // Shows/hides the Purchase Order No/Date fields (tbl_sales.purchase_order_no/
+    // purchase_order_date) on the POS screen.
+    purchase_order_enabled: joi.boolean(),
+
+    // Shows/hides the Hold Order/Bill feature on the POS screen.
+    hold_enabled: joi.boolean(),
   })
     .min(1)
     // A default the POS no longer offers would leave the screen preselecting

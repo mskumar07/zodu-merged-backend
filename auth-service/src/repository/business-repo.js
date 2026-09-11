@@ -556,6 +556,7 @@ exports.upsertPosSettings = async (zodu_id, branch_id, fields) => {
     'quotation_prefix_enabled', 'proforma_prefix_enabled',
     'quotation_suffix', 'quotation_suffix_enabled',
     'proforma_suffix', 'proforma_suffix_enabled',
+    'purchase_order_enabled', 'hold_enabled',
   ];
   const cols = Object.keys(fields).filter((k) => allowed.includes(k));
 

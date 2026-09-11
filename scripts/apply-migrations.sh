@@ -71,6 +71,8 @@ apply "$AUTH_DB" auth-service/migrations/invoice_settings_prefix_enabled.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_settings_remove_digit_count.sql
 apply "$AUTH_DB" auth-service/migrations/pos_settings_type_prefixes.sql
 apply "$AUTH_DB" auth-service/migrations/pos_settings_type_prefix_toggle_suffix.sql
+apply "$AUTH_DB" auth-service/migrations/pos_settings_purchase_order_enabled.sql
+apply "$AUTH_DB" auth-service/migrations/pos_settings_hold_enabled.sql
 
 # auth-service — company logo on tbl_business. The create-company INSERT names
 # this column, so an un-migrated database fails every company create.
@@ -142,11 +144,12 @@ WHERE table_name = 'tbl_invoice_settings' AND column_name = 'invoice_digit_count
 SELECT 'tbl_business.company_logo_url present: ' || count(*) || '/1'
 FROM information_schema.columns
 WHERE table_name = 'tbl_business' AND column_name = 'company_logo_url';
-SELECT 'tbl_pos_settings columns present: ' || count(*) || '/12'
+SELECT 'tbl_pos_settings columns present: ' || count(*) || '/14'
 FROM information_schema.columns
 WHERE table_name = 'tbl_pos_settings' AND column_name IN ('pos_types','default_pos_type','invoice_suffix','invoice_suffix_enabled',
                       'quotation_prefix','proforma_prefix','quotation_prefix_enabled','proforma_prefix_enabled',
-                      'quotation_suffix','quotation_suffix_enabled','proforma_suffix','proforma_suffix_enabled');
+                      'quotation_suffix','quotation_suffix_enabled','proforma_suffix','proforma_suffix_enabled',
+                      'purchase_order_enabled','hold_enabled');
 SQL
 
 for db in "$RETAIL_DB" "$RESTAURANT_DB"; do
