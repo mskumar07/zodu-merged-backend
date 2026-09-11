@@ -211,6 +211,13 @@ apply "$EMPLOYEE_DB"   employee-service/migrations/branch_purge_function.sql
 apply "$PAYROLL_DB"    payroll-service/migrations/branch_purge_function.sql
 apply "$CHECKLIST_DB"  checklist-service/migrations/branch_purge_function.sql
 
+# restaurant-service — seeds tbl_doc_id_seq's 'ORD' counter from existing
+# tbl_orders rows. Must run before generatePublicOrderNo's tbl_doc_id_seq-
+# based numbering is live, or the first new order on any branch with order
+# history restarts at 001 and collides with tbl_orders'
+# uq_orders_branch_public_no constraint.
+apply "$RESTAURANT_DB" restaurant-service/migrations/orders_doc_sequence_backfill.sql
+
 # Older rows were written before PUBLIC_FILE_BASE_URL existed, so they carry
 # whatever origin the code defaulted to at the time (myzodu.com, zodu.in, ...).
 # Repoint every stored file URL at this environment's public origin: swap the

@@ -1,19 +1,22 @@
 const conn = require('../database/connection');
 const authClient = require('../utils/authClient');
 
-// Format: {invoice_prefix}-{branch_id}-{seq padded to 3 digits}
-// e.g. "IXV-B1-144" — prefix comes from auth-service's tbl_invoice_settings,
-// same convention as retail-service's generateSaleId. digit_count/start_number
-// are fixed (Settings screen no longer exposes them): always 3 digits.
-// The next number is derived from the highest existing public_order_no for
-// this branch ACROSS ALL PREFIXES, so changing the prefix in Settings does
-// not restart numbering — e.g. INV-B1-143 then switching to IXV produces
-// IXV-B1-144, not IXV-B1-001. Falls back to 001 only when this branch has
-// never had an order.
+// Settings-driven prefix (tbl_invoice_settings.invoice_prefix /
+// invoice_prefix_enabled — same convention as retail-service's
+// generateSaleId) plus an atomically-incremented counter from the shared
+// tbl_doc_id_seq table (doc_type 'ORD', same table purchase/expense ids
+// already use), scoped per (zodu_id, branch_id). No branch_id in the
+// generated text — the counter is already scoped per branch, so spelling it
+// out in the id text is redundant (matches retail-service's sale_id format).
+//
+// Replaces the old LIKE-query-against-tbl_orders + advisory-lock approach:
+// that lock was taken via conn.query() outside any real transaction, so it
+// never actually serialized concurrent inserts — tbl_orders.public_order_no
+// has duplicate values from before this fix as a result. tbl_doc_id_seq's
+// own primary key (zodu_id, branch_id, doc_type) makes the INSERT ... ON
+// CONFLICT below atomic on its own, with no lock needed.
 exports.generatePublicOrderNo = async (branch_id, zodu_id, client) => {
   const db = client ?? conn;
-  const digitCount = 3;
-  const startNumber = 1;
 
   let invoicePrefix = 'INV';
   try {
@@ -31,30 +34,16 @@ exports.generatePublicOrderNo = async (branch_id, zodu_id, client) => {
     console.error('[generatePublicOrderNo] invoice settings lookup failed, using defaults:', err.message);
   }
 
-  // Transaction-scoped advisory lock so two concurrent orders for the same
-  // branch can't read the same max and collide on the same number.
-  await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${zodu_id}:${branch_id}`]);
-
   const { rows } = await db.query(
-    // Matches "<prefix>-B1-144" (contains "-B1-") and, for a branch that has
-    // invoice_prefix_enabled = false, the no-prefix "B1-144" (starts "B1-")
-    // — otherwise disabling the prefix would look like this branch has never
-    // had an order and numbering would restart at 001 every time.
-    `SELECT public_order_no FROM tbl_orders
-     WHERE zodu_id = $1 AND branch_id = $2
-       AND (public_order_no LIKE $3 OR public_order_no LIKE $4)
-     ORDER BY (regexp_match(public_order_no, '-(\\d+)$'))[1]::int DESC
-     LIMIT 1`,
-    [zodu_id, branch_id, `%-${branch_id}-%`, `${branch_id}-%`]
+    `INSERT INTO tbl_doc_id_seq (zodu_id, branch_id, doc_type, last_seq)
+     VALUES ($1, $2, 'ORD', 1)
+     ON CONFLICT (zodu_id, branch_id, doc_type)
+     DO UPDATE SET last_seq = tbl_doc_id_seq.last_seq + 1
+     RETURNING last_seq`,
+    [zodu_id, branch_id]
   );
+  const nextNumber = rows[0].last_seq;
+  const padded = String(nextNumber).padStart(3, '0');
 
-  let nextNumber = startNumber;
-  if (rows[0]) {
-    const match = rows[0].public_order_no.match(/-(\d+)$/);
-    if (match) nextNumber = parseInt(match[1], 10) + 1;
-  }
-
-  return invoicePrefix
-    ? `${invoicePrefix}-${branch_id}-${String(nextNumber).padStart(digitCount, '0')}`
-    : `${branch_id}-${String(nextNumber).padStart(digitCount, '0')}`;
+  return invoicePrefix ? `${invoicePrefix}-${padded}` : padded;
 };
