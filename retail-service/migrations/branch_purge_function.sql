@@ -27,7 +27,7 @@ DECLARE
 BEGIN
     -- Children first (matched via their parent's zodu_id/branch_id rows)
     DELETE FROM tbl_sale_return_items sri
-    USING tbl_sal e_returns sr
+    USING tbl_sale_returns sr
     WHERE sri.return_uuid = sr.return_uuid
       AND sr.zodu_id = p_zodu_id AND sr.branch_id = p_branch_id;
     GET DIAGNOSTICS n = ROW_COUNT;

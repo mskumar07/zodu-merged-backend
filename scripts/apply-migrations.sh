@@ -75,9 +75,9 @@ case "$ENV" in
     AUTH_DB=auth_service
     RETAIL_DB=retail_service
     RESTAURANT_DB=restaurant_service
-    CHECKLIST_DB=checklist_service
+    CHECKLIST_DB=checklist-service
     EMPLOYEE_DB=employee_service
-    PAYROLL_DB=payroll_service
+    PAYROLL_DB=payroll-service
     PUBLIC_BASE=https://api.zodu.in
     run_sql() {
       docker exec -i -e PGPASSWORD='zodu@2025' "$PGCONTAINER" \
@@ -156,6 +156,7 @@ apply "$AUTH_DB" auth-service/migrations/pos_settings_type_prefixes.sql
 apply "$AUTH_DB" auth-service/migrations/pos_settings_type_prefix_toggle_suffix.sql
 apply "$AUTH_DB" auth-service/migrations/pos_settings_purchase_order_enabled.sql
 apply "$AUTH_DB" auth-service/migrations/pos_settings_hold_enabled.sql
+apply "$AUTH_DB" auth-service/migrations/invoice_prefix_enabled_default_true.sql
 
 # auth-service — company logo on tbl_business. The create-company INSERT names
 # this column, so an un-migrated database fails every company create.
