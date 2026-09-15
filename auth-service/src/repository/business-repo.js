@@ -520,6 +520,14 @@ exports.upsertInvoiceSettings = async (zodu_id, branch_id, fields) => {
   ];
   const cols = Object.keys(fields).filter((k) => allowed.includes(k));
 
+  // pos_screen_type lives on tbl_pos_settings, not tbl_invoice_settings, but
+  // the frontend saves it from this same "Additional Settings" section
+  // through this endpoint — forward it to tbl_pos_settings instead of
+  // dropping it or writing it to the wrong table.
+  if (Object.prototype.hasOwnProperty.call(fields, 'pos_screen_type')) {
+    await exports.upsertPosSettings(zodu_id, branch_id, { pos_screen_type: fields.pos_screen_type });
+  }
+
   if (cols.length === 0) {
     return exports.getInvoiceSettings(zodu_id, branch_id);
   }
@@ -556,7 +564,7 @@ exports.upsertPosSettings = async (zodu_id, branch_id, fields) => {
     'quotation_prefix_enabled', 'proforma_prefix_enabled',
     'quotation_suffix', 'quotation_suffix_enabled',
     'proforma_suffix', 'proforma_suffix_enabled',
-    'purchase_order_enabled', 'hold_enabled',
+    'purchase_order_enabled', 'hold_enabled', 'pos_screen_type',
   ];
   const cols = Object.keys(fields).filter((k) => allowed.includes(k));
 

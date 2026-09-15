@@ -2804,6 +2804,64 @@ async function markSalePayment (payload) {
 
 
 
+async function addKotCounter(zodu_id, branch_id, counter_name) {
+  try {
+    const counter = await stockRepository.createKotCounter(zodu_id, branch_id, counter_name);
+    return { success: true, data: counter };
+  } catch (error) {
+    console.error("KOT counter create Error", error);
+    return { success: false, message: error.message };
+  }
+}
+
+async function getKotCounters(zodu_id, branch_id) {
+  try {
+    const counters = await stockRepository.getKotCounters(zodu_id, branch_id);
+    return { success: true, data: counters };
+  } catch (error) {
+    console.error("KOT counter list Error", error);
+    return { success: false, message: error.message };
+  }
+}
+
+async function getKotAssignmentData(zodu_id, branch_id) {
+  try {
+    const rows = await stockRepository.getMenuItemsForKotAssignment(zodu_id, branch_id);
+
+    const categoryMap = {};
+    for (const row of rows) {
+      if (!categoryMap[row.category_id]) {
+        categoryMap[row.category_id] = {
+          category_id: row.category_id,
+          category_name: row.category_name,
+          items: [],
+        };
+      }
+      categoryMap[row.category_id].items.push({
+        menu_item_id: row.menu_item_id,
+        menu_id: row.menu_id,
+        menu_name: row.menu_name,
+        kot_counter_id: row.kot_counter_id,
+      });
+    }
+
+    return { success: true, data: Object.values(categoryMap) };
+  } catch (error) {
+    console.error("KOT assignment data Error", error);
+    return { success: false, message: error.message };
+  }
+}
+
+async function assignItemsToKotCounter(zodu_id, branch_id, kot_counter_id, menu_item_ids) {
+  try {
+    const updated = await stockRepository.assignItemsToKotCounter(zodu_id, branch_id, kot_counter_id, menu_item_ids);
+    return { success: true, data: updated };
+  } catch (error) {
+    console.error("KOT item assignment Error", error);
+    return { success: false, message: error.message };
+  }
+}
+
 // Export all functions
 module.exports = {
   getReportServices,
@@ -2886,6 +2944,10 @@ module.exports = {
   markSalePayment,
   getCustomers,
   getCustomerLedger,
+  addKotCounter,
+  getKotCounters,
+  getKotAssignmentData,
+  assignItemsToKotCounter,
   createCustomer,
   updateCustomer,
   deleteCustomer,

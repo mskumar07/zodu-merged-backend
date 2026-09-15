@@ -14,6 +14,16 @@ const INVOICE_COPY_TYPES = ['Original', 'Duplicate', 'Transport'];
 // constraints on tbl_pos_settings — keep the two in step.
 const POS_TYPES = ['Invoice', 'Quotation', 'Proforma'];
 
+// Billing layout the restaurant POS screen opens on. Column lives on
+// tbl_pos_settings (see pos_settings_screen_type.sql), but is accepted on
+// both edit_pos_settings AND edit_invoice_settings — the frontend saves the
+// whole "POS settings — Additional Settings" section (this field included)
+// through PUT /api/invoice-settings, which forwards it to tbl_pos_settings
+// via upsertPosSettings underneath (see upsertInvoiceSettings). No DB CHECK
+// constraint backs this — this Joi list is the only place valid values are
+// enforced, so keep it in step with the frontend.
+const POS_SCREEN_TYPES = ['Touch', 'Keyboard'];
+
 const schema = {
   account_create: joi.object({
     restaurant_name: joi.string().max(50).required(),
@@ -214,6 +224,11 @@ const schema = {
     // POS settings — Additional Settings
     stock_check_enabled: joi.boolean(),
     customer_mandatory: joi.boolean(),
+    // Column actually lives on tbl_pos_settings, not tbl_invoice_settings —
+    // accepted here too because the frontend saves the whole "Additional
+    // Settings" section (this field included) through this endpoint.
+    // upsertInvoiceSettings forwards it to upsertPosSettings underneath.
+    pos_screen_type: joi.string().valid(...POS_SCREEN_TYPES).insensitive(),
   })
     .min(1)
     // A default the checkout no longer offers would leave the POS preselecting
@@ -280,6 +295,9 @@ const schema = {
 
     // Shows/hides the Hold Order/Bill feature on the POS screen.
     hold_enabled: joi.boolean(),
+
+    // Billing layout the restaurant POS screen opens on.
+    pos_screen_type: joi.string().valid(...POS_SCREEN_TYPES).insensitive(),
   })
     .min(1)
     // A default the POS no longer offers would leave the screen preselecting

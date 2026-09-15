@@ -50,6 +50,21 @@ const category_inactivate = Joi.object({
 });
 
 // ─────────────────────────────────────────────────────────────
+// KOT COUNTER
+// ─────────────────────────────────────────────────────────────
+
+const kot_counter_create = Joi.object({
+  ...zodu_branch,
+  counter_name: Joi.string().max(100).required(),
+});
+
+const kot_assign_items = Joi.object({
+  ...zodu_branch,
+  kot_counter_id: Joi.number().integer().required(),
+  menu_item_ids: Joi.array().items(Joi.string().uuid()).min(1).required(),
+});
+
+// ─────────────────────────────────────────────────────────────
 // EXPENSE CATEGORY
 // ─────────────────────────────────────────────────────────────
 
@@ -411,6 +426,10 @@ module.exports = {
   category_name_check,
   category_update,
   category_inactivate,
+
+  // KOT Counter
+  kot_counter_create,
+  kot_assign_items,
 
   // Expense Category
   expense_category_create,

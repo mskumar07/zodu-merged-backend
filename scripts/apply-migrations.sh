@@ -156,6 +156,7 @@ apply "$AUTH_DB" auth-service/migrations/pos_settings_type_prefixes.sql
 apply "$AUTH_DB" auth-service/migrations/pos_settings_type_prefix_toggle_suffix.sql
 apply "$AUTH_DB" auth-service/migrations/pos_settings_purchase_order_enabled.sql
 apply "$AUTH_DB" auth-service/migrations/pos_settings_hold_enabled.sql
+apply "$AUTH_DB" auth-service/migrations/pos_settings_screen_type.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_prefix_enabled_default_true.sql
 
 # auth-service — company logo on tbl_business. The create-company INSERT names
@@ -219,6 +220,10 @@ apply "$CHECKLIST_DB"  checklist-service/migrations/branch_purge_function.sql
 # uq_orders_branch_public_no constraint.
 apply "$RESTAURANT_DB" restaurant-service/migrations/orders_doc_sequence_backfill.sql
 
+# restaurant-service — KOT printer counters (tbl_kot_counter) plus
+# tbl_menu_items.kot_counter_id so each menu item routes to one counter.
+apply "$RESTAURANT_DB" restaurant-service/migrations/kot_counter.sql
+
 # Older rows were written before PUBLIC_FILE_BASE_URL existed, so they carry
 # whatever origin the code defaulted to at the time (myzodu.com, zodu.in, ...).
 # Repoint every stored file URL at this environment's public origin: swap the
@@ -254,12 +259,12 @@ WHERE table_name = 'tbl_invoice_settings' AND column_name = 'invoice_digit_count
 SELECT 'tbl_business.company_logo_url present: ' || count(*) || '/1'
 FROM information_schema.columns
 WHERE table_name = 'tbl_business' AND column_name = 'company_logo_url';
-SELECT 'tbl_pos_settings columns present: ' || count(*) || '/14'
+SELECT 'tbl_pos_settings columns present: ' || count(*) || '/15'
 FROM information_schema.columns
 WHERE table_name = 'tbl_pos_settings' AND column_name IN ('pos_types','default_pos_type','invoice_suffix','invoice_suffix_enabled',
                       'quotation_prefix','proforma_prefix','quotation_prefix_enabled','proforma_prefix_enabled',
                       'quotation_suffix','quotation_suffix_enabled','proforma_suffix','proforma_suffix_enabled',
-                      'purchase_order_enabled','hold_enabled');
+                      'purchase_order_enabled','hold_enabled','pos_screen_type');
 SQL
 
 for db in "$RETAIL_DB" "$RESTAURANT_DB"; do
