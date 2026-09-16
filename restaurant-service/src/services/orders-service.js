@@ -1,4 +1,5 @@
 const repository = require("../repository/orders-repo");
+const kotService = require("./kot-service");
 
 async function getReportCategory(zodu_id, branch_id, page = 1, limit = 10, search = "", from_date = "", to_date = "") {
   try {
@@ -63,6 +64,25 @@ async function get_ordered_data(branch_id, zodu_id) {
   }
 }
 
+// The per-counter kitchen tickets for what this request changed on the order.
+function kitchenTickets(orderData, mode, public_order_no = null) {
+  return kotService.generateTicketsForOrder({
+    zodu_id: orderData.zodu_id,
+    branch_id: orderData.branch_id,
+    api_order_id: orderData.api_order_id,
+    order_type: orderData.order_type,
+    table_no: orderData.table_no,
+    customer_name: orderData.customer_name,
+    customer_phone: orderData.customer_phone,
+    delivery_address: orderData.delivery_address,
+    waiter_name: orderData.waiter_name,
+    covers: orderData.covers,
+    items: orderData.items,
+    mode,
+    public_order_no,
+  });
+}
+
 async function createOrder(orderData) {
   try {
     if (orderData.order_type === "Dine-In") {
@@ -71,14 +91,18 @@ async function createOrder(orderData) {
       orderData.legacy_order_ref = tmpOrder.legacy_order_ref;
       await repository.createtmpOrderedItems(orderData);
       await repository.createKOT(orderData);
-      return { success: true, message: "Running order created", order: tmpOrder };
+      // A second send to an occupied table lands on the same running order, so
+      // "add" turns these into ADD tickets once the order has any.
+      const { kot, kot_error } = await kitchenTickets(orderData, "add");
+      return { success: true, message: "Running order created", order: tmpOrder, kot, kot_error };
     }
 
     const finalOrder = await repository.createOrder(orderData);
     orderData.api_order_id = finalOrder.api_order_id;
     await repository.createOrderedItems(orderData);
     await repository.StockLedgerInventoryEntry(orderData);
-    return { success: true, message: "Order created successfully", order: finalOrder };
+    const { kot, kot_error } = await kitchenTickets(orderData, "add", finalOrder.public_order_no);
+    return { success: true, message: "Order created successfully", order: finalOrder, kot, kot_error };
   } catch (err) {
     console.error("Order Error:", err);
     return { success: false, message: err.message };
@@ -95,7 +119,10 @@ async function updateOrder(orderData) {
     orderData.legacy_order_ref = tmpOrder.legacy_order_ref;
     await repository.reconciletmpOrderedItems(orderData);
     await repository.updateKOT(orderData);
-    return { success: true, message: "Running order updated", order: tmpOrder };
+    // `items` is the order's full state here: raised quantities become ADD
+    // tickets, lowered or removed ones CANCEL tickets.
+    const { kot, kot_error } = await kitchenTickets(orderData, "reconcile");
+    return { success: true, message: "Running order updated", order: tmpOrder, kot, kot_error };
   } catch (err) {
     console.error("Order Update Error:", err);
     return { success: false, message: err.message };

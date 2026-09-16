@@ -11,6 +11,8 @@ app.use(express.json());
 app.use(cors());
 app.use(httpLogger);
 
+// KOT counters, printers and tickets — ahead of resRouter, which shares the '/' mount.
+app.use('/', require('./api/kot-controller'));
 app.use('/', resRouter);
 app.use('/internal', require('./api/internal-controller'));
 app.use('/api/dashboard', require('./api/dashboard-controller'));

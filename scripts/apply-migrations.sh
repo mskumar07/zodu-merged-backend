@@ -71,6 +71,10 @@ apply "$AUTH_DB" auth-service/migrations/business_company_logo_url.sql
 apply "$RETAIL_DB"     retail-service/migrations/item_description.sql
 apply "$RESTAURANT_DB" restaurant-service/migrations/item_description.sql
 
+# restaurant-service — KOT counters, printers, per-counter tickets and print log.
+# The order endpoints write tickets after every send, so this must land first.
+apply "$RESTAURANT_DB" restaurant-service/migrations/kot_counters_printers.sql
+
 # Older rows were written before PUBLIC_FILE_BASE_URL existed, so they carry
 # whatever origin the code defaulted to at the time (myzodu.com, zodu.in, ...).
 # Repoint every stored file URL at this environment's public origin: swap the

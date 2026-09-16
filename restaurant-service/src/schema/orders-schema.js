@@ -13,6 +13,8 @@ const itemSchema = Joi.object({
   variant_name: Joi.string().max(100).optional().allow(null, ""),
   variant_id: Joi.string().max(100).optional().allow(null, ""),
   gst_percentage: Joi.number().precision(2).min(0).default(0),
+  // Kitchen instruction printed under the item on its KOT ("no onion").
+  note: Joi.string().max(200).allow(null, "").optional(),
 });
 
 const order_create = Joi.object({
@@ -25,6 +27,10 @@ const order_create = Joi.object({
   payment_type: Joi.string().allow(null, ""),
   customer_name: Joi.string().max(100).allow(null, ""),
   customer_phone: Joi.string().pattern(/^[0-9]{7,15}$/).allow(null, ""),
+  // Printed on the KOT only.
+  delivery_address: Joi.string().max(500).allow(null, "").optional(),
+  waiter_name: Joi.string().max(100).allow(null, "").optional(),
+  covers: Joi.number().integer().min(0).max(999).allow(null).optional(),
   subtotal: Joi.number().precision(2).min(0).default(0),
   tax_amount: Joi.number().precision(2).min(0).default(0),
   total_amt: Joi.number().precision(2).min(0).required(),
@@ -54,6 +60,10 @@ const order_update = Joi.object({
   payment_type: Joi.string().allow(null, ""),
   customer_name: Joi.string().max(100).allow(null, ""),
   customer_phone: Joi.string().pattern(/^[0-9]{7,15}$/).allow(null, ""),
+  // Printed on the KOT only.
+  delivery_address: Joi.string().max(500).allow(null, "").optional(),
+  waiter_name: Joi.string().max(100).allow(null, "").optional(),
+  covers: Joi.number().integer().min(0).max(999).allow(null).optional(),
   subtotal: Joi.number().precision(2).min(0).default(0),
   tax_amount: Joi.number().precision(2).min(0).default(0),
   total_amt: Joi.number().precision(2).min(0).required(),
