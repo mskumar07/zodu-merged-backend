@@ -231,6 +231,13 @@ exports.createDefaultBranch = async ({ branch_id, zodu_id, qr_code_id, branch_na
       [zodu_id, branch_id]
     );
 
+    await client.query(
+      `INSERT INTO tbl_pos_settings (zodu_id, branch_id)
+       VALUES ($1, $2)
+       ON CONFLICT (zodu_id, branch_id) DO NOTHING`,
+      [zodu_id, branch_id]
+    );
+
     if (ownsTransaction) await client.query('COMMIT');
     return rows[0] || null;
   } catch (err) {
@@ -332,6 +339,14 @@ exports.createBranch = async (data) => {
     // ── Seed default invoice settings for this branch ──────────────────────
     await client.query(
       `INSERT INTO tbl_invoice_settings (zodu_id, branch_id)
+       VALUES ($1, $2)
+       ON CONFLICT (zodu_id, branch_id) DO NOTHING`,
+      [data.zodu_id, data.branch_id]
+    );
+
+    // ── Seed default POS settings for this branch ───────────────────────────
+    await client.query(
+      `INSERT INTO tbl_pos_settings (zodu_id, branch_id)
        VALUES ($1, $2)
        ON CONFLICT (zodu_id, branch_id) DO NOTHING`,
       [data.zodu_id, data.branch_id]
@@ -486,16 +501,16 @@ exports.getInvoiceSettings = async (zodu_id, branch_id) => {
 exports.upsertInvoiceSettings = async (zodu_id, branch_id, fields) => {
   const allowed = [
     // Invoice numbering
-    'invoice_prefix', 'invoice_digit_count', 'invoice_start_number',
+    'invoice_prefix', 'invoice_prefix_enabled', 'invoice_start_number',
     // Tax / payment
     'default_tax_label', 'invoice_due_days', 'default_payment_method',
-    'payment_types',
+    'payment_types', 'invoice_copy_types',
     // Print layout
     'invoice_template',
     'printer_inch', 'invoice_theme_color', 'show_company_logo', 'print_thank_you_message',
     'show_item_id', 'show_description', 'show_customer_details',
     'show_tax_details', 'show_payment_details', 'show_bank_details',
-    'show_signature',
+    'show_signature', 'show_shipping_address', 'show_serial_no',
     // Free-text blocks
     'show_terms_conditions', 'terms_conditions', 'show_notes', 'notes',
     // Signature image (uploaded to MinIO, see POST .../signature)
@@ -504,6 +519,14 @@ exports.upsertInvoiceSettings = async (zodu_id, branch_id, fields) => {
     'stock_check_enabled', 'customer_mandatory',
   ];
   const cols = Object.keys(fields).filter((k) => allowed.includes(k));
+
+  // pos_screen_type lives on tbl_pos_settings, not tbl_invoice_settings, but
+  // the frontend saves it from this same "Additional Settings" section
+  // through this endpoint — forward it to tbl_pos_settings instead of
+  // dropping it or writing it to the wrong table.
+  if (Object.prototype.hasOwnProperty.call(fields, 'pos_screen_type')) {
+    await exports.upsertPosSettings(zodu_id, branch_id, { pos_screen_type: fields.pos_screen_type });
+  }
 
   if (cols.length === 0) {
     return exports.getInvoiceSettings(zodu_id, branch_id);
@@ -522,4 +545,62 @@ exports.upsertInvoiceSettings = async (zodu_id, branch_id, fields) => {
     insertVals
   );
   return r.rows[0];
+};
+
+// ── POS SETTINGS ─────────────────────────────────────────────────────────────
+
+exports.getPosSettings = async (zodu_id, branch_id) => {
+  const r = await conn.query(
+    `SELECT * FROM tbl_pos_settings WHERE zodu_id=$1 AND branch_id=$2`,
+    [zodu_id, branch_id]
+  );
+  return r.rows[0] || null;
+};
+
+exports.upsertPosSettings = async (zodu_id, branch_id, fields) => {
+  const allowed = [
+    'pos_types', 'default_pos_type', 'invoice_suffix', 'invoice_suffix_enabled',
+    'quotation_prefix', 'proforma_prefix',
+    'quotation_prefix_enabled', 'proforma_prefix_enabled',
+    'quotation_suffix', 'quotation_suffix_enabled',
+    'proforma_suffix', 'proforma_suffix_enabled',
+    'purchase_order_enabled', 'hold_enabled', 'pos_screen_type',
+  ];
+  const cols = Object.keys(fields).filter((k) => allowed.includes(k));
+
+  if (cols.length === 0) {
+    return exports.getPosSettings(zodu_id, branch_id);
+  }
+
+  const insertCols = ['zodu_id', 'branch_id', ...cols];
+  const insertVals = [zodu_id, branch_id, ...cols.map((c) => fields[c])];
+  const placeholders = insertVals.map((_, i) => `$${i + 1}`).join(', ');
+  const updateSet = cols.map((c) => `${c} = EXCLUDED.${c}`).join(', ');
+
+  const r = await conn.query(
+    `INSERT INTO tbl_pos_settings (${insertCols.join(', ')})
+     VALUES (${placeholders})
+     ON CONFLICT (zodu_id, branch_id) DO UPDATE SET ${updateSet}
+     RETURNING *`,
+    insertVals
+  );
+  return r.rows[0];
+};
+
+// ── BRANCH PURGE ─────────────────────────────────────────────────────────────
+// Hard-deletes this database's own branch-scoped rows: tbl_pos_settings,
+// tbl_invoice_settings, tbl_roles, then tbl_branch itself. Scope intentionally
+// excludes tbl_access_control/tbl_user_roles per product decision — see
+// auth-service/migrations/branch_purge_function.sql.
+//
+// Called LAST in the delete-branch flow (branchDeleteService.js), after every
+// other service has already purged its own data for this branch — tbl_branch
+// is the source of truth other services validate against, so it only
+// disappears once everything referencing it elsewhere is confirmed gone.
+exports.purgeBranch = async (zodu_id, branch_id) => {
+  const { rows } = await conn.query(
+    `SELECT * FROM fn_purge_branch($1, $2)`,
+    [zodu_id, branch_id]
+  );
+  return rows;
 };

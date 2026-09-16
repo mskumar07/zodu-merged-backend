@@ -1,5 +1,15 @@
 const db = require('../database/connection');
 
+// ========== Branch Purge (delete branch cascade) ==========
+
+exports.purgeBranch = async (zodu_id, branch_id) => {
+  const { rows } = await db.query(
+    `SELECT * FROM fn_purge_branch($1, $2)`,
+    [zodu_id, branch_id]
+  );
+  return rows;
+};
+
 const maskAccount = (row) => {
   if (!row?.bank_account_number) return row;
   const acc = row.bank_account_number;

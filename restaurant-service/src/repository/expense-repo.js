@@ -112,11 +112,11 @@ exports.createExpense = async (client, data) => {
   return rows[0];
 };
 
-exports.createExpenseLineItems = async (client, items, expense_id, category_id) => {
+exports.createExpenseLineItems = async (client, items, expense_id, category_id, zodu_id) => {
   for (const item of items) {
     await client.query(
-      `INSERT INTO tbl_expense_items (expense_id, item_id, item_name, qty, price, category_id)
-       VALUES ($1,$2,$3,$4,$5,$6)`,
+      `INSERT INTO tbl_expense_items (expense_id, item_id, item_name, qty, price, category_id, zodu_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
       [
         expense_id,
         item.item_id    || null,
@@ -124,6 +124,7 @@ exports.createExpenseLineItems = async (client, items, expense_id, category_id) 
         item.qty,
         item.price,
         category_id,
+        zodu_id,
       ]
     );
   }

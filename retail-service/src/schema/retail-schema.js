@@ -184,6 +184,14 @@ const order_create = Joi.object({
 
   sale_type: Joi.string().optional().allow(null, ""),
 
+  // Manual override for the sequence number portion of the generated
+  // sale_id (Invoice/Quotation/Proforma, whichever sale_type this is) — for
+  // when a branch has skipped some numbers and wants this specific sale to
+  // use a particular number instead of the next auto-incremented one.
+  // tbl_doc_id_seq's counter is bumped to at least this value so later
+  // auto-generated numbers continue forward from here, never colliding.
+  invoice_no: Joi.number().integer().min(1).optional().allow(null),
+
   customer_id: Joi.string().uuid().optional().allow(null, ""),
 
   customer_name: Joi.string().optional().allow(null, ""),
@@ -220,6 +228,15 @@ sale_time: Joi.string()
   round_off: Joi.number().precision(2).optional().allow(null),
 
   due_date: Joi.date().iso().optional().allow(null, ""),
+
+  // Delivery vehicle registration number — printed on the invoice's
+  // "Transport Copy" (see tbl_invoice_settings.invoice_copy_types).
+  vehicle_no: Joi.string().max(20).optional().allow(null, ""),
+
+  // Customer's purchase order reference — printed on the invoice alongside
+  // the sale's own sale_id/sale_date.
+  purchase_order_no: Joi.string().max(50).optional().allow(null, ""),
+  purchase_order_date: Joi.date().iso().optional().allow(null, ""),
 
   // Stock Check toggle from POS settings — only when true does createOrder
   // block the sale for insufficient stock; false lets it sell through.
@@ -278,7 +295,7 @@ sale_time: Joi.string()
   branch_id: Joi.string().max(50).required(),
 
   sale_type: Joi.string()
-    .valid("retail", "credit",'quotation')
+    .valid("retail", "credit", 'quotation', 'proforma')
     .required(),
 
   sale_date: Joi.date().required(),
@@ -317,6 +334,15 @@ sale_time: Joi.string()
   notes: Joi.string()
     .allow(null, ""),
   due_date: Joi.date().iso().optional().allow(null, ""),
+
+  // Delivery vehicle registration number — printed on the invoice's
+  // "Transport Copy" (see tbl_invoice_settings.invoice_copy_types).
+  vehicle_no: Joi.string().max(20).optional().allow(null, ""),
+
+  // Customer's purchase order reference — printed on the invoice alongside
+  // the sale's own sale_id/sale_date.
+  purchase_order_no: Joi.string().max(50).optional().allow(null, ""),
+  purchase_order_date: Joi.date().iso().optional().allow(null, ""),
 
   // Stock Check toggle from POS settings — only when true does updateOrder
   // block the edit for insufficient stock; false lets it save through.
@@ -384,12 +410,15 @@ const add_customer = Joi.object({
   cpy_name:  Joi.string().optional().allow(null, ""),
  
   // jsonb arrays — accept array of strings or single string
+  // Mobile number is optional: null / "" / [] all mean "no mobile number",
+  // not just omitting the field entirely.
   mobile_no: Joi.alternatives()
     .try(
-      Joi.array().items(Joi.string().pattern(/^[0-9]{10}$/)).min(1),
+      Joi.array().items(Joi.string().pattern(/^[0-9]{10}$/)),
       Joi.string().pattern(/^[0-9]{10}$/)
     )
-    .optional(),
+    .optional()
+    .allow(null, ''),
  
   email_id: Joi.alternatives()
     .try(
@@ -419,7 +448,7 @@ const add_customer = Joi.object({
 const mark_payment = Joi.object({
   zodu_id:          Joi.string().required(),
   branch_id:        Joi.string().required(),
-  sale_id:          Joi.string().required(),
+  sale_uuid:        Joi.string().guid().required(),
   paid_amount:      Joi.number().positive().required(),
   transaction_type: Joi.string().valid("Cash", "Card", "UPI", "Credit").required(),
   transaction_id:   Joi.string().optional().allow(null, ""),
@@ -693,6 +722,38 @@ const sale_by_id_params = Joi.object({
   sale_id:   Joi.string().required(),
   zodu_id:   Joi.string().required(),
   branch_id: Joi.string().required(),
+  // sale_id is only unique per (branch_id, sale_type) — pass this to
+  // disambiguate when two sale types share the same generated id text.
+  // Optional: omitted requests fall back to the most recent match.
+  sale_type: Joi.string().valid("S", "Q", "P").optional().allow(null, ""),
+});
+
+// GET /api/sales/:sale_uuid — looked up by tbl_sales' primary key instead of
+// the human-readable sale_id, which can contain characters (e.g. "/" from an
+// invoice_prefix like "MA/") that don't survive as a single URL path segment.
+// sale_uuid is already unique on its own, so no sale_type disambiguation is
+// needed here the way sale_by_id_params needs it.
+const sale_by_uuid_params = Joi.object({
+  sale_uuid: Joi.string().guid().required(),
+  zodu_id:   Joi.string().required(),
+  branch_id: Joi.string().required(),
+});
+
+const DOC_SEQUENCE_TYPES = ['INV', 'QUO', 'PRO', 'PUR', 'EXP', 'CUS'];
+
+const doc_sequence_params = Joi.object({
+  zodu_id:   Joi.string().required(),
+  branch_id: Joi.string().required(),
+  doc_type:  Joi.string().valid(...DOC_SEQUENCE_TYPES).required(),
+});
+
+const doc_sequence_update = Joi.object({
+  zodu_id:   Joi.string().required(),
+  branch_id: Joi.string().required(),
+  doc_type:  Joi.string().valid(...DOC_SEQUENCE_TYPES).required(),
+  // The next generated id will be last_seq + 1 — set this to the number of
+  // the last one actually issued/used (on paper or elsewhere) to skip ahead.
+  last_seq:  Joi.number().integer().min(0).required(),
 });
 
 const get_customers = Joi.object({
@@ -714,12 +775,15 @@ const update_customer = Joi.object({
   cpy_name:  Joi.string().optional().allow(null, ""),
   zodu_id:   Joi.string().optional(),
     branch_id: Joi.string().optional(),
+  // Mobile number is optional: null / "" / [] all mean "no mobile number",
+  // not just omitting the field entirely.
   mobile_no: Joi.alternatives()
     .try(
-      Joi.array().items(Joi.string().pattern(/^[0-9]{10}$/)).min(1),
+      Joi.array().items(Joi.string().pattern(/^[0-9]{10}$/)),
       Joi.string().pattern(/^[0-9]{10}$/)
     )
-    .optional(),
+    .optional()
+    .allow(null, ''),
   email_id: Joi.alternatives()
     .try(
       Joi.array().items(Joi.string().email({ tlds: false })),
@@ -823,6 +887,9 @@ module.exports = {
   sales_history_query,
   sales_history_summary_query,
   sale_by_id_params,
+  sale_by_uuid_params,
+  doc_sequence_params,
+  doc_sequence_update,
   get_customers,
   get_customer_by_id,
   add_customer,

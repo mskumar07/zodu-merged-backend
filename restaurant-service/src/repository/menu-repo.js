@@ -259,3 +259,96 @@ exports.AddFav = async (menuId, active) => {
     throw error;
   }
 };
+
+// ─────────────────────────────────────────────────────────────
+// KOT COUNTER (kitchen printer station) + item-to-counter assignment
+// ─────────────────────────────────────────────────────────────
+
+// counter_code (KOT1, KOT2, ...) is stamped by trg_set_kot_counter_code on
+// insert (tbl_doc_id_seq, doc_type 'KOT') — never set from here.
+exports.createKotCounter = async (zodu_id, branch_id, counter_name) => {
+  try {
+    const dupCheck = await conn.query(
+      `SELECT id FROM tbl_kot_counter
+       WHERE zodu_id = $1 AND branch_id = $2 AND LOWER(counter_name) = LOWER($3)
+       LIMIT 1`,
+      [zodu_id, branch_id, counter_name]
+    );
+    if (dupCheck.rows.length > 0) {
+      throw new Error("Counter name already exists");
+    }
+
+    const result = await conn.query(
+      `INSERT INTO tbl_kot_counter (zodu_id, branch_id, counter_name)
+       VALUES ($1, $2, $3) RETURNING *`,
+      [zodu_id, branch_id, counter_name]
+    );
+    return result.rows[0];
+  } catch (err) {
+    throw new Error("Unable to create KOT counter: " + err.message);
+  }
+};
+
+exports.getKotCounters = async (zodu_id, branch_id) => {
+  const result = await conn.query(
+    `SELECT * FROM tbl_kot_counter
+     WHERE zodu_id = $1 AND branch_id = $2 AND active = TRUE
+     ORDER BY id ASC`,
+    [zodu_id, branch_id]
+  );
+  return result.rows;
+};
+
+// Categories + items with each item's current kot_counter_id, so the UI can
+// pre-check items already assigned to a counter and show per-category counts.
+// menu_item_id here is item_uuid — the stable identifier the assign API takes
+// back, instead of the internal serial id.
+exports.getMenuItemsForKotAssignment = async (zodu_id, branch_id) => {
+  const result = await conn.query(
+    `SELECT
+       c.id AS category_id, c.name AS category_name,
+       m.item_uuid AS menu_item_id, m.menu_id, m.menu_name, m.kot_counter_id
+     FROM tbl_category c
+     JOIN tbl_menu_items m ON m.menu_category_id = c.id
+     WHERE c.zodu_id = $1 AND c.branch_id = $2 AND m.active = TRUE
+     ORDER BY c.name ASC, m.menu_name ASC`,
+    [zodu_id, branch_id]
+  );
+  return result.rows;
+};
+
+// Sets menu_item_ids (item_uuid values) as the COMPLETE set of items on
+// kot_counter_id — an item previously on this counter but left out of
+// menu_item_ids (unchecked in the UI) is cleared back to unassigned, not left
+// stuck on this counter. Both statements run in one transaction so a failure
+// never leaves items cleared without the new assignment applied.
+exports.assignItemsToKotCounter = async (zodu_id, branch_id, kot_counter_id, menu_item_ids) => {
+  if (!Array.isArray(menu_item_ids) || menu_item_ids.length === 0) {
+    throw new Error("menu_item_ids array is empty or invalid");
+  }
+  try {
+    await conn.query("BEGIN");
+
+    await conn.query(
+      `UPDATE tbl_menu_items
+       SET kot_counter_id = NULL, updated_at = CURRENT_TIMESTAMP
+       WHERE kot_counter_id = $1 AND zodu_id = $2 AND branch_id = $3
+         AND NOT (item_uuid = ANY($4::uuid[]))`,
+      [kot_counter_id, zodu_id, branch_id, menu_item_ids]
+    );
+
+    const result = await conn.query(
+      `UPDATE tbl_menu_items
+       SET kot_counter_id = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE item_uuid = ANY($2::uuid[]) AND zodu_id = $3 AND branch_id = $4
+       RETURNING item_uuid AS menu_item_id, menu_id, menu_name, kot_counter_id`,
+      [kot_counter_id, menu_item_ids, zodu_id, branch_id]
+    );
+
+    await conn.query("COMMIT");
+    return result.rows;
+  } catch (err) {
+    await conn.query("ROLLBACK");
+    throw new Error("Unable to assign items to KOT counter: " + err.message);
+  }
+};

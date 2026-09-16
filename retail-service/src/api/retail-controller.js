@@ -557,20 +557,23 @@ router.get("/api/sales/history/summary", async (req, res) => {
   }
 });
 
-// GET /api/sales/:sale_id?zodu_id=&branch_id=
-router.get("/api/sales/:sale_id", async (req, res) => {
+// GET /api/sales/:sale_uuid?zodu_id=&branch_id= — looked up by tbl_sales'
+// primary key instead of the human-readable sale_id, which can contain
+// characters (e.g. "/" from an invoice_prefix like "MA/") that don't survive
+// as a single URL path segment and 404 before this handler is ever reached.
+router.get("/api/sales/:sale_uuid", async (req, res) => {
   try {
-    const { errors, input } = await RequestValidator(schema.sale_by_id_params, {
-      sale_id:   req.params.sale_id,
+    const { errors, input } = await RequestValidator(schema.sale_by_uuid_params, {
+      sale_uuid: req.params.sale_uuid,
       zodu_id:   req.query.zodu_id,
       branch_id: req.query.branch_id,
     });
-    
+
     if (errors) return res.status(400).json({ errors });
- 
-    const data = await service.getSaleById(input.sale_id, input.zodu_id, input.branch_id);
+
+    const data = await service.getSaleById(input.sale_uuid, input.zodu_id, input.branch_id);
     if (!data.success) return res.status(404).json({ message: data.message });
- 
+
     return res.status(200).json(data);
   } catch (error) {
     console.error(error);
@@ -578,10 +581,13 @@ router.get("/api/sales/:sale_id", async (req, res) => {
   }
 });
 
-router.delete("/api/sales/:sale_id", async (req, res) => {
+// DELETE /api/sales/:sale_uuid?zodu_id=&branch_id= — looked up by tbl_sales'
+// primary key for the same reason as the GET route above (sale_id can contain
+// "/" and 404 before reaching this handler).
+router.delete("/api/sales/:sale_uuid", async (req, res) => {
   try {
-    const { errors, input } = await RequestValidator(schema.sale_by_id_params, {
-      sale_id: req.params.sale_id,
+    const { errors, input } = await RequestValidator(schema.sale_by_uuid_params, {
+      sale_uuid: req.params.sale_uuid,
       zodu_id: req.query.zodu_id,
       branch_id: req.query.branch_id,
     });
@@ -589,7 +595,7 @@ router.delete("/api/sales/:sale_id", async (req, res) => {
     if (errors) return res.status(400).json({ errors });
 
     const data = await service.deleteSale(
-      input.sale_id,
+      input.sale_uuid,
       input.zodu_id,
       input.branch_id
     );
@@ -598,7 +604,9 @@ router.delete("/api/sales/:sale_id", async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: "Sale deleted successfully",
+      message: data.data?.sale_type === 'P'
+        ? "Proforma permanently deleted"
+        : "Sale deleted successfully",
       data: data.data,
     });
   } catch (error) {
@@ -608,10 +616,51 @@ router.delete("/api/sales/:sale_id", async (req, res) => {
 });
 
 
-router.post("/api/sales/:sale_id/payment", async (req, res) => {
+// GET /api/doc-sequence/:zodu_id/:branch_id/:doc_type — current last_seq and a
+// preview of the next id (e.g. "INV-B1-145") without incrementing anything.
+// doc_type: INV | QUO | PRO | PUR | EXP | CUS.
+router.get("/api/doc-sequence/:zodu_id/:branch_id/:doc_type", async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(schema.doc_sequence_params, req.params);
+    if (errors) return res.status(400).json({ errors });
+
+    const data = await service.getDocSequence(input.zodu_id, input.branch_id, input.doc_type);
+    if (!data.success) return res.status(400).json({ message: data.message });
+
+    return res.status(200).json(data);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// PUT /api/doc-sequence/:zodu_id/:branch_id/:doc_type — manual override, body
+// { last_seq }. Nudges the counter so the next generated id is last_seq + 1,
+// for a branch that has skipped numbers on paper/elsewhere.
+router.put("/api/doc-sequence/:zodu_id/:branch_id/:doc_type", async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(schema.doc_sequence_update, {
+      ...req.params,
+      last_seq: req.body.last_seq,
+    });
+    if (errors) return res.status(400).json({ errors });
+
+    const data = await service.updateDocSequence(input.zodu_id, input.branch_id, input.doc_type, input.last_seq);
+    if (!data.success) return res.status(400).json({ message: data.message });
+
+    return res.status(200).json(data);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/sales/:sale_uuid/payment — looked up by tbl_sales' primary key
+// for the same reason as the GET/DELETE routes above.
+router.post("/api/sales/:sale_uuid/payment", async (req, res) => {
   try {
     const { error, value } = schema.mark_payment.validate(
-      { ...req.body, sale_id: req.params.sale_id },
+      { ...req.body, sale_uuid: req.params.sale_uuid },
       { abortEarly: false }
     );
     if (error) {
@@ -637,9 +686,10 @@ router.post("/api/customers", async (req, res) => {
       return res.status(400).json({ errors: error.details.map(d => d.message) });
     }
  
-    // Normalise: single string mobile/email → array
-    if (typeof value.mobile_no === "string") value.mobile_no = [value.mobile_no];
-    if (typeof value.email_id  === "string") value.email_id  = [value.email_id];
+    // Normalise: single string mobile/email → array. An empty string means
+    // "no number/email", not an array holding one empty string.
+    if (typeof value.mobile_no === "string") value.mobile_no = value.mobile_no ? [value.mobile_no] : [];
+    if (typeof value.email_id  === "string") value.email_id  = value.email_id  ? [value.email_id]  : [];
  
     const data = await service.createCustomer(value);
     if (!data.success) return res.status(400).json({ message: data.message });
@@ -835,9 +885,10 @@ router.put("/api/customers/:cust_uuid", async (req, res) => {
       });
     }
 
-    // Normalise: single string mobile/email → array
-    if (typeof value.mobile_no === "string") value.mobile_no = [value.mobile_no];
-    if (typeof value.email_id  === "string") value.email_id  = [value.email_id];
+    // Normalise: single string mobile/email → array. An empty string means
+    // "no number/email", not an array holding one empty string.
+    if (typeof value.mobile_no === "string") value.mobile_no = value.mobile_no ? [value.mobile_no] : [];
+    if (typeof value.email_id  === "string") value.email_id  = value.email_id  ? [value.email_id]  : [];
 
     const data = await service.updateCustomer(value);
 

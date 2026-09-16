@@ -1,5 +1,15 @@
 const db = require('../database/connection');
 
+// ========== Branch Purge (delete branch cascade) ==========
+
+exports.purgeBranch = async (zodu_id, branch_id) => {
+  const { rows } = await db.query(
+    `SELECT * FROM fn_purge_branch($1, $2)`,
+    [zodu_id, branch_id]
+  );
+  return rows;
+};
+
 // ── CREATE ────────────────────────────────────────────────────────────────────
 
 // Next sequential code per zodu_id, e.g. CHECKLIST-001

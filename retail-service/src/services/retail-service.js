@@ -1406,6 +1406,10 @@ async function createOrder(orderData) {
     await client.query("BEGIN");
 
     const isQuotation = orderData.sale_type === "quotation";
+    // Proforma behaves like a regular sale (stock moves, payment collected) —
+    // it only gets its own numbering sequence and, on delete, is permanently
+    // removed instead of soft-cancelled. See deleteSale / generateSaleId.
+    const isProforma  = orderData.sale_type === "proforma";
 
     // ✅ CALCULATE TOTALS WITH GST MODE
     const totals = calculateOrderTotals(
@@ -1448,7 +1452,7 @@ if (!isQuotation) {
     const sale = await repository.createOrder(
       {
         ...orderData,
-        sale_type: isQuotation ? "Q" : "S",
+        sale_type: isQuotation ? "Q" : isProforma ? "P" : "S",
         paid_amount: paidAmount,
         payment_status: paymentStatus,
         ...totals,
@@ -1524,6 +1528,8 @@ if (!isQuotation) {
       success: true,
       message: isQuotation
         ? "Quotation created successfully"
+        : isProforma
+        ? "Proforma created successfully"
         : "Order created successfully",
       order: sale,
       items,
@@ -1654,16 +1660,18 @@ async function updateOrder(orderData) {
     if (!saleRes.rows.length) throw new Error('Sale not found');
  
     const sale              = saleRes.rows[0];
-    const existingSaleType  = sale.sale_type;         // 'S' or 'Q'
+    const existingSaleType  = sale.sale_type;         // 'S', 'Q' or 'P'
     const requestedSaleType = orderData.sale_type;
- 
+
     // ── Normalise to single-char codes ────────────────────────
     const normalizedSaleType =
       requestedSaleType === 'quotation' || requestedSaleType === 'Q' ? 'Q'
+      : requestedSaleType === 'proforma' || requestedSaleType === 'P' ? 'P'
       : requestedSaleType === 'retail'  ||
         requestedSaleType === 'sale'    ||
         requestedSaleType === 'S'       ? 'S'
       : existingSaleType  === 'quotation' || existingSaleType  === 'Q' ? 'Q'
+      : existingSaleType  === 'proforma'  || existingSaleType  === 'P' ? 'P'
       : 'S';
  
     const isQuotation         = existingSaleType  === 'Q' || existingSaleType  === 'quotation';
@@ -1841,7 +1849,10 @@ async function updateOrder(orderData) {
          round_off             = $18,
          updated_at            = NOW(),
          due_date              = $19,
-         discount_gst_mode     = $21
+         discount_gst_mode     = $21,
+         vehicle_no            = $22,
+         purchase_order_no     = $23,
+         purchase_order_date   = $24
        WHERE sale_uuid = $20`,
       [
         newSaleId,
@@ -1868,6 +1879,9 @@ async function updateOrder(orderData) {
         orderData.due_date ? new Date(orderData.due_date).toISOString().slice(0, 10) : null,
         saleId,                     // WHERE sale_uuid = $20,
         orderData.discount_gst_mode ?? null,
+        orderData.vehicle_no ?? null,
+        orderData.purchase_order_no ?? null,
+        orderData.purchase_order_date ? new Date(orderData.purchase_order_date).toISOString().slice(0, 10) : null,
       ]
     );
  
@@ -1909,6 +1923,8 @@ async function updateOrder(orderData) {
         ? 'Quotation converted to Sale successfully'
         : isQuotation
         ? 'Quotation updated successfully'
+        : normalizedSaleType === 'P'
+        ? 'Proforma updated successfully'
         : 'Order updated successfully',
       sale_id: newSaleId,
     };
@@ -1942,9 +1958,9 @@ async function getSalesHistorySummary(filters) {
   }
 }
  
-async function getSaleById(sale_id, zodu_id, branch_id) {
+async function getSaleById(sale_uuid, zodu_id, branch_id) {
   try {
-    const data = await repository.getSaleById(sale_id, zodu_id, branch_id);
+    const data = await repository.getSaleById(sale_uuid, zodu_id, branch_id);
     if (!data) return { success: false, message: "Sale not found" };
     return { success: true, data };
   } catch (err) {
@@ -1953,9 +1969,9 @@ async function getSaleById(sale_id, zodu_id, branch_id) {
   }
 }
 
-async function deleteSale(sale_id, zodu_id, branch_id) {
+async function deleteSale(sale_uuid, zodu_id, branch_id) {
   try {
-    const result = await repository.deleteSale(sale_id, zodu_id, branch_id);
+    const result = await repository.deleteSale(sale_uuid, zodu_id, branch_id);
     if (!result) return { success: false, message: "Sale not found" };
     if (result.alreadyCancelled) return { success: false, message: "Sale is already cancelled" };
     return { success: true, data: result };
@@ -1965,6 +1981,26 @@ async function deleteSale(sale_id, zodu_id, branch_id) {
   }
 }
 
+
+async function getDocSequence(zodu_id, branch_id, doc_type) {
+  try {
+    const data = await repository.peekDocSequence(zodu_id, branch_id, doc_type);
+    return { success: true, data };
+  } catch (err) {
+    console.error("getDocSequence Error:", err);
+    return { success: false, message: err.message };
+  }
+}
+
+async function updateDocSequence(zodu_id, branch_id, doc_type, last_seq) {
+  try {
+    const data = await repository.setDocSequence(zodu_id, branch_id, doc_type, last_seq);
+    return { success: true, data, message: "Sequence updated successfully" };
+  } catch (err) {
+    console.error("updateDocSequence Error:", err);
+    return { success: false, message: err.message };
+  }
+}
 
 async function getCustomers(filters) {
   try {
@@ -2915,6 +2951,8 @@ module.exports = {
   getSalesHistorySummary,
   getSaleById,
   deleteSale,
+  getDocSequence,
+  updateDocSequence,
   markSalePayment,
   getCustomers,
   getCustomerLedger,

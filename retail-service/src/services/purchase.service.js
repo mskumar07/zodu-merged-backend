@@ -108,14 +108,10 @@ exports.createPurchase = async (data) => {
       return { success: false, message: `Item(s) not found in menu: ${missing.join(", ")}` };
     }
 
-    const purchase_id = "PUR-" + Date.now();
+    const purchase = await repo.createPurchase(client, data);
+    const purchase_id = purchase.purchase_id;
 
-    const purchase = await repo.createPurchase(client, {
-      ...data,
-      purchase_id,
-    });
-
-    await repo.createPurchaseItems(client, data.items, purchase_id);
+    await repo.createPurchaseItems(client, data.items, purchase_id, data.zodu_id);
 
     // Add stock for each purchased item
     for (const item of data.items) {
@@ -337,7 +333,7 @@ exports.updatePurchase = async (purchase_id, data) => {
     await repo.updatePurchase(client, purchase_id, data);
     
     if (newItems.length > 0) {
-      await repo.createPurchaseItems(client, newItems, purchase_id);
+      await repo.createPurchaseItems(client, newItems, purchase_id, zodu_id);
     }
 
     // Only record a new payment entry for the incremental difference

@@ -150,7 +150,6 @@ async function AccountLogin(userInputs, meta = {}) {
   const dummyHash = '$2b$12$invalidhashusedtopreventtimingattack0000000000000000';
   const user      = result?.rows?.[0];
   const isValid   = await ValidatePassword(password, user?.password_hash || dummyHash);
-  console.log(isValid)
 
   if (!user || !isValid) {
     return FormateData({ error: 'Invalid credentials' });
@@ -605,6 +604,51 @@ async function EditBranch(userInputs, user_id) {
   }
 }
 
+// Hard-deletes a branch and every row scoped to it, everywhere: retail,
+// restaurant, employee, payroll, checklist databases, then this database's
+// own tbl_pos_settings/tbl_invoice_settings/tbl_roles/tbl_branch (see
+// business-repo.js's purgeBranch). auth-service purges its own tables and
+// removes tbl_branch LAST, only after every other service has confirmed
+// success — so tbl_branch (the source of truth other services check against)
+// never disappears while some other service still holds data for it.
+//
+// Stops at the first service that fails and reports which one — every
+// purge endpoint is idempotent, so retrying this call after fixing the
+// failure safely continues rather than double-deleting or erroring.
+async function DeleteBranch({ zodu_id, branch_id, user_id }) {
+  const userCompanies = await repository.getUserCompanies({ user_id });
+  const hasAccess = userCompanies.some((company) => company.zodu_id === zodu_id);
+
+  if (!hasAccess) {
+    return FormateData({ error: 'You do not have access to delete a branch for this company' });
+  }
+
+  const { purgeBranchAcrossServices } = require('../utils/branchPurgeClient');
+  const outcome = await purgeBranchAcrossServices(zodu_id, branch_id);
+
+  if (!outcome.success) {
+    console.error(`delete branch failed at ${outcome.failedService}:`, outcome.error);
+    return FormateData({
+      error: `Failed to delete branch data in ${outcome.failedService}: ${outcome.error}. No further services were purged — safe to retry once the issue is fixed.`,
+      partial_results: outcome.results,
+    });
+  }
+
+  try {
+    const authResults = await businessRepo.purgeBranch(zodu_id, branch_id);
+    return FormateData({
+      message: 'Branch deleted successfully',
+      results: [...outcome.results, { service: 'auth-service', data: authResults }],
+    });
+  } catch (err) {
+    console.error('delete branch failed in auth-service:', err.message);
+    return FormateData({
+      error: `Every other service was purged, but auth-service's own cleanup failed: ${err.message}. Safe to retry — earlier steps are idempotent.`,
+      partial_results: outcome.results,
+    });
+  }
+}
+
 // ── Invoice Settings ──────────────────────────────────────────────────────────
 
 async function GetInvoiceSettings({ user_id, zodu_id, branch_id }) {
@@ -619,6 +663,12 @@ async function GetInvoiceSettings({ user_id, zodu_id, branch_id }) {
   if (!settings) {
     return FormateData({ error: 'Invoice settings not found' });
   }
+
+  // pos_screen_type physically lives on tbl_pos_settings (see
+  // upsertInvoiceSettings) — merge it in so GET mirrors what PUT accepts.
+  const posSettings = await businessRepo.getPosSettings(zodu_id, branch_id);
+  settings.pos_screen_type = posSettings?.pos_screen_type ?? 'Touch';
+
   return FormateData({ settings });
 }
 
@@ -636,6 +686,40 @@ async function EditInvoiceSettings({ user_id, zodu_id, branch_id, ...fields }) {
   } catch (err) {
     console.error('update invoice settings failed:', err.message);
     return FormateData({ error: 'Failed to update invoice settings. Please try again.' });
+  }
+}
+
+// ── POS Settings ──────────────────────────────────────────────────────────────
+
+async function GetPosSettings({ user_id, zodu_id, branch_id }) {
+  const userCompanies = await repository.getUserCompanies({ user_id });
+  const hasAccess = userCompanies.some((company) => company.zodu_id === zodu_id);
+
+  if (!hasAccess) {
+    return FormateData({ error: 'You do not have access to view settings for this company' });
+  }
+
+  const settings = await businessRepo.getPosSettings(zodu_id, branch_id);
+  if (!settings) {
+    return FormateData({ error: 'POS settings not found' });
+  }
+  return FormateData({ settings });
+}
+
+async function EditPosSettings({ user_id, zodu_id, branch_id, ...fields }) {
+  const userCompanies = await repository.getUserCompanies({ user_id });
+  const hasAccess = userCompanies.some((company) => company.zodu_id === zodu_id);
+
+  if (!hasAccess) {
+    return FormateData({ error: 'You do not have access to edit settings for this company' });
+  }
+
+  try {
+    const settings = await businessRepo.upsertPosSettings(zodu_id, branch_id, fields);
+    return FormateData({ message: 'POS settings updated successfully', settings });
+  } catch (err) {
+    console.error('update POS settings failed:', err.message);
+    return FormateData({ error: 'Failed to update POS settings. Please try again.' });
   }
 }
 
@@ -706,10 +790,12 @@ async function GetAllSettings({ user_id, zodu_id, branch_id }) {
   }
 
   const invoice = await businessRepo.getInvoiceSettings(zodu_id, branch_id);
+  const pos     = await businessRepo.getPosSettings(zodu_id, branch_id);
 
   return FormateData({
     settings: {
       invoice: invoice || null,
+      pos:     pos     || null,
     },
   });
 }
@@ -762,10 +848,13 @@ module.exports = {
   AddBranch,
   EditCompany,
   EditBranch,
+  DeleteBranch,
   GetMyCompanies,
   GetRoleAccess,
   GetInvoiceSettings,
   EditInvoiceSettings,
+  GetPosSettings,
+  EditPosSettings,
   UploadInvoiceSignature,
   DeleteInvoiceSignature,
   UploadCompanyLogo,

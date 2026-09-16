@@ -6,6 +6,24 @@ const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,30}$/;
 // constraint on tbl_invoice_settings.payment_types — keep the two in step.
 const PAYMENT_TYPES = ['Cash', 'UPI', 'UPI + Cash', 'Cheque', 'Bank Transfer', 'Others'];
 
+// Which copy labels a branch prints per sale. Same vocabulary as the CHECK
+// constraint on tbl_invoice_settings.invoice_copy_types — keep the two in step.
+const INVOICE_COPY_TYPES = ['Original', 'Duplicate', 'Transport'];
+
+// Sale types the POS screen can offer. Same vocabulary as the CHECK
+// constraints on tbl_pos_settings — keep the two in step.
+const POS_TYPES = ['Invoice', 'Quotation', 'Proforma'];
+
+// Billing layout the restaurant POS screen opens on. Column lives on
+// tbl_pos_settings (see pos_settings_screen_type.sql), but is accepted on
+// both edit_pos_settings AND edit_invoice_settings — the frontend saves the
+// whole "POS settings — Additional Settings" section (this field included)
+// through PUT /api/invoice-settings, which forwards it to tbl_pos_settings
+// via upsertPosSettings underneath (see upsertInvoiceSettings). No DB CHECK
+// constraint backs this — this Joi list is the only place valid values are
+// enforced, so keep it in step with the frontend.
+const POS_SCREEN_TYPES = ['Touch', 'Keyboard'];
+
 const schema = {
   account_create: joi.object({
     restaurant_name: joi.string().max(50).required(),
@@ -149,7 +167,9 @@ const schema = {
 
     // Invoice numbering
     invoice_prefix: joi.string().max(20).allow(null, ''),
-    invoice_digit_count: joi.number().integer().min(1).max(10),
+    // Lets a branch save a prefix without applying it (toggle off = no
+    // prefix on generated sale IDs / order numbers).
+    invoice_prefix_enabled: joi.boolean(),
     invoice_start_number: joi.number().integer().min(0),
 
     // Tax / payment
@@ -162,6 +182,13 @@ const schema = {
     payment_types: joi
       .array()
       .items(joi.string().valid(...PAYMENT_TYPES).insensitive())
+      .min(1)
+      .unique((a, b) => String(a).toLowerCase() === String(b).toLowerCase()),
+    // Which copy labels to print per sale — Original (customer), Duplicate
+    // (business's own copy), Transport Copy (delivery vehicle).
+    invoice_copy_types: joi
+      .array()
+      .items(joi.string().valid(...INVOICE_COPY_TYPES).insensitive())
       .min(1)
       .unique((a, b) => String(a).toLowerCase() === String(b).toLowerCase()),
 
@@ -182,6 +209,8 @@ const schema = {
     show_payment_details: joi.boolean(),
     show_bank_details: joi.boolean(),
     show_signature: joi.boolean(),
+    show_shipping_address: joi.boolean(),
+    show_serial_no: joi.boolean(),
     // Normally set by the signature upload endpoint; allowed here so the
     // client can clear it (null) without a separate call.
     signature_url: joi.string().uri().allow(null, ''),
@@ -195,8 +224,13 @@ const schema = {
     // POS settings — Additional Settings
     stock_check_enabled: joi.boolean(),
     customer_mandatory: joi.boolean(),
+    // Column actually lives on tbl_pos_settings, not tbl_invoice_settings —
+    // accepted here too because the frontend saves the whole "Additional
+    // Settings" section (this field included) through this endpoint.
+    // upsertInvoiceSettings forwards it to upsertPosSettings underneath.
+    pos_screen_type: joi.string().valid(...POS_SCREEN_TYPES).insensitive(),
   })
-    .min(3)
+    .min(1)
     // A default the checkout no longer offers would leave the POS preselecting
     // a type the cashier cannot pick. Only checked when one request changes both.
     .custom((value, helpers) => {
@@ -210,7 +244,81 @@ const schema = {
         : helpers.message(
             `"default_payment_method" (${default_payment_method}) must be one of the selected payment_types`
           );
-    }, 'default payment method is offered'),
+    }, 'default payment method is offered')
+    // RequestValidator calls validateAsync with stripUnknown: true globally,
+    // which would otherwise delete an unrecognized field (typo, deprecated
+    // field like the old invoice_digit_count, or a field that actually
+    // belongs on edit_pos_settings) before .min(3) ever runs — surfacing a
+    // confusing "must have at least 3 keys" instead of naming the bad field.
+    // This override makes Joi reject unknown keys by name instead.
+    .prefs({ stripUnknown: false }),
+
+  edit_pos_settings: joi.object({
+    zodu_id: joi.string().required(),
+    branch_id: joi.string().required(),
+
+    // Which sale types the POS screen offers. insensitive() lets the client
+    // send 'invoice' and still store the canonical 'Invoice'. At least one —
+    // a POS with no sale type has nothing to open.
+    pos_types: joi
+      .array()
+      .items(joi.string().valid(...POS_TYPES).insensitive())
+      .min(1)
+      .unique((a, b) => String(a).toLowerCase() === String(b).toLowerCase()),
+
+    // Which of the enabled types the POS screen opens on by default.
+    default_pos_type: joi.string().valid(...POS_TYPES).insensitive(),
+
+    // Trailing text on the invoice ID, e.g. a fiscal year ("26-27").
+    // _enabled lets a branch save a suffix without applying it yet.
+    invoice_suffix: joi.string().max(20).allow(null, ''),
+    invoice_suffix_enabled: joi.boolean(),
+
+    // Per-type ID prefixes — Invoice uses tbl_invoice_settings.invoice_prefix
+    // instead (see edit_invoice_settings); these two make Quotation/Proforma
+    // numbering settings-driven too, instead of hard-coded "QUO"/"...P".
+    quotation_prefix: joi.string().max(20).allow(null, ''),
+    proforma_prefix: joi.string().max(20).allow(null, ''),
+    // Mirrors invoice_prefix_enabled — lets a branch save a Quotation/
+    // Proforma prefix without applying it.
+    quotation_prefix_enabled: joi.boolean(),
+    proforma_prefix_enabled: joi.boolean(),
+    // Mirrors invoice_suffix/invoice_suffix_enabled.
+    quotation_suffix: joi.string().max(20).allow(null, ''),
+    quotation_suffix_enabled: joi.boolean(),
+    proforma_suffix: joi.string().max(20).allow(null, ''),
+    proforma_suffix_enabled: joi.boolean(),
+
+    // Shows/hides the Purchase Order No/Date fields (tbl_sales.purchase_order_no/
+    // purchase_order_date) on the POS screen.
+    purchase_order_enabled: joi.boolean(),
+
+    // Shows/hides the Hold Order/Bill feature on the POS screen.
+    hold_enabled: joi.boolean(),
+
+    // Billing layout the restaurant POS screen opens on.
+    pos_screen_type: joi.string().valid(...POS_SCREEN_TYPES).insensitive(),
+  })
+    .min(1)
+    // A default the POS no longer offers would leave the screen preselecting
+    // a type the cashier cannot pick. Only checked when one request changes both.
+    .custom((value, helpers) => {
+      const { pos_types, default_pos_type } = value;
+      if (!pos_types || !default_pos_type) return value;
+      const offered = pos_types.some(
+        (t) => String(t).toLowerCase() === String(default_pos_type).toLowerCase()
+      );
+      return offered
+        ? value
+        : helpers.message(
+            `"default_pos_type" (${default_pos_type}) must be one of the selected pos_types`
+          );
+    }, 'default pos type is offered')
+    // See edit_invoice_settings' identical override — without this, an
+    // unrecognized field (e.g. sent to the wrong settings endpoint) gets
+    // silently stripped before .min(3) runs, giving a confusing "must have
+    // at least 3 keys" instead of naming the actual bad field.
+    .prefs({ stripUnknown: false }),
 };
 
 module.exports = schema;

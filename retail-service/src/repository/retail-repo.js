@@ -3268,8 +3268,11 @@ exports.createOrder = async (orderData, client) => {
     orderData.branch_id,
     orderData.sale_type,
     orderData.zodu_id,
-    db
+    db,
+    orderData.invoice_no ?? null
   );
+
+  console.log(sale_id);
  
   const result = await db.query(
     `INSERT INTO tbl_sales (
@@ -3280,7 +3283,7 @@ exports.createOrder = async (orderData, client) => {
         discount_type, discount_value, discount_amount,
         total_amount, paid_amount, balance_amount,
         payment_status, notes, sale_date, sale_time,due_date,round_off,
-        discount_gst_mode
+        discount_gst_mode, vehicle_no, purchase_order_no, purchase_order_date
      )
      VALUES (
         $1,$2,$3,
@@ -3290,7 +3293,7 @@ exports.createOrder = async (orderData, client) => {
         $9,$10,$11,
         $12,$13,$14,
         $15,$16,$17,$18,$19,$20,
-        $21
+        $21, $22, $23, $24
      )
      RETURNING *`,
     [
@@ -3319,10 +3322,13 @@ exports.createOrder = async (orderData, client) => {
       orderData.sale_time ?? null,
       orderData.due_date ?? null,
       orderData.round_off ?? 0,
-      orderData.discount_gst_mode ?? null
+      orderData.discount_gst_mode ?? null,
+      orderData.vehicle_no ?? null,
+      orderData.purchase_order_no ?? null,
+      orderData.purchase_order_date ? new Date(orderData.purchase_order_date).toISOString().slice(0, 10) : null
     ]
   );
- 
+
   const row = result.rows[0];
 
   return {
@@ -3564,73 +3570,176 @@ exports.createSalesPayment = async (orderData, sale, client) => {
 };
  
 
-exports.generateSaleId = async (branchId, saleType, zoduId, client) => {
-  const db = client ?? conn;
-  // ── 1. Normalise type ────────────────────────────────────────────────────
+// Shared by generateSaleId and peekDocSequence — settings-driven prefix +
+// suffix + doc_type for a sale type. Nothing here is hardcoded to a specific
+// business's convention: Invoice/Quotation/Proforma prefixes and suffixes all
+// come from auth-service (invoice_prefix on tbl_invoice_settings; invoice_suffix,
+// quotation_prefix/proforma_prefix, quotation_suffix/proforma_suffix on
+// tbl_pos_settings), each independently toggleable/settable. Falls back to
+// sane defaults only when the settings lookup itself fails (auth-service
+// down), never as a silent override.
+async function resolveSaleNumbering(branchId, saleType, zoduId) {
   const type =
-    saleType === 'Q' || saleType === 'quotation' ? 'Q' : 'S';
+    saleType === 'Q' || saleType === 'quotation' ? 'Q'
+    : saleType === 'P' || saleType === 'proforma' || saleType === 'Proforma' ? 'P'
+    : 'S';
 
-  // ── 2. Invoice prefix (auth-service is the single source of truth) ──────
-  // digit_count and start_number are fixed — the Settings screen no longer
-  // exposes them, numbering always starts at 001 and pads to 3 digits.
-  const digitCount = 3;
-  const startNumber = 1;
   let invoicePrefix = 'INV';
+  let quotationPrefix = 'QUO';
+  let proformaPrefix = 'PRO';
+  let invoiceSuffix = '';
+  let quotationSuffix = '';
+  let proformaSuffix = '';
   try {
-    const res = await authClient.getInvoiceSettings(zoduId, branchId);
-    const settings = res?.data;
-    if (settings?.invoice_prefix) {
-      invoicePrefix = settings.invoice_prefix;
+    const [invRes, posRes] = await Promise.all([
+      authClient.getInvoiceSettings(zoduId, branchId).catch(() => null),
+      authClient.getPosSettings(zoduId, branchId).catch(() => null),
+    ]);
+    const invoiceSettings = invRes?.data;
+    const posSettings = posRes?.data;
+    // Toggled off means the branch wants no prefix at all for that type —
+    // takes priority over whatever text is saved in the *_prefix field.
+    if (invoiceSettings?.invoice_prefix_enabled === false) {
+      invoicePrefix = '';
+    } else if (invoiceSettings?.invoice_prefix) {
+      invoicePrefix = invoiceSettings.invoice_prefix;
+    }
+    if (posSettings?.quotation_prefix_enabled === false) {
+      quotationPrefix = '';
+    } else if (posSettings?.quotation_prefix) {
+      quotationPrefix = posSettings.quotation_prefix;
+    }
+    if (posSettings?.proforma_prefix_enabled === false) {
+      proformaPrefix = '';
+    } else if (posSettings?.proforma_prefix) {
+      proformaPrefix = posSettings.proforma_prefix;
+    }
+    // Suffixes default OFF (invoice_suffix_enabled/quotation_suffix_enabled/
+    // proforma_suffix_enabled all DEFAULT FALSE) — only applied when the
+    // branch explicitly turns them on AND has text saved for them.
+    if (posSettings?.invoice_suffix_enabled === true && posSettings?.invoice_suffix) {
+      invoiceSuffix = posSettings.invoice_suffix;
+    }
+    if (posSettings?.quotation_suffix_enabled === true && posSettings?.quotation_suffix) {
+      quotationSuffix = posSettings.quotation_suffix;
+    }
+    if (posSettings?.proforma_suffix_enabled === true && posSettings?.proforma_suffix) {
+      proformaSuffix = posSettings.proforma_suffix;
     }
   } catch (err) {
-    console.error('[generateSaleId] invoice settings lookup failed, using defaults:', err.message);
+    console.error('[resolveSaleNumbering] settings lookup failed, using defaults:', err.message);
   }
 
-  // Quotations keep their own independent sequence, distinguished by a
-  // "Q" suffix on the prefix so numbering never collides with sales.
-  const prefix = type === 'Q' ? `${invoicePrefix}Q` : invoicePrefix;
+  const prefix = type === 'Q' ? quotationPrefix : type === 'P' ? proformaPrefix : invoicePrefix;
+  const suffix = type === 'Q' ? quotationSuffix : type === 'P' ? proformaSuffix : invoiceSuffix;
+  const docType = type === 'Q' ? 'QUO' : type === 'P' ? 'PRO' : 'INV';
 
-  // ── Branch suffix ─────────────────────────────────────────────────────────
-  // Primary:  strip the known zoduId prefix   →  "ZODU035B1".replace("ZODU035","") = "B1"
-  // Fallback: regex match on trailing B+digits →  handles any format
-  let branchSuffix;
-  if (zoduId && branchId.startsWith(zoduId)) {
-    branchSuffix = branchId.slice(zoduId.length);
-  } else {
-    const match = branchId.match(/B\d+$/i);
-    branchSuffix = match ? match[0].toUpperCase() : branchId;
-  }
-
-  // ── 3. Next number: derived from tbl_sales itself, no separate counter ────
-  // Look at the highest existing number for this branch+type ACROSS ALL
-  // PREFIXES (not just the current one) and increment from there — changing
-  // the prefix in Settings must not restart numbering, e.g. INV-B1-143 then
-  // switching to IXV must produce IXV-B1-144, not IXV-B1-001. Falls back to
-  // invoice_start_number only when this branch+type has never had a sale.
-  // Runs inside the same DB transaction as the INSERT into tbl_sales, with a
-  // transaction-scoped advisory lock keyed on (zodu_id, branch_id, type) so
-  // two concurrent sales for the same branch can't read the same max and
-  // collide on the same sale_id.
-  await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${zoduId}:${branchId}:${type}`]);
-
-  const { rows } = await db.query(
-    `SELECT sale_id FROM tbl_sales
-     WHERE zodu_id = $1 AND branch_id = $2 AND sale_type = $3 AND sale_id LIKE $4
-     ORDER BY (regexp_match(sale_id, '-(\\d+)$'))[1]::int DESC
-     LIMIT 1`,
-    [zoduId, branchId, type, `%-${branchSuffix}-%`]
-  );
-
-  let nextNumber = startNumber;
-  if (rows[0]) {
-    const match = rows[0].sale_id.match(/-(\d+)$/);
-    if (match) nextNumber = parseInt(match[1], 10) + 1;
-  }
-
-  // ── 4. Format ─────────────────────────────────────────────────────────────
-  return `${prefix}-${branchSuffix}-${String(nextNumber).padStart(digitCount, '0')}`;
-  // → "IXV-B1-144"  (prefix from settings, number continues across prefix changes)
+  return { prefix, suffix, docType };
 }
+
+// No branch mention — numbering is already scoped per (zodu_id, branch_id,
+// doc_type) in tbl_doc_id_seq, and tbl_sales' unique constraint includes
+// branch_id as its own column, so the branch doesn't need to be spelled out
+// in the id text too.
+function formatDocId(prefix, seq, suffix = '', digitCount = 3) {
+  const padded = String(seq).padStart(digitCount, '0');
+  // No prefix (invoice_prefix_enabled = false, sale type only) is just the
+  // bare padded number; suffix (e.g. a fiscal-year tag) is appended only
+  // when the branch has enabled it and saved text for it.
+  let id = prefix ? `${prefix}${padded}` : padded;
+  if (suffix) id = `${id}${suffix}`;
+  return id;
+}
+
+exports.generateSaleId = async (branchId, saleType, zoduId, client, manualSeq) => {
+  const db = client ?? conn;
+  const { prefix, suffix, docType } = await resolveSaleNumbering(branchId, saleType, zoduId);
+
+  let nextNumber;
+  if (manualSeq != null) {
+    // Manual override (e.g. request body's invoice_no) — a branch skipped
+    // some numbers and wants THIS sale to use a specific one instead of the
+    // next auto-incremented value. Bump the counter to at least manualSeq
+    // (GREATEST, never rewinds it) so later auto-generated numbers continue
+    // forward from here instead of colliding with the one just used.
+    await db.query(
+      `INSERT INTO tbl_doc_id_seq (zodu_id, branch_id, doc_type, last_seq)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (zodu_id, branch_id, doc_type)
+       DO UPDATE SET last_seq = GREATEST(tbl_doc_id_seq.last_seq, EXCLUDED.last_seq)`,
+      [zoduId, branchId, docType, manualSeq]
+    );
+    nextNumber = manualSeq;
+  } else {
+    // Next number comes from the same shared tbl_doc_id_seq counter table
+    // used for purchase_id/expense_id/cust_id (see
+    // purchase_expense_id_sequence.sql) — one row per (zodu_id, branch_id,
+    // doc_type), atomically bumped here via INSERT ... ON CONFLICT, so no
+    // separate advisory lock is needed (the table's own primary key
+    // serializes concurrent bumps for the same key). Runs inside the same DB
+    // transaction as the INSERT into tbl_sales, so a rolled-back sale
+    // doesn't burn a number. Can also be corrected ahead of time with
+    // PUT /api/doc-sequence/:zodu_id/:branch_id/:doc_type.
+    const { rows } = await db.query(
+      `INSERT INTO tbl_doc_id_seq (zodu_id, branch_id, doc_type, last_seq)
+       VALUES ($1, $2, $3, 1)
+       ON CONFLICT (zodu_id, branch_id, doc_type)
+       DO UPDATE SET last_seq = tbl_doc_id_seq.last_seq + 1
+       RETURNING last_seq`,
+      [zoduId, branchId, docType]
+    );
+    nextNumber = rows[0].last_seq;
+  }
+
+  return formatDocId(prefix, nextNumber, suffix);
+  // → "INV-144"         (invoice_prefix from settings)
+  // → "QUO-144"         (quotation_prefix from settings, default "QUO")
+  // → "PRO-144"         (proforma_prefix from settings, default "PRO")
+  // → "144"             (invoice_prefix_enabled = false, sale type)
+  // → "INV-144-26-27"   (invoice_suffix_enabled = true, invoice_suffix = "26-27")
+}
+
+// GET /api/doc-sequence/:zodu_id/:branch_id/:doc_type — current last_seq and
+// a preview of the next id, without incrementing anything. Lets the POS show
+// "Next Invoice: INV-B1-145" before the sale is actually created.
+exports.peekDocSequence = async (zodu_id, branch_id, doc_type) => {
+  const r = await conn.query(
+    `SELECT last_seq FROM tbl_doc_id_seq WHERE zodu_id = $1 AND branch_id = $2 AND doc_type = $3`,
+    [zodu_id, branch_id, doc_type]
+  );
+  const lastSeq = r.rows[0]?.last_seq ?? 0;
+  const nextSeq = lastSeq + 1;
+
+  let nextId = null;
+  if (doc_type === 'INV' || doc_type === 'QUO' || doc_type === 'PRO') {
+    const saleType = doc_type === 'QUO' ? 'Q' : doc_type === 'PRO' ? 'P' : 'S';
+    const { prefix, suffix } = await resolveSaleNumbering(branch_id, saleType, zodu_id);
+    nextId = formatDocId(prefix, nextSeq, suffix);
+  } else if (doc_type === 'PUR' || doc_type === 'EXP' || doc_type === 'CUS') {
+    // Fixed prefixes stamped by the DB triggers in purchase_expense_id_sequence.sql
+    // / customer_id_sequence.sql — not settings-driven, so just mirror their format.
+    nextId = `${doc_type}-${branch_id}-${String(nextSeq).padStart(3, '0')}`;
+  }
+
+  return { doc_type, last_seq: lastSeq, next_seq: nextSeq, next_id: nextId };
+};
+
+// PUT /api/doc-sequence/:zodu_id/:branch_id/:doc_type — manual override.
+// Lets a branch's numbering be nudged to match paper/external records when
+// they've skipped some numbers — the next generated id continues from
+// last_seq + 1. Works for any doc_type sharing tbl_doc_id_seq (sales' INV/
+// QUO/PRO as well as PUR/EXP/CUS).
+exports.setDocSequence = async (zodu_id, branch_id, doc_type, last_seq) => {
+  const r = await conn.query(
+    `INSERT INTO tbl_doc_id_seq (zodu_id, branch_id, doc_type, last_seq)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (zodu_id, branch_id, doc_type)
+     DO UPDATE SET last_seq = EXCLUDED.last_seq
+     RETURNING *`,
+    [zodu_id, branch_id, doc_type, last_seq]
+  );
+  return r.rows[0];
+};
 
 exports.getSalesHistory = async (filters) => {
   const {
@@ -3810,10 +3919,12 @@ exports.getSalesHistorySummary = async (filters) => {
   };
 };
 
-exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
-  console.log("Fetching sale by ID-------------:", sale_id, zodu_id, branch_id);
-  
-  console.log(sale_id,zodu_id,branch_id)
+exports.getSaleById = async (sale_uuid, zodu_id, branch_id) => {
+  console.log("Fetching sale by UUID-------------:", sale_uuid, zodu_id, branch_id);
+
+  // Looked up by sale_uuid (tbl_sales' primary key) instead of sale_id — a
+  // UUID is unique on its own, so unlike the old sale_id lookup this needs no
+  // sale_type disambiguation and no ORDER BY fallback.
   const saleResult = await conn.query(
     `SELECT
         s.sale_uuid,
@@ -3839,7 +3950,10 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
         s.round_off,
         s.discount_gst_mode,
         TO_CHAR(s.due_date,  'DD-Mon-YYYY')             AS due_date_fmt,
- 
+        s.vehicle_no,
+        s.purchase_order_no,
+        TO_CHAR(s.purchase_order_date, 'DD Mon YYYY')   AS purchase_order_date_fmt,
+
         c.cust_uuid,
         c.cust_id AS customer_id,
         c.cust_name,
@@ -3859,17 +3973,16 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
  
      FROM tbl_sales s
      LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid AND c.branch_id = s.branch_id
-     WHERE s.sale_id   = $1
+     WHERE s.sale_uuid = $1
        AND s.zodu_id   = $2
        AND s.branch_id = $3
      LIMIT 1`,
-    [sale_id, zodu_id, branch_id]
+    [sale_uuid, zodu_id, branch_id]
   );
- 
+
   if (saleResult.rows.length === 0) return null;
- 
-  const row       = saleResult.rows[0];
-  const sale_uuid = row.sale_uuid;
+
+  const row = saleResult.rows[0];
 
  
   const sale = {
@@ -3896,6 +4009,9 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
     round_off: row.round_off,
     discount_gst_mode: row.discount_gst_mode,
     due_date_fmt: row.due_date_fmt,
+    vehicle_no: row.vehicle_no,
+    purchase_order_no: row.purchase_order_no,
+    purchase_order_date_fmt: row.purchase_order_date_fmt,
   };
  
   const customer = row.cust_uuid
@@ -4017,7 +4133,9 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
        AND sp.zodu_id   = $2
        AND sp.branch_id = $3
      ORDER BY sp.created_at DESC, sp.id DESC`,
-    [sale_id, zodu_id, branch_id]
+    // tbl_sale_payment has no sale_uuid column — it keys on the text sale_id,
+    // so use the one we just fetched on `row` rather than the uuid parameter.
+    [row.sale_id, zodu_id, branch_id]
   );
  
   // ✅ Return history for this sale
@@ -4075,20 +4193,22 @@ exports.getSaleById = async (sale_id, zodu_id, branch_id) => {
   };
 };
 
-exports.deleteSale = async (sale_id, zodu_id, branch_id) => {
+exports.deleteSale = async (sale_uuid, zodu_id, branch_id) => {
   const client = await conn.connect();
 
   try {
     await client.query("BEGIN");
 
+    // Looked up by sale_uuid (tbl_sales' primary key) — unique on its own, so
+    // unlike the old sale_id lookup this needs no sale_type disambiguation.
     const saleResult = await client.query(
       `SELECT sale_uuid, sale_id, sale_type, cancelled_inv
        FROM tbl_sales
-       WHERE sale_id = $1
+       WHERE sale_uuid = $1
          AND zodu_id = $2
          AND branch_id = $3
        FOR UPDATE`,
-      [sale_id, zodu_id, branch_id]
+      [sale_uuid, zodu_id, branch_id]
     );
 
     if (!saleResult.rows.length) {
@@ -4103,169 +4223,209 @@ exports.deleteSale = async (sale_id, zodu_id, branch_id) => {
       return { alreadyCancelled: true, ...sale };
     }
 
-    const soldItemsResult = await client.query(
-      `SELECT
-          si.item_id,
-          COALESCE(mi.item_uuid, inv.item_uuid) AS item_uuid,
-          COALESCE(mi.item_name, inv.item_name, MAX(si.item_name)) AS item_name,
-          SUM(COALESCE(si.quantity, 0))::numeric AS sold_qty
-       FROM tbl_sale_items si
-       LEFT JOIN tbl_menu_items mi
-         ON mi.item_id = si.item_id
-        AND mi.branch_id = $3
-        AND mi.zodu_id = $2
-       LEFT JOIN tbl_inventory inv
-         ON inv.item_id = si.item_id
-        AND inv.branch_id = $3
-        AND inv.zodu_id = $2
-       WHERE si.sale_uuid = $1
-       GROUP BY si.item_id, mi.item_uuid, inv.item_uuid, mi.item_name, inv.item_name`,
-      [sale.sale_uuid, zodu_id, branch_id]
-    );
-
-    const returnItemsResult = await client.query(
-      `SELECT
-          sri.item_id,
-          COALESCE(mi.item_uuid, inv.item_uuid) AS item_uuid,
-          COALESCE(mi.item_name, inv.item_name, MAX(sri.item_name)) AS item_name,
-          SUM(COALESCE(sri.return_qty, 0))::numeric AS return_qty
-       FROM tbl_sale_return_items sri
-       INNER JOIN tbl_sale_returns sr
-         ON sr.return_uuid = sri.return_uuid
-       LEFT JOIN tbl_menu_items mi
-         ON mi.item_id = sri.item_id
-        AND mi.branch_id = $3
-        AND mi.zodu_id = $2
-       LEFT JOIN tbl_inventory inv
-         ON inv.item_id = sri.item_id
-        AND inv.branch_id = $3
-        AND inv.zodu_id = $2
-       WHERE sr.original_sale_uuid = $1
-       GROUP BY sri.item_id, mi.item_uuid, inv.item_uuid, mi.item_name, inv.item_name`,
-      [sale.sale_uuid, zodu_id, branch_id]
-    );
-
-    const netQtyByItem = new Map();
-
-    for (const row of soldItemsResult.rows) {
-      netQtyByItem.set(String(row.item_id), {
-        item_id: row.item_id,
-        item_uuid: row.item_uuid,
-        item_name: row.item_name,
-        net_qty: Number(row.sold_qty || 0),
-      });
+    // Stock only moved at sale time when the branch had Stock Check on (see
+    // createOrder's `!isQuotation && orderData.stock_check` gate) — reversing
+    // it here regardless would add back inventory that was never deducted.
+    // Read the branch's *current* setting; toggling it between the sale and
+    // its deletion is an edge case we accept.
+    let stockCheckEnabled = false;
+    try {
+      const res = await authClient.getInvoiceSettings(zodu_id, branch_id);
+      stockCheckEnabled = !!res?.data?.stock_check_enabled;
+    } catch (err) {
+      console.error('[deleteSale] invoice settings lookup failed, assuming stock check off:', err.message);
     }
 
-    for (const row of returnItemsResult.rows) {
-      const key = String(row.item_id);
-      const existing = netQtyByItem.get(key) || {
-        item_id: row.item_id,
-        item_uuid: row.item_uuid,
-        item_name: row.item_name,
-        net_qty: 0,
-      };
-
-      existing.item_uuid = existing.item_uuid || row.item_uuid;
-      existing.item_name = existing.item_name || row.item_name;
-      existing.net_qty -= Number(row.return_qty || 0);
-      netQtyByItem.set(key, existing);
-    }
-
-    const itemsToReverse = [...netQtyByItem.values()].filter(
-      (item) => item.item_id && item.net_qty !== 0
-    );
-
-    if (itemsToReverse.length > 0) {
-      const inventoryRowsResult = await client.query(
-        `SELECT inventory_uuid, item_uuid, item_id, item_name, available_qty
-         FROM tbl_inventory
-         WHERE item_id = ANY($1::text[])
-           AND zodu_id = $2
-           AND branch_id = $3
-         FOR UPDATE`,
-        [itemsToReverse.map((item) => item.item_id), zodu_id, branch_id]
+    if (stockCheckEnabled) {
+      const soldItemsResult = await client.query(
+        `SELECT
+            si.item_id,
+            COALESCE(mi.item_uuid, inv.item_uuid) AS item_uuid,
+            COALESCE(mi.item_name, inv.item_name, MAX(si.item_name)) AS item_name,
+            SUM(COALESCE(si.quantity, 0))::numeric AS sold_qty
+         FROM tbl_sale_items si
+         LEFT JOIN tbl_menu_items mi
+           ON mi.item_id = si.item_id
+          AND mi.branch_id = $3
+          AND mi.zodu_id = $2
+         LEFT JOIN tbl_inventory inv
+           ON inv.item_id = si.item_id
+          AND inv.branch_id = $3
+          AND inv.zodu_id = $2
+         WHERE si.sale_uuid = $1
+         GROUP BY si.item_id, mi.item_uuid, inv.item_uuid, mi.item_name, inv.item_name`,
+        [sale.sale_uuid, zodu_id, branch_id]
       );
 
-      const inventoryByItemId = new Map(
-        inventoryRowsResult.rows.map((row) => [String(row.item_id), row])
+      const returnItemsResult = await client.query(
+        `SELECT
+            sri.item_id,
+            COALESCE(mi.item_uuid, inv.item_uuid) AS item_uuid,
+            COALESCE(mi.item_name, inv.item_name, MAX(sri.item_name)) AS item_name,
+            SUM(COALESCE(sri.return_qty, 0))::numeric AS return_qty
+         FROM tbl_sale_return_items sri
+         INNER JOIN tbl_sale_returns sr
+           ON sr.return_uuid = sri.return_uuid
+         LEFT JOIN tbl_menu_items mi
+           ON mi.item_id = sri.item_id
+          AND mi.branch_id = $3
+          AND mi.zodu_id = $2
+         LEFT JOIN tbl_inventory inv
+           ON inv.item_id = sri.item_id
+          AND inv.branch_id = $3
+          AND inv.zodu_id = $2
+         WHERE sr.original_sale_uuid = $1
+         GROUP BY sri.item_id, mi.item_uuid, inv.item_uuid, mi.item_name, inv.item_name`,
+        [sale.sale_uuid, zodu_id, branch_id]
       );
 
-      const inventoryUuids = [];
-      const stockAfters = [];
-      const ledgerItemUuids = [];
-      const ledgerItemIds = [];
-      const ledgerItemNames = [];
-      const ledgerQtyChanges = [];
-      const ledgerStockBefores = [];
-      const ledgerStockAfters = [];
+      const netQtyByItem = new Map();
 
-      for (const item of itemsToReverse) {
-        const inventory = inventoryByItemId.get(String(item.item_id));
-        if (!inventory) continue;
-
-        const stockBefore = Number(inventory.available_qty || 0);
-        const stockAfter = stockBefore + Number(item.net_qty);
-
-        inventoryUuids.push(inventory.inventory_uuid);
-        stockAfters.push(stockAfter);
-
-        ledgerItemUuids.push(inventory.item_uuid);
-        ledgerItemIds.push(item.item_id);
-        ledgerItemNames.push(item.item_name);
-        ledgerQtyChanges.push(Number(item.net_qty));
-        ledgerStockBefores.push(stockBefore);
-        ledgerStockAfters.push(stockAfter);
+      for (const row of soldItemsResult.rows) {
+        netQtyByItem.set(String(row.item_id), {
+          item_id: row.item_id,
+          item_uuid: row.item_uuid,
+          item_name: row.item_name,
+          net_qty: Number(row.sold_qty || 0),
+        });
       }
 
-      if (inventoryUuids.length > 0) {
-        await client.query(
-          `UPDATE tbl_inventory AS inv
-           SET available_qty = data.stock_after,
-               last_stock_update = CURRENT_TIMESTAMP
-           FROM (
-             SELECT UNNEST($1::uuid[]) AS inventory_uuid,
-                    UNNEST($2::numeric[]) AS stock_after
-           ) AS data
-           WHERE inv.inventory_uuid = data.inventory_uuid`,
-          [inventoryUuids, stockAfters]
+      for (const row of returnItemsResult.rows) {
+        const key = String(row.item_id);
+        const existing = netQtyByItem.get(key) || {
+          item_id: row.item_id,
+          item_uuid: row.item_uuid,
+          item_name: row.item_name,
+          net_qty: 0,
+        };
+
+        existing.item_uuid = existing.item_uuid || row.item_uuid;
+        existing.item_name = existing.item_name || row.item_name;
+        existing.net_qty -= Number(row.return_qty || 0);
+        netQtyByItem.set(key, existing);
+      }
+
+      const itemsToReverse = [...netQtyByItem.values()].filter(
+        (item) => item.item_id && item.net_qty !== 0
+      );
+
+      if (itemsToReverse.length > 0) {
+        const inventoryRowsResult = await client.query(
+          `SELECT inventory_uuid, item_uuid, item_id, item_name, available_qty
+           FROM tbl_inventory
+           WHERE item_id = ANY($1::text[])
+             AND zodu_id = $2
+             AND branch_id = $3
+           FOR UPDATE`,
+          [itemsToReverse.map((item) => item.item_id), zodu_id, branch_id]
         );
 
-        await client.query(
-          `INSERT INTO tbl_stock_ledger (
-            item_uuid, item_id, zodu_id, branch_id,
-            item_name, transaction_type,
-            reference_id, qty_change,
-            stock_before, stock_after, notes
-          )
-          SELECT
-            data.item_uuid, data.item_id, $1, $2,
-            data.item_name, 'sale_deleted',
-            $3, data.qty_change,
-            data.stock_before, data.stock_after,
-            $4
-          FROM (
+        const inventoryByItemId = new Map(
+          inventoryRowsResult.rows.map((row) => [String(row.item_id), row])
+        );
+
+        const inventoryUuids = [];
+        const stockAfters = [];
+        const ledgerItemUuids = [];
+        const ledgerItemIds = [];
+        const ledgerItemNames = [];
+        const ledgerQtyChanges = [];
+        const ledgerStockBefores = [];
+        const ledgerStockAfters = [];
+
+        for (const item of itemsToReverse) {
+          const inventory = inventoryByItemId.get(String(item.item_id));
+          if (!inventory) continue;
+
+          const stockBefore = Number(inventory.available_qty || 0);
+          const stockAfter = stockBefore + Number(item.net_qty);
+
+          inventoryUuids.push(inventory.inventory_uuid);
+          stockAfters.push(stockAfter);
+
+          ledgerItemUuids.push(inventory.item_uuid);
+          ledgerItemIds.push(item.item_id);
+          ledgerItemNames.push(item.item_name);
+          ledgerQtyChanges.push(Number(item.net_qty));
+          ledgerStockBefores.push(stockBefore);
+          ledgerStockAfters.push(stockAfter);
+        }
+
+        if (inventoryUuids.length > 0) {
+          await client.query(
+            `UPDATE tbl_inventory AS inv
+             SET available_qty = data.stock_after,
+                 last_stock_update = CURRENT_TIMESTAMP
+             FROM (
+               SELECT UNNEST($1::uuid[]) AS inventory_uuid,
+                      UNNEST($2::numeric[]) AS stock_after
+             ) AS data
+             WHERE inv.inventory_uuid = data.inventory_uuid`,
+            [inventoryUuids, stockAfters]
+          );
+
+          await client.query(
+            `INSERT INTO tbl_stock_ledger (
+              item_uuid, item_id, zodu_id, branch_id,
+              item_name, transaction_type,
+              reference_id, qty_change,
+              stock_before, stock_after, notes
+            )
             SELECT
-              UNNEST($5::uuid[]) AS item_uuid,
-              UNNEST($6::text[]) AS item_id,
-              UNNEST($7::text[]) AS item_name,
-              UNNEST($8::numeric[]) AS qty_change,
-              UNNEST($9::numeric[]) AS stock_before,
-              UNNEST($10::numeric[]) AS stock_after
-          ) AS data`,
-          [
-            zodu_id,
-            branch_id,
-            sale.sale_uuid,
-            `Stock reversed on deletion of sale ${sale.sale_id}`,
-            ledgerItemUuids,
-            ledgerItemIds,
-            ledgerItemNames,
-            ledgerQtyChanges,
-            ledgerStockBefores,
-            ledgerStockAfters,
-          ]
-        );
+              data.item_uuid, data.item_id, $1, $2,
+              data.item_name, 'sale_deleted',
+              $3, data.qty_change,
+              data.stock_before, data.stock_after,
+              $4
+            FROM (
+              SELECT
+                UNNEST($5::uuid[]) AS item_uuid,
+                UNNEST($6::text[]) AS item_id,
+                UNNEST($7::text[]) AS item_name,
+                UNNEST($8::numeric[]) AS qty_change,
+                UNNEST($9::numeric[]) AS stock_before,
+                UNNEST($10::numeric[]) AS stock_after
+            ) AS data`,
+            [
+              zodu_id,
+              branch_id,
+              sale.sale_uuid,
+              `Stock reversed on deletion of sale ${sale.sale_id}`,
+              ledgerItemUuids,
+              ledgerItemIds,
+              ledgerItemNames,
+              ledgerQtyChanges,
+              ledgerStockBefores,
+              ledgerStockAfters,
+            ]
+          );
+        }
       }
+    }
+
+    // Proforma is a non-binding draft — "delete" means gone for good, not a
+    // cancelled-but-visible row like a real sale or quotation. tbl_sale_items
+    // cascades on the FK; tbl_sale_payment has no FK so it needs an explicit
+    // delete first.
+    if (sale.sale_type === 'P') {
+      const returnsResult = await client.query(
+        `SELECT 1 FROM tbl_sale_returns WHERE original_sale_uuid = $1 LIMIT 1`,
+        [sale.sale_uuid]
+      );
+      if (returnsResult.rows.length > 0) {
+        await client.query("ROLLBACK");
+        throw new Error('Cannot permanently delete a proforma that already has sale returns against it');
+      }
+
+      await client.query(`DELETE FROM tbl_sale_payment WHERE sale_id = $1`, [sale.sale_id]);
+
+      const deletedResult = await client.query(
+        `DELETE FROM tbl_sales WHERE sale_uuid = $1 RETURNING *`,
+        [sale.sale_uuid]
+      );
+
+      await client.query("COMMIT");
+      return deletedResult.rows[0] ?? null;
     }
 
     const cancelledSaleResult = await client.query(
@@ -4331,15 +4491,18 @@ exports.markPayment = async (data) => {
  
     const round = (n) => Math.round(n * 100) / 100;
  
-    // 1. Fetch the current sale to verify it exists + get totals
+    // 1. Fetch the current sale to verify it exists + get totals. Looked up
+    // by sale_uuid (tbl_sales' primary key) instead of the text sale_id,
+    // which can contain characters (e.g. "/") that break as a URL path
+    // segment — see getSaleById/deleteSale for the same fix.
     const saleResult = await conn.query(
       `SELECT sale_uuid, sale_id, total_amount, paid_amount, balance_amount, payment_status
        FROM tbl_sales
-       WHERE sale_id   = $1
+       WHERE sale_uuid = $1
          AND zodu_id   = $2
          AND branch_id = $3
        FOR UPDATE`,
-      [data.sale_id, data.zodu_id, data.branch_id]
+      [data.sale_uuid, data.zodu_id, data.branch_id]
     );
  
     if (saleResult.rows.length === 0) {
@@ -4374,13 +4537,12 @@ exports.markPayment = async (data) => {
        SET paid_amount    = $1,
            balance_amount = $2,
            payment_status = $3
-       WHERE sale_id   = $4
-         AND zodu_id   = $5
-         AND branch_id = $6`,
-      [newTotalPaid, newBalance, newPaymentStatus, data.sale_id, data.zodu_id, data.branch_id]
+       WHERE sale_uuid = $4`,
+      [newTotalPaid, newBalance, newPaymentStatus, sale.sale_uuid]
     );
- 
-    // 4. Insert into tbl_sale_payment
+
+    // 4. Insert into tbl_sale_payment — keyed by the text sale_id (that table
+    // has no sale_uuid column), sourced from the row we just fetched above.
     const paymentResult = await conn.query(
       `INSERT INTO tbl_sale_payment (
           sale_id, zodu_id, branch_id,
@@ -4393,7 +4555,7 @@ exports.markPayment = async (data) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
        RETURNING *`,
       [
-        data.sale_id,
+        sale.sale_id,
         data.zodu_id,
         data.branch_id,
         newPayment,
@@ -6382,4 +6544,14 @@ exports.computeSummary = (salesRows, returnRows) => {
     total_returns:   +totalReturns.toFixed(2),
     net_outstanding: +(totalBalance + totalReturns).toFixed(2),
   };
+};
+
+// ========== Branch Purge (delete branch cascade) ==========
+
+exports.purgeBranch = async (zodu_id, branch_id) => {
+  const { rows } = await conn.query(
+    `SELECT * FROM fn_purge_branch($1, $2)`,
+    [zodu_id, branch_id]
+  );
+  return rows;
 };

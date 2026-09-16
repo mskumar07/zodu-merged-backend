@@ -114,4 +114,44 @@ router.put('/branches/:zodu_id/:branch_id', async (req, res) => {
   }
 });
 
+// GET /internal/invoice-settings/:zodu_id/:branch_id  — used by retail-service /
+// restaurant-service for the invoice_prefix (see generateSaleId's authClient call)
+router.get('/invoice-settings/:zodu_id/:branch_id', async (req, res) => {
+  try {
+    const { zodu_id, branch_id } = req.params;
+    const settings = await repo.getInvoiceSettings(zodu_id, branch_id);
+    if (!settings) return res.status(404).json({ success: false, message: 'Invoice settings not found' });
+    return res.status(200).json({ success: true, data: settings });
+  } catch (err) {
+    console.error('[internal] getInvoiceSettings:', err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// PUT /internal/invoice-settings/:zodu_id/:branch_id  — upsert invoice settings
+router.put('/invoice-settings/:zodu_id/:branch_id', async (req, res) => {
+  try {
+    const { zodu_id, branch_id } = req.params;
+    const settings = await repo.upsertInvoiceSettings(zodu_id, branch_id, req.body);
+    return res.status(200).json({ success: true, data: settings });
+  } catch (err) {
+    console.error('[internal] upsertInvoiceSettings:', err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET /internal/pos-settings/:zodu_id/:branch_id  — used by retail-service for
+// quotation_prefix/proforma_prefix (see generateSaleId's authClient call)
+router.get('/pos-settings/:zodu_id/:branch_id', async (req, res) => {
+  try {
+    const { zodu_id, branch_id } = req.params;
+    const settings = await repo.getPosSettings(zodu_id, branch_id);
+    if (!settings) return res.status(404).json({ success: false, message: 'POS settings not found' });
+    return res.status(200).json({ success: true, data: settings });
+  } catch (err) {
+    console.error('[internal] getPosSettings:', err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 module.exports = router;

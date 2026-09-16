@@ -622,9 +622,10 @@ router.post("/api/customers", async (req, res) => {
       return res.status(400).json({ errors: error.details.map(d => d.message) });
     }
  
-    // Normalise: single string mobile/email → array
-    if (typeof value.mobile_no === "string") value.mobile_no = [value.mobile_no];
-    if (typeof value.email_id  === "string") value.email_id  = [value.email_id];
+    // Normalise: single string mobile/email → array. An empty string means
+    // "no number/email", not an array holding one empty string.
+    if (typeof value.mobile_no === "string") value.mobile_no = value.mobile_no ? [value.mobile_no] : [];
+    if (typeof value.email_id  === "string") value.email_id  = value.email_id  ? [value.email_id]  : [];
  
     const data = await service.createCustomer(value);
     if (!data.success) return res.status(400).json({ message: data.message });
@@ -761,9 +762,10 @@ router.put("/api/customers/:cust_uuid", async (req, res) => {
       });
     }
 
-    // Normalise: single string mobile/email → array
-    if (typeof value.mobile_no === "string") value.mobile_no = [value.mobile_no];
-    if (typeof value.email_id  === "string") value.email_id  = [value.email_id];
+    // Normalise: single string mobile/email → array. An empty string means
+    // "no number/email", not an array holding one empty string.
+    if (typeof value.mobile_no === "string") value.mobile_no = value.mobile_no ? [value.mobile_no] : [];
+    if (typeof value.email_id  === "string") value.email_id  = value.email_id  ? [value.email_id]  : [];
 
     const data = await service.updateCustomer(value);
 
@@ -1309,6 +1311,60 @@ router.delete("/delete/category/:id/:branch_id/:zodu_id/:page_expense", async (r
     const data = await service.deleteCategoryData(id, branch_id, zodu_id, page_expense);
     if (!data.success) return res.status(400).json({ message: data.message });
     return res.status(201).json({ message: "Category deleted successfully" });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// KOT COUNTER (kitchen printer station) + item-to-counter assignment
+// ─────────────────────────────────────────────────────────────
+
+router.post("/add/kot-counter", async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(vSchema.kot_counter_create, req.body);
+    if (errors) return res.status(400).json({ errors });
+    const data = await service.addKotCounter(input.zodu_id, input.branch_id, input.counter_name);
+    if (!data.success) return res.status(400).json({ message: data.message });
+    return res.status(201).json({ message: "KOT counter added successfully", data: data.data });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.get("/get/kot-counters/:zodu_id/:branch_id", async (req, res) => {
+  try {
+    const { zodu_id, branch_id } = req.params;
+    const data = await service.getKotCounters(zodu_id, branch_id);
+    if (!data.success) return res.status(400).json({ message: data.message });
+    return res.status(200).json({ message: "KOT counters fetched successfully", data: data.data });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.get("/get/kot-assignment/:zodu_id/:branch_id", async (req, res) => {
+  try {
+    const { zodu_id, branch_id } = req.params;
+    const data = await service.getKotAssignmentData(zodu_id, branch_id);
+    if (!data.success) return res.status(400).json({ message: data.message });
+    return res.status(200).json({ message: "KOT assignment data fetched successfully", data: data.data });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.post("/assign/kot-counter-items", async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(vSchema.kot_assign_items, req.body);
+    if (errors) return res.status(400).json({ errors });
+    const data = await service.assignItemsToKotCounter(input.zodu_id, input.branch_id, input.kot_counter_id, input.menu_item_ids);
+    if (!data.success) return res.status(400).json({ message: data.message });
+    return res.status(201).json({ message: "Items assigned to KOT counter successfully", data: data.data });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: error.message });
