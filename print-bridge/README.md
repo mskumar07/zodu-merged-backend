@@ -55,7 +55,7 @@ double-click it the same way — it overwrites the installed copy in place.
    cd C:\ZoduPrintBridge
    npm start
    ```
-   It prints `Zodu Print Bridge 1.0.0 listening on http://127.0.0.1:9123`.
+   It prints `Zodu Print Bridge 1.1.0 listening on http://127.0.0.1:9123`.
 4. In Zodu, go to **Settings → KOT printers** and check that the bridge shows
    **Connected**.
 
@@ -88,7 +88,18 @@ always just starts the server directly, untouched.
 
 ## Setting up printers
 
-In **Settings → KOT printers → Add printer**:
+The quickest way: **Settings → KOT printers → Auto detect**. The bridge finds
+- network printers — every device on this PC's local network (/24) answering on
+  port 9100, plus printers installed in Windows with a TCP/IP port;
+- USB printers installed in Windows;
+- paired Bluetooth devices' outgoing COM ports, named after the paired device
+  (headphones and phones show up too; likely printers are listed first).
+
+Press **Add** next to one to open the printer form already filled in. Only
+networks this PC is on are scanned, so a printer on another VLAN or a guest
+Wi-Fi must still be added by hand.
+
+To add one manually, **Settings → KOT printers → Add printer**:
 
 | Connection | What to enter |
 |---|---|
@@ -138,6 +149,7 @@ Environment variables (all optional):
 |---|---|---|
 | `GET` | `/health` | `{ ok: true, version }` |
 | `GET` | `/printers` | `{ ok: true, printers: ["EPSON TM-T82", …] }` |
+| `GET` | `/discover` | `{ ok: true, printers: [{ connection_type, name, ip_address, port, device_name, detail }] }` — takes a few seconds (network scan) |
 | `POST` | `/print` | `{ printer: { connection_type, ip_address, port, device_name }, data: "<base64 ESC/POS>" }` → `{ ok: true }` or `{ ok: false, error }` |
 
 Jobs to the same printer are queued so tickets never interleave on the paper.

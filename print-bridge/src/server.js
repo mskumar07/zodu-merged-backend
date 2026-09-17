@@ -4,10 +4,12 @@
 //
 //   GET  /health     → { ok, version }
 //   GET  /printers   → { ok, printers: [name, ...] }   installed OS printers
+//   GET  /discover   → { ok, printers: [{connection_type, name, ip_address, port, device_name, detail}] }
 //   POST /print      → { printer: {connection_type, ip_address, port, device_name}, data: <base64 ESC/POS> }
 
 const http = require("http");
 const { sendToPrinter, listSystemPrinters } = require("./transports");
+const { discoverPrinters } = require("./discover");
 const { version } = require("../package.json");
 
 // In the packaged .exe (never in plain `node src/server.js` dev usage), a
@@ -113,6 +115,13 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && url.pathname === "/printers") {
       return send(res, 200, { ok: true, printers: await listSystemPrinters() }, origin);
+    }
+
+    if (req.method === "GET" && url.pathname === "/discover") {
+      const started = Date.now();
+      const printers = await discoverPrinters();
+      console.log(`[discover] ${printers.length} printer(s) in ${Date.now() - started} ms`);
+      return send(res, 200, { ok: true, printers }, origin);
     }
 
     if (req.method === "POST" && url.pathname === "/print") {

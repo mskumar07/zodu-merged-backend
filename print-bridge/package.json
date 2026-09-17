@@ -1,6 +1,6 @@
 {
   "name": "zodu-print-bridge",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Local print bridge: lets the Zodu restaurant POS send KOTs to LAN, USB and Bluetooth thermal printers.",
   "main": "src/server.js",
   "private": true,
