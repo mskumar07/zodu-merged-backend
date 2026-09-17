@@ -1,14 +1,16 @@
 const db = require('../database/connection');
 
 // ── AUTO GENERATE EMPLOYEE CODE ──────────────────────────────────────────────
-// Gets max number from existing codes like EMP001, EMP002 → returns EMP003
+// Gets max number from existing codes like EMP001, EMP002 → returns EMP003,
+// scoped per (zodu_id, branch_id) so every branch's first employee starts at
+// EMP001, independent of other branches in the same company.
 
-exports.generateEmployeeCode = async (client, zodu_id) => {
+exports.generateEmployeeCode = async (client, zodu_id, branch_id) => {
   const { rows } = await client.query(
     `SELECT MAX(CAST(NULLIF(REGEXP_REPLACE(employee_code, '[^0-9]', '', 'g'), '') AS INTEGER)) AS max_num
      FROM tbl_employees
-     WHERE zodu_id = $1`,
-    [zodu_id]
+     WHERE zodu_id = $1 AND branch_id = $2`,
+    [zodu_id, branch_id]
   );
   const next = (rows[0].max_num || 0) + 1;
   return `EMP${String(next).padStart(3, '0')}`;
@@ -236,6 +238,16 @@ exports.purgeBranch = async (zodu_id, branch_id) => {
   const { rows } = await db.query(
     `SELECT * FROM fn_purge_branch($1, $2)`,
     [zodu_id, branch_id]
+  );
+  return rows;
+};
+
+// ========== Company Purge (delete company cascade, all branches) ==========
+
+exports.purgeCompany = async (zodu_id) => {
+  const { rows } = await db.query(
+    `SELECT * FROM fn_purge_company($1)`,
+    [zodu_id]
   );
   return rows;
 };

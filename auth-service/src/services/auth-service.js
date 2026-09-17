@@ -452,6 +452,21 @@ async function AddBranch(userInputs, user_id) {
     const branch = await businessRepo.createBranch(userInputs);
     const company = await businessRepo.getCompany(zodu_id).catch(() => null);
     seedBranchDefaults(company?.business_type, zodu_id, branch.branch_id);
+
+    // Seed an Admin employee row for this branch, same as company creation
+    // does for branch 'B1' (non-blocking — failure must not break branch
+    // creation). tbl_employees is now unique on (user_id, zodu_id,
+    // branch_id), not just (user_id, zodu_id), so the same admin can have a
+    // separate employee row per branch.
+    const user = await repository.findUserById({ user_id }).catch(() => null);
+    axios.post(`${EMPLOYEE_SERVICE_URL}/internal/employee/create-admin`, {
+      zodu_id,
+      branch_id: branch.branch_id,
+      user_id,
+      phone: user?.phone || null,
+      email: user?.email || null,
+    }).catch(err => console.error('[employee-service] create-admin failed (non-fatal):', err.message));
+
     return FormateData({
       message: 'Branch created successfully',
       branch,
@@ -645,6 +660,55 @@ async function DeleteBranch({ zodu_id, branch_id, user_id }) {
     });
   } catch (err) {
     console.error('delete branch failed in auth-service:', err.message);
+    return FormateData({
+      error: `Every other service was purged, but auth-service's own cleanup failed: ${err.message}. Safe to retry — earlier steps are idempotent.`,
+      partial_results: outcome.results,
+    });
+  }
+}
+
+// Hard-deletes an entire company and every row scoped to it, everywhere:
+// retail, restaurant, employee, payroll, checklist databases (all branches
+// at once), then this database's own tbl_access_control/tbl_user_roles/
+// tbl_roles/tbl_pos_settings/tbl_invoice_settings/tbl_branch/
+// tbl_user_companies (+ any now-orphaned tbl_users)/tbl_bank_details/
+// tbl_address/tbl_business (see business-repo.js's purgeCompany).
+// auth-service purges its own tables and removes tbl_business LAST, only
+// after every other service has confirmed success — so tbl_business (the
+// source of truth other services check against) never disappears while some
+// other service still holds data for it. Mirrors DeleteBranch's orchestration
+// exactly, just at company scope (every branch of this company at once).
+//
+// Stops at the first service that fails and reports which one — every
+// purge endpoint is idempotent, so retrying this call after fixing the
+// failure safely continues rather than double-deleting or erroring.
+async function DeleteCompany({ zodu_id, user_id }) {
+  const userCompanies = await repository.getUserCompanies({ user_id });
+  const hasAccess = userCompanies.some((company) => company.zodu_id === zodu_id);
+
+  if (!hasAccess) {
+    return FormateData({ error: 'You do not have access to delete this company' });
+  }
+
+  const { purgeCompanyAcrossServices } = require('../utils/companyPurgeClient');
+  const outcome = await purgeCompanyAcrossServices(zodu_id);
+
+  if (!outcome.success) {
+    console.error(`delete company failed at ${outcome.failedService}:`, outcome.error);
+    return FormateData({
+      error: `Failed to delete company data in ${outcome.failedService}: ${outcome.error}. No further services were purged — safe to retry once the issue is fixed.`,
+      partial_results: outcome.results,
+    });
+  }
+
+  try {
+    const authResults = await businessRepo.purgeCompany(zodu_id);
+    return FormateData({
+      message: 'Company deleted successfully',
+      results: [...outcome.results, { service: 'auth-service', data: authResults }],
+    });
+  } catch (err) {
+    console.error('delete company failed in auth-service:', err.message);
     return FormateData({
       error: `Every other service was purged, but auth-service's own cleanup failed: ${err.message}. Safe to retry — earlier steps are idempotent.`,
       partial_results: outcome.results,
@@ -853,6 +917,7 @@ module.exports = {
   EditCompany,
   EditBranch,
   DeleteBranch,
+  DeleteCompany,
   GetMyCompanies,
   GetRoleAccess,
   GetInvoiceSettings,

@@ -319,11 +319,12 @@ exports.get_inventory_list = async (zodu_id, branch_id, type, category, search, 
     const countQuery = `
       SELECT COUNT(*) AS total
       FROM tbl_inventory i
+      LEFT JOIN tbl_menu_items m  ON i.item_id = m.menu_id
       WHERE i.zodu_id = $1
         AND i.branch_id = $2
         AND ($3::text IS NULL OR i.inventory_type = $3::text)
         AND ($4::int[] IS NULL OR i.category_id::int = ANY($4::int[]))
-        AND ($5::text IS NULL OR i.item_name ILIKE $5 OR i.item_id ILIKE $5)
+        AND ($5::text IS NULL OR i.item_name ILIKE $5 OR i.item_id ILIKE $5 OR m.menu_code ILIKE $5)
     `;
 
     const dataQuery = `
@@ -331,6 +332,7 @@ exports.get_inventory_list = async (zodu_id, branch_id, type, category, search, 
         i.*,
         c.name AS category_name,
         m.gst_tax,
+        m.menu_code,
         u.name       AS unit_name,
         u.short_name AS unit_short_name
       FROM tbl_inventory i
@@ -341,7 +343,7 @@ exports.get_inventory_list = async (zodu_id, branch_id, type, category, search, 
         AND i.branch_id = $2
         AND ($3::text IS NULL OR i.inventory_type = $3::text)
         AND ($4::int[] IS NULL OR i.category_id::int = ANY($4::int[]))
-        AND ($5::text IS NULL OR i.item_name ILIKE $5 OR i.item_id ILIKE $5)
+        AND ($5::text IS NULL OR i.item_name ILIKE $5 OR i.item_id ILIKE $5 OR m.menu_code ILIKE $5)
       ORDER BY i.created_at DESC
       LIMIT $6 OFFSET $7
     `;

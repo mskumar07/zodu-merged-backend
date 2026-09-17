@@ -604,3 +604,23 @@ exports.purgeBranch = async (zodu_id, branch_id) => {
   );
   return rows;
 };
+
+// ── COMPANY PURGE ────────────────────────────────────────────────────────────
+// Hard-deletes this database's own company-scoped rows across ALL branches:
+// tbl_access_control, tbl_user_roles, tbl_roles, tbl_pos_settings,
+// tbl_invoice_settings, tbl_branch, tbl_user_companies (+ any now-orphaned
+// tbl_users), tbl_bank_details, tbl_address, then tbl_business itself. See
+// auth-service/migrations/company_purge_function.sql.
+//
+// Called LAST in the delete-company flow (auth-service.js's DeleteCompany),
+// after every other service has already purged its own data for this
+// company — tbl_business is the source of truth other services validate
+// against, so it only disappears once everything referencing it elsewhere
+// is confirmed gone.
+exports.purgeCompany = async (zodu_id) => {
+  const { rows } = await conn.query(
+    `SELECT * FROM fn_purge_company($1)`,
+    [zodu_id]
+  );
+  return rows;
+};

@@ -2196,7 +2196,7 @@ exports.get_pos_data = async (branch_id, zodu_id, search) => {
 
   if (search) {
     params.push(`%${search.toLowerCase()}%`);
-    searchClause = `AND LOWER(m.menu_name) LIKE $${params.length}`;
+    searchClause = `AND (LOWER(m.menu_name) LIKE $${params.length} OR LOWER(m.menu_code) LIKE $${params.length} OR LOWER(c.name) LIKE $${params.length})`;
   }
 
   return await conn.query(
@@ -2229,7 +2229,8 @@ exports.get_pos_data = async (branch_id, zodu_id, search) => {
           'menu_type', m.menu_type,
           'favorites', m.favorites,
           'stock_qty', i.stock_qty,
-          'stock_alert', i.stock_alert
+          'stock_alert', i.stock_alert,
+          'menu_code', m.menu_code
         )
         ORDER BY m.menu_name
       ) AS items
@@ -3627,6 +3628,7 @@ exports.getSaleById = async (api_order_id, zodu_id, branch_id) => {
         si.cgst,
         si.sgst,
         si.total_amount,
+        m.menu_code,
 
         TO_CHAR(si.created_at, 'DD Mon YYYY')  AS created_at_fmt
 
@@ -5787,6 +5789,16 @@ exports.purgeBranch = async (zodu_id, branch_id) => {
   const { rows } = await conn.query(
     `SELECT * FROM fn_purge_branch($1, $2)`,
     [zodu_id, branch_id]
+  );
+  return rows;
+};
+
+// ========== Company Purge (delete company cascade, all branches) ==========
+
+exports.purgeCompany = async (zodu_id) => {
+  const { rows } = await conn.query(
+    `SELECT * FROM fn_purge_company($1)`,
+    [zodu_id]
   );
   return rows;
 };

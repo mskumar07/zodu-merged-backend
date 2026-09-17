@@ -69,9 +69,10 @@ case "$ENV" in
     run_sql_stdin() { psql -h "$HOST" -p "$PORT" -U "$USER" -d "$1" -v ON_ERROR_STOP=1; }
     ;;
   prod)
-    # postgres_prod is a docker-network hostname — pipe the file into psql
-    # inside the container instead of connecting over the network.
-    PGCONTAINER="${PGCONTAINER:-postgres_prod}"; USER=zoduprod
+    # postgres_prod's port (5433, per docker-compose.prod.yml) is reachable
+    # directly on the host, same as UAT's 5432 — no docker exec/SSH needed.
+    HOST=72.60.206.59; PORT=5433; USER=zoduprod
+    export PGPASSWORD='zodu@2025'
     AUTH_DB=auth_service
     RETAIL_DB=retail_service
     RESTAURANT_DB=restaurant_service
@@ -79,18 +80,9 @@ case "$ENV" in
     EMPLOYEE_DB=employee_service
     PAYROLL_DB=payroll-service
     PUBLIC_BASE=https://api.zodu.in
-    run_sql() {
-      docker exec -i -e PGPASSWORD='zodu@2025' "$PGCONTAINER" \
-        psql -U "$USER" -d "$1" -v ON_ERROR_STOP=1 < "$2"
-    }
-    run_sql_str() {
-      docker exec -i -e PGPASSWORD='zodu@2025' "$PGCONTAINER" \
-        psql -U "$USER" -d "$1" -v ON_ERROR_STOP=1 -tAc "$2"
-    }
-    run_sql_stdin() {
-      docker exec -i -e PGPASSWORD='zodu@2025' "$PGCONTAINER" \
-        psql -U "$USER" -d "$1" -v ON_ERROR_STOP=1
-    }
+    run_sql() { psql -h "$HOST" -p "$PORT" -U "$USER" -d "$1" -v ON_ERROR_STOP=1 -f "$2"; }
+    run_sql_str() { psql -h "$HOST" -p "$PORT" -U "$USER" -d "$1" -v ON_ERROR_STOP=1 -tAc "$2"; }
+    run_sql_stdin() { psql -h "$HOST" -p "$PORT" -U "$USER" -d "$1" -v ON_ERROR_STOP=1; }
     ;;
   *)
     echo "usage: $0 {local|uat|prod}" >&2
@@ -116,7 +108,7 @@ already_applied() {  # already_applied <db> <path> -> exit 0 if applied
 record_applied() {  # record_applied <db> <path>
   run_sql_str "$1" "
     INSERT INTO tbl_schema_migrations (migration_file) VALUES ('$2')
-    ON CONFLICT (migration_file) DO NOTHING;
+    ON CONFLICT (migration_file) DO UPDATE SET applied_at = CURRENT_TIMESTAMP;
   " > /dev/null
 }
 
@@ -131,6 +123,21 @@ apply() {  # apply <db> <path-relative-to-repo-root>
 
   echo
   echo "=== $ENV / $1  <-  $2"
+  run_sql "$1" "$ROOT/$2"
+  record_applied "$1" "$2"
+}
+
+# force_apply <db> <path> — like apply(), but always runs the file even if
+# tbl_schema_migrations already has a row for it. Every migration file here
+# is CREATE OR REPLACE / DROP...IF EXISTS / ADD COLUMN IF NOT EXISTS, so
+# re-running is safe. Use this ONLY for a file whose CONTENT changed after it
+# was already recorded as applied on an environment — normal new migrations
+# should use apply(), not this. Re-records the same path, so a later normal
+# apply() call for it still correctly skips.
+force_apply() {  # force_apply <db> <path-relative-to-repo-root>
+  ensure_tracking_table "$1"
+  echo
+  echo "=== $ENV / $1  <-  $2  (forced re-apply — content changed since it was first recorded)"
   run_sql "$1" "$ROOT/$2"
   record_applied "$1" "$2"
 }
@@ -209,12 +216,40 @@ apply "$RESTAURANT_DB" restaurant-service/migrations/purchase_expense_id_tenant_
 # scoped to one branch, called by auth-service's delete-branch orchestrator
 # (auth-service/src/services/auth-service.js DeleteBranch). Independent per
 # database, no ordering dependency between them.
-apply "$AUTH_DB"       auth-service/migrations/branch_purge_function.sql
+#
+# auth-service/migrations/branch_purge_function.sql was revised on
+# 2026-09-17 (removed a tbl_users/tbl_user_sessions delete that violated
+# tbl_user_companies_user_id_fkey whenever the user still had access to any
+# other company — users are a company-level concept, only fn_purge_company
+# should ever delete tbl_users), AFTER already being recorded as applied on
+# some environments — force_apply so it actually re-runs there instead of
+# `apply` silently skipping it and leaving the broken function in place.
+force_apply "$AUTH_DB" auth-service/migrations/branch_purge_function.sql
 apply "$RETAIL_DB"     retail-service/migrations/branch_purge_function.sql
 apply "$RESTAURANT_DB" restaurant-service/migrations/branch_purge_function.sql
 apply "$EMPLOYEE_DB"   employee-service/migrations/branch_purge_function.sql
 apply "$PAYROLL_DB"    payroll-service/migrations/branch_purge_function.sql
 apply "$CHECKLIST_DB"  checklist-service/migrations/branch_purge_function.sql
+
+# fn_purge_company(zodu_id) per database — hard-deletes every row scoped to
+# an entire company across ALL its branches at once, called by auth-service's
+# delete-company orchestrator (auth-service/src/services/auth-service.js
+# DeleteCompany). Superset of fn_purge_branch; independent per database.
+apply "$AUTH_DB"       auth-service/migrations/company_purge_function.sql
+apply "$RETAIL_DB"     retail-service/migrations/company_purge_function.sql
+apply "$RESTAURANT_DB" restaurant-service/migrations/company_purge_function.sql
+apply "$EMPLOYEE_DB"   employee-service/migrations/company_purge_function.sql
+apply "$PAYROLL_DB"    payroll-service/migrations/company_purge_function.sql
+apply "$CHECKLIST_DB"  checklist-service/migrations/company_purge_function.sql
+
+# employee-service — tbl_employees was unique on (user_id, zodu_id) and
+# (employee_code, zodu_id), i.e. one employee row per user per company and
+# company-wide employee-code numbering. Both widened to include branch_id so
+# AddBranch can seed a separate Admin employee row per branch (auth-service's
+# AddBranch, POST /api/branch/add) and every branch's first employee starts
+# at EMP001 instead of continuing the company's running number.
+apply "$EMPLOYEE_DB" employee-service/migrations/employee_unique_per_branch.sql
+apply "$EMPLOYEE_DB" employee-service/migrations/employee_code_unique_per_branch.sql
 
 # restaurant-service — seeds tbl_doc_id_seq's 'ORD' counter from existing
 # tbl_orders rows. Must run before generatePublicOrderNo's tbl_doc_id_seq-

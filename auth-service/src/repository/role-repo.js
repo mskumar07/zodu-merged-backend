@@ -118,12 +118,12 @@ exports.findAllModules = async () => {
 
 // ── EMPLOYEE USER (internal) ──────────────────────────────────────────────────
 
-exports.createEmployeeUser = async (client, { email, phone, zodu_id, password_hash }) => {
+exports.createEmployeeUser = async (client, { email, phone, zodu_id, password_hash, user_type = 'employee' }) => {
   const user_id = uuidv4();
   await client.query(
     `INSERT INTO tbl_users (user_id, email, phone, password_hash, user_type, is_active)
-     VALUES ($1, $2, $3, $4, 'employee', true)`,
-    [user_id, email || null, phone || null, password_hash]
+     VALUES ($1, $2, $3, $4, $5, true)`,
+    [user_id, email || null, phone || null, password_hash, user_type]
   );
   await client.query(
     `INSERT INTO tbl_user_companies (user_id, zodu_id, is_primary)

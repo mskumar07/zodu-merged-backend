@@ -32,6 +32,7 @@ exports.createEmployeeUser = Joi.object({
   role_id:              Joi.string().uuid().allow(null, ''),
   access_level:         Joi.string().max(30).default('Full Access'),
   reporting_manager_id: Joi.string().uuid().allow(null, ''),
+  is_first_employee:    Joi.boolean().default(false),
   password:             Joi.string().pattern(/^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{8,20}$/).allow(null, '').messages({
     'string.pattern.base': 'Password must be 8-20 chars with 1 uppercase, 1 number, 1 special char',
   }),

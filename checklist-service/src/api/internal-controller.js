@@ -18,4 +18,17 @@ router.post('/branches/:zodu_id/:branch_id/purge', async (req, res) => {
   }
 });
 
+// POST /internal/companies/:zodu_id/purge — hard-delete every row scoped to
+// this company, all branches. Called by auth-service's delete-company orchestrator.
+router.post('/companies/:zodu_id/purge', async (req, res) => {
+  try {
+    const { zodu_id } = req.params;
+    const results = await repo.purgeCompany(zodu_id);
+    return res.status(200).json({ success: true, data: results });
+  } catch (err) {
+    console.error('[internal] purgeCompany:', err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 module.exports = router;

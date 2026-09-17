@@ -13,7 +13,8 @@ exports.createEmployee = async (data, created_by) => {
     await client.query('BEGIN');
 
     const employee_id   = uuidv4();
-    const employee_code = await repo.generateEmployeeCode(client, data.zodu_id);
+    const employee_code = await repo.generateEmployeeCode(client, data.zodu_id, data.branch_id);
+    const is_first_employee = employee_code === 'EMP001';
 
     // 1. Create login user in auth-service (blocking)
     let user_id;
@@ -26,6 +27,7 @@ exports.createEmployee = async (data, created_by) => {
           role_id: data.role_id,
           reporting_manager_id: data.reporting_manager_id || null,
           password: data.password || null,
+          is_first_employee,
         }
       );
       user_id = authRes.user_id;
