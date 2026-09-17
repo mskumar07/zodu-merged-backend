@@ -223,16 +223,24 @@ apply "$CHECKLIST_DB"  checklist-service/migrations/branch_purge_function.sql
 # uq_orders_branch_public_no constraint.
 apply "$RESTAURANT_DB" restaurant-service/migrations/orders_doc_sequence_backfill.sql
 
-# restaurant-service — KOT printer counters (tbl_kot_counter) plus
-# tbl_menu_items.kot_counter_id so each menu item routes to one counter.
-apply "$RESTAURANT_DB" restaurant-service/migrations/kot_counter.sql
-
-# restaurant-service — kot_counter.sql (above) and kot_counters_printers.sql
-# (earlier) both claim tbl_menu_items.kot_counter_id with FKs to two
-# different tables (tbl_kot_counter vs tbl_kot_counters); the real KOT
-# printer feature only ever writes ids from tbl_kot_counters. Must run after
-# kot_counter.sql, which would otherwise re-add the wrong FK on a fresh env.
+# restaurant-service — kot_counter.sql (an earlier, one-day pass at KOT
+# counters, tbl_kot_counter singular) is superseded by kot_counters_printers.sql
+# above (tbl_kot_counters plural) and is deliberately NOT applied here any
+# more — see kot_counter_id_fk_fix.sql and kot_counter_drop_legacy.sql below,
+# which clean up the one environment (local, historically) that ran it before
+# the mistake was caught.
 apply "$RESTAURANT_DB" restaurant-service/migrations/kot_counter_id_fk_fix.sql
+# Drops the dead tbl_kot_counter (singular) table/trigger/function on any
+# database that had already run kot_counter.sql; a no-op everywhere else.
+apply "$RESTAURANT_DB" restaurant-service/migrations/kot_counter_drop_legacy.sql
+
+# restaurant-service — fn_next_kot_no scopes KOT ticket numbers to one order
+# (resets to 1 per order) instead of running for the whole branch/day, plus
+# a trigger that purges an order's KOT tickets once it's finalized.
+apply "$RESTAURANT_DB" restaurant-service/migrations/kot_ticket_no_per_order.sql
+# restaurant-service — seeds default tbl_kot_settings rows for every branch
+# that already has a menu or an order, matching kot-repo.js's DEFAULT_SETTINGS.
+apply "$RESTAURANT_DB" restaurant-service/migrations/kot_settings_backfill_defaults.sql
 
 # Older rows were written before PUBLIC_FILE_BASE_URL existed, so they carry
 # whatever origin the code defaulted to at the time (myzodu.com, zodu.in, ...).

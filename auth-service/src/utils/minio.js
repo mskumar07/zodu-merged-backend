@@ -127,6 +127,13 @@ exports.deleteFile = async (fileKey) => {
   await minioClient.removeObject(bucketName, fileKey).catch(() => {});
 };
 
+// minio-js throws AggregateError with an empty `message` for a connection-
+// level failure (ECONNREFUSED, ENOTFOUND, ...) — the actually diagnostic
+// value ends up in `err.code` instead. Without this, a downed/misconfigured
+// MinIO always surfaces as the same generic "Failed to upload ..." fallback
+// text regardless of what actually went wrong.
+exports.describeError = (err) => err.message || err.code || 'Unknown error';
+
 // Recover the object key from a stored image URL (signature_url,
 // company_logo_url) so old images can be cleaned up on replace/delete.
 exports.keyFromUrl = (url) => {

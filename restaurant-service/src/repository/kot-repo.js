@@ -63,7 +63,7 @@ exports.createPrinter = async (data) => {
      RETURNING *`,
     [
       data.zodu_id, data.branch_id, data.printer_name, data.connection_type,
-      data.ip_address || null, data.port || 9100, data.device_name || null,
+      data.ip_address || null, data.port ?? null, data.device_name || null,
       data.paper_size, data.role, data.active, data.cut_mode || "partial",
     ]
   );
@@ -78,7 +78,7 @@ exports.updatePrinter = async (id, data) => {
      WHERE id = $9 AND zodu_id = $10 AND branch_id = $11
      RETURNING *`,
     [
-      data.printer_name, data.connection_type, data.ip_address || null, data.port || 9100,
+      data.printer_name, data.connection_type, data.ip_address || null, data.port ?? null,
       data.device_name || null, data.paper_size, data.role, data.active,
       id, data.zodu_id, data.branch_id, data.cut_mode || "partial",
     ]
@@ -361,13 +361,22 @@ exports.generateTickets = async (ctx) =>
 
     const { rows: dayRows } = await client.query(
       `SELECT (NOW() AT TIME ZONE $1)::date AS today,
-              COALESCE(MAX(kot_no), 0) + 1 AS next_kot,
               COALESCE(MAX(order_seq), 0) + 1 AS next_order_seq
        FROM tbl_kot_tickets
        WHERE zodu_id = $2 AND branch_id = $3 AND kot_date = (NOW() AT TIME ZONE $1)::date`,
       [BUSINESS_TZ, ctx.zodu_id, ctx.branch_id]
     );
-    const { today, next_kot: kotNo, next_order_seq: nextOrderSeq } = dayRows[0];
+    const { today, next_order_seq: nextOrderSeq } = dayRows[0];
+
+    // Scoped to this order alone (see kot_ticket_no_per_order.sql) — resets
+    // to 1 for every new api_order_id, instead of running for the whole
+    // branch/day. One call per send: every counter's split ticket below
+    // shares this same number.
+    const { rows: kotNoRows } = await client.query(
+      `SELECT fn_next_kot_no($1, $2, $3) AS next_kot`,
+      [ctx.zodu_id, ctx.branch_id, ctx.api_order_id]
+    );
+    const kotNo = kotNoRows[0].next_kot;
 
     // An order keeps the number its first ticket got. A paid order is known by
     // its invoice number; a running Dine-In order gets a short daily number.

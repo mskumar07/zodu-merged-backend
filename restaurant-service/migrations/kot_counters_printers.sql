@@ -103,7 +103,8 @@ CREATE TABLE IF NOT EXISTS tbl_kot_tickets (
 
 ALTER TABLE tbl_kot_tickets
     -- Shared by every counter's slip from one send, so the split slips of a
-    -- single order can be matched up. Restarts at 1 each day per branch.
+    -- single order can be matched up. Scoped and reset per order, not per
+    -- day/branch — see kot_ticket_no_per_order.sql.
     ADD COLUMN IF NOT EXISTS kot_no INT NOT NULL DEFAULT 0,
     ADD COLUMN IF NOT EXISTS kot_date DATE NOT NULL DEFAULT CURRENT_DATE,
     -- NEW | ADD | CANCEL

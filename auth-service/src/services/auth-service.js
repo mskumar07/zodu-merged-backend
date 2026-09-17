@@ -366,8 +366,9 @@ async function AddCompany(userInputs, user_id, file = null) {
       const { fileUrl } = await minio.uploadCompanyLogo(file, zodu_id);
       logo_url = fileUrl;
     } catch (err) {
-      console.error('company logo upload failed:', err.message);
-      return FormateData({ error: err.message || 'Failed to upload company logo.' });
+      const message = minio.describeError(err);
+      console.error('company logo upload failed:', message);
+      return FormateData({ error: message });
     }
   }
 
@@ -490,8 +491,9 @@ async function EditCompany(userInputs, user_id, file = null) {
         const { fileUrl } = await minio.uploadCompanyLogo(file, zodu_id);
         logoField = { company_logo_url: fileUrl };
       } catch (err) {
-        console.error('company logo upload failed:', err.message);
-        return FormateData({ error: err.message || 'Failed to upload company logo.' });
+        const message = minio.describeError(err);
+        console.error('company logo upload failed:', message);
+        return FormateData({ error: message });
       }
     } else {
       logoField = { company_logo_url: company_logo_url || null };
@@ -552,8 +554,9 @@ async function UploadCompanyLogo({ user_id, zodu_id, file }) {
 
     return FormateData({ message: 'Company logo uploaded successfully', company });
   } catch (err) {
-    console.error('upload company logo failed:', err.message);
-    return FormateData({ error: err.message || 'Failed to upload company logo. Please try again.' });
+    const message = minio.describeError(err);
+    console.error('upload company logo failed:', message);
+    return FormateData({ error: message });
   }
 }
 
@@ -748,8 +751,9 @@ async function UploadInvoiceSignature({ user_id, zodu_id, branch_id, file }) {
 
     return FormateData({ message: 'Signature uploaded successfully', settings });
   } catch (err) {
-    console.error('upload invoice signature failed:', err.message);
-    return FormateData({ error: err.message || 'Failed to upload signature. Please try again.' });
+    const message = minio.describeError(err);
+    console.error('upload invoice signature failed:', message);
+    return FormateData({ error: message });
   }
 }
 
