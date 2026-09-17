@@ -227,6 +227,13 @@ apply "$RESTAURANT_DB" restaurant-service/migrations/orders_doc_sequence_backfil
 # tbl_menu_items.kot_counter_id so each menu item routes to one counter.
 apply "$RESTAURANT_DB" restaurant-service/migrations/kot_counter.sql
 
+# restaurant-service — kot_counter.sql (above) and kot_counters_printers.sql
+# (earlier) both claim tbl_menu_items.kot_counter_id with FKs to two
+# different tables (tbl_kot_counter vs tbl_kot_counters); the real KOT
+# printer feature only ever writes ids from tbl_kot_counters. Must run after
+# kot_counter.sql, which would otherwise re-add the wrong FK on a fresh env.
+apply "$RESTAURANT_DB" restaurant-service/migrations/kot_counter_id_fk_fix.sql
+
 # Older rows were written before PUBLIC_FILE_BASE_URL existed, so they carry
 # whatever origin the code defaulted to at the time (myzodu.com, zodu.in, ...).
 # Repoint every stored file URL at this environment's public origin: swap the

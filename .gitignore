@@ -7,3 +7,5 @@ docker-compose.yml
 .env
 
 .env.local
+
+print-bridge/dist

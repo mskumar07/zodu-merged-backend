@@ -11,9 +11,42 @@ POS (browser) ──HTTP──► Print Bridge (127.0.0.1:9123) ──► LAN pr
                                                      └──► Bluetooth printer (COM port / spooler)
 ```
 
-No npm dependencies. Needs Node.js 18 or newer.
+No npm dependencies. Needs Node.js 18 or newer — unless you use the exe below,
+which needs nothing at all.
 
-## Install on the billing PC
+## Install on the billing PC (recommended — give the client this)
+
+Send the client **`dist/ZoduPrintBridge.exe`** (built per
+[Building the exe](#building-the-exe) below) — one file, nothing else needed.
+No Node.js, no command line, no admin rights.
+
+Double-click it. The first time it runs anywhere other than its installed
+location, a normal-looking Windows install dialog appears — an install
+folder field (defaults to `%LOCALAPPDATA%\ZoduPrintBridge`, editable, with a
+**Browse...** button), and **Install** / **Cancel** buttons. Clicking
+**Install**:
+- copies itself to the chosen folder,
+- sets that copy to start silently (no console window) whenever the client
+  logs in to Windows, via a shortcut in their Startup folder,
+- starts it immediately,
+- shows a confirmation dialog with the install path, then exits.
+
+From then on the installed copy is what actually runs (directly, or hidden
+via the Startup shortcut) — it recognizes it's already in place (by a small
+marker file dropped next to it at install time) and just starts the server;
+it never shows the install dialog again or re-installs in a loop. In Zodu,
+go to **Settings → KOT printers** and check that the bridge shows
+**Connected**.
+
+The dialog is a real Windows Forms window drawn via PowerShell (which, like
+.NET WinForms, already ships with every Windows install) rather than a
+bundled GUI toolkit — that's what keeps this a single ~37MB exe instead of
+pulling in Electron just to draw one screen.
+
+To update to a newer version, send the client the new exe and have them
+double-click it the same way — it overwrites the installed copy in place.
+
+## Manual install (for development, or if you'd rather not use the exe)
 
 1. Install Node.js LTS from https://nodejs.org.
 2. Copy this `print-bridge` folder to the PC, e.g. `C:\ZoduPrintBridge`.
@@ -34,6 +67,24 @@ Create a scheduled task that runs at logon:
 schtasks /Create /TN "Zodu Print Bridge" /SC ONLOGON /RL LIMITED ^
   /TR "cmd /c cd /d C:\ZoduPrintBridge && node src\server.js >> bridge.log 2>&1"
 ```
+
+## Building the exe
+
+Requires Node.js on the *build* machine only (the client never needs it).
+From `print-bridge/`:
+
+```
+npm run build:exe
+```
+
+Bundles `src/server.js` (and its self-install logic in `src/selfInstall.js`)
+into a standalone `dist/ZoduPrintBridge.exe` via `pkg` — self-contained, no
+Node.js needed to run it. `dist/` isn't committed to git — rebuild it
+whenever `src/` changes, before handing a new exe to a client.
+
+`src/selfInstall.js`'s self-install/autostart logic only ever runs inside the
+packaged exe (gated on pkg's `process.pkg` global) — `npm start` in dev
+always just starts the server directly, untouched.
 
 ## Setting up printers
 
