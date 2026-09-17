@@ -10,6 +10,11 @@ const http = require("http");
 const { sendToPrinter, listSystemPrinters } = require("./transports");
 const { version } = require("../package.json");
 
+// In the packaged .exe (never in plain `node src/server.js` dev usage), a
+// freshly-downloaded copy installs itself and exits before any of the code
+// below runs — see selfInstall.js for why.
+require("./selfInstall").bootstrap();
+
 const HOST = process.env.BRIDGE_HOST || "127.0.0.1";
 const PORT = Number(process.env.BRIDGE_PORT) || 9123;
 const MAX_BODY_BYTES = 2 * 1024 * 1024;

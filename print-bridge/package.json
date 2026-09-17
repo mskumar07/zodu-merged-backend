@@ -5,7 +5,8 @@
   "main": "src/server.js",
   "private": true,
   "scripts": {
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "build:exe": "pkg src/server.js --targets node18-win-x64 --output dist/ZoduPrintBridge.exe"
   },
   "engines": {
     "node": ">=18"
