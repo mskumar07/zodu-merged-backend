@@ -174,6 +174,9 @@ apply "$AUTH_DB" auth-service/migrations/business_company_logo_url.sql
 apply "$RETAIL_DB"     retail-service/migrations/item_description.sql
 apply "$RESTAURANT_DB" restaurant-service/migrations/item_description.sql
 
+# restaurant-service — KOT counters, printers, per-counter tickets and print log.
+# The order endpoints write tickets after every send, so this must land first.
+apply "$RESTAURANT_DB" restaurant-service/migrations/kot_counters_printers.sql
 # retail-service — vehicle number on tbl_sales, printed on the invoice's
 # Transport Copy (see auth-service/migrations/invoice_settings_copy_types.sql).
 apply "$RETAIL_DB" retail-service/migrations/sales_vehicle_no.sql
@@ -258,6 +261,13 @@ apply "$RESTAURANT_DB" restaurant-service/migrations/orders_doc_sequence_backfil
 # restaurant-service — KOT printer counters (tbl_kot_counter) plus
 # tbl_menu_items.kot_counter_id so each menu item routes to one counter.
 apply "$RESTAURANT_DB" restaurant-service/migrations/kot_counter.sql
+
+# restaurant-service — kot_counter.sql (above) and kot_counters_printers.sql
+# (earlier) both claim tbl_menu_items.kot_counter_id with FKs to two
+# different tables (tbl_kot_counter vs tbl_kot_counters); the real KOT
+# printer feature only ever writes ids from tbl_kot_counters. Must run after
+# kot_counter.sql, which would otherwise re-add the wrong FK on a fresh env.
+apply "$RESTAURANT_DB" restaurant-service/migrations/kot_counter_id_fk_fix.sql
 
 # Older rows were written before PUBLIC_FILE_BASE_URL existed, so they carry
 # whatever origin the code defaulted to at the time (myzodu.com, zodu.in, ...).
