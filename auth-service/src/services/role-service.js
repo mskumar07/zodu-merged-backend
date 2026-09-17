@@ -129,7 +129,7 @@ exports.getModules = async () => {
 
 // ── INTERNAL — create employee login ──────────────────────────────────────────
 
-exports.createEmployeeUser = async ({ email, phone, zodu_id, branch_id, role_id, access_level, reporting_manager_id, password }) => {
+exports.createEmployeeUser = async ({ email, phone, zodu_id, branch_id, role_id, access_level, reporting_manager_id, password, is_first_employee }) => {
   const user_id = await withTransaction(async (client) => {
     const emailExists = email ? await repo.checkEmailExists(client, email) : false;
     if (emailExists) throw new Error('Email already registered');
@@ -141,7 +141,8 @@ exports.createEmployeeUser = async ({ email, phone, zodu_id, branch_id, role_id,
     const rawPassword   = password || `${phone.slice(-4)}@Zodu`;
     const password_hash = await bcrypt.hash(rawPassword, salt);
 
-    const id = await repo.createEmployeeUser(client, { email, phone, zodu_id, password_hash });
+    const user_type = is_first_employee ? 'super_admin' : 'employee';
+    const id = await repo.createEmployeeUser(client, { email, phone, zodu_id, password_hash, user_type });
 
     if (role_id) {
       await repo.assignEmployeeRole(client, {

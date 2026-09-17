@@ -7,15 +7,24 @@
 -- parent's id/uuid) must be deleted BEFORE their parent. Verified via live
 -- information_schema.columns query (2026-09-11):
 --   tables WITH branch_id+zodu_id directly: tbl_category, tbl_customer,
---     tbl_doc_id_seq, tbl_expense, tbl_expense_menu_items,
---     tbl_expense_payment, tbl_gst, tbl_hold, tbl_inventory, tbl_kot_list,
---     tbl_menu_items, tbl_ordered_items, tbl_orders, tbl_payment, tbl_purchase,
---     tbl_purchase_payment, tbl_resturant_branch, tbl_stock_ledger,
---     tbl_tmp_ordered_items, tbl_tmp_orders, tbl_units, tbl_vendor
---   tbl_order_no_counter has branch_id ONLY, no zodu_id column at all
---     (verified live 2026-09-11) — purged by branch_id alone.
+--     tbl_doc_id_seq, tbl_expense, tbl_expense_menu_item_seq,
+--     tbl_expense_menu_items, tbl_expense_payment, tbl_gst, tbl_hold,
+--     tbl_inventory, tbl_kot_counter, tbl_kot_list, tbl_menu_items,
+--     tbl_ordered_items, tbl_orders, tbl_purchase, tbl_purchase_payment,
+--     tbl_stock_ledger, tbl_tmp_ordered_items, tbl_tmp_orders, tbl_units,
+--     tbl_vendor. tbl_kot_counter is referenced by tbl_menu_items.kot_counter_id
+--     with ON DELETE SET NULL, so it can be purged independent of order —
+--     confirmed live 2026-09-16, added here (was a pre-existing gap along
+--     with tbl_expense_menu_item_seq, both missing from earlier versions of
+--     this function despite matching the branch scope).
 --   tbl_order_no_template is intentionally NOT purged — per product
 --     decision, that table is not in use.
+--   tbl_order_no_counter and tbl_resturant_branch are intentionally NOT
+--     purged either — confirmed unused (no code references either table
+--     anywhere in restaurant-service) as of 2026-09-16; product decision to
+--     leave any leftover rows alone rather than build purge logic for dead
+--     tables. tbl_payment / tbl_payment_history have been dropped from the
+--     schema entirely and are likewise no longer referenced here.
 --   child tables WITHOUT branch_id (delete via parent's key first):
 --     tbl_expense_items (expense_id -> tbl_expense)
 --     tbl_purchase_items (purchase_id -> tbl_purchase)
@@ -68,10 +77,6 @@ BEGIN
     GET DIAGNOSTICS n = ROW_COUNT;
     table_name := 'tbl_ordered_items'; rows_deleted := n; RETURN NEXT;
 
-    DELETE FROM tbl_payment WHERE zodu_id = p_zodu_id AND branch_id = p_branch_id;
-    GET DIAGNOSTICS n = ROW_COUNT;
-    table_name := 'tbl_payment'; rows_deleted := n; RETURN NEXT;
-
     DELETE FROM tbl_orders WHERE zodu_id = p_zodu_id AND branch_id = p_branch_id;
     GET DIAGNOSTICS n = ROW_COUNT;
     table_name := 'tbl_orders'; rows_deleted := n; RETURN NEXT;
@@ -83,13 +88,6 @@ BEGIN
     DELETE FROM tbl_tmp_orders WHERE zodu_id = p_zodu_id AND branch_id = p_branch_id;
     GET DIAGNOSTICS n = ROW_COUNT;
     table_name := 'tbl_tmp_orders'; rows_deleted := n; RETURN NEXT;
-
-    -- No zodu_id column on this table — branch_id only (verified live
-    -- 2026-09-11). tbl_order_no_template is intentionally NOT purged here —
-    -- per product decision, that table is not in use.
-    DELETE FROM tbl_order_no_counter WHERE branch_id = p_branch_id;
-    GET DIAGNOSTICS n = ROW_COUNT;
-    table_name := 'tbl_order_no_counter'; rows_deleted := n; RETURN NEXT;
 
     DELETE FROM tbl_purchase_payment WHERE zodu_id = p_zodu_id AND branch_id = p_branch_id;
     GET DIAGNOSTICS n = ROW_COUNT;
@@ -127,6 +125,10 @@ BEGIN
     GET DIAGNOSTICS n = ROW_COUNT;
     table_name := 'tbl_menu_items'; rows_deleted := n; RETURN NEXT;
 
+    DELETE FROM tbl_kot_counter WHERE zodu_id = p_zodu_id AND branch_id = p_branch_id;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    table_name := 'tbl_kot_counter'; rows_deleted := n; RETURN NEXT;
+
     DELETE FROM tbl_category WHERE zodu_id = p_zodu_id AND branch_id = p_branch_id;
     GET DIAGNOSTICS n = ROW_COUNT;
     table_name := 'tbl_category'; rows_deleted := n; RETURN NEXT;
@@ -151,9 +153,9 @@ BEGIN
     GET DIAGNOSTICS n = ROW_COUNT;
     table_name := 'tbl_doc_id_seq'; rows_deleted := n; RETURN NEXT;
 
-    DELETE FROM tbl_resturant_branch WHERE zodu_id = p_zodu_id AND branch_id = p_branch_id;
+    DELETE FROM tbl_expense_menu_item_seq WHERE zodu_id = p_zodu_id AND branch_id = p_branch_id;
     GET DIAGNOSTICS n = ROW_COUNT;
-    table_name := 'tbl_resturant_branch'; rows_deleted := n; RETURN NEXT;
+    table_name := 'tbl_expense_menu_item_seq'; rows_deleted := n; RETURN NEXT;
 
     RETURN;
 END;

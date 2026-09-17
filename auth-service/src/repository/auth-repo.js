@@ -25,12 +25,20 @@ async function findPhnExist({ phone_number }) {
     `SELECT u.user_id, u.email, u.phone, u.password_hash, u.user_type, u.is_active, u.is_deleted,
             uc.zodu_id, uc.is_primary
      FROM tbl_users u
-     JOIN tbl_user_companies uc ON uc.user_id = u.user_id 
+     JOIN tbl_user_companies uc ON uc.user_id = u.user_id
      WHERE u.phone = $1`,
     [phone_number]
   );
 }
 // AND uc.is_primary = true
+
+async function findUserById({ user_id }) {
+  const { rows } = await conn.query(
+    `SELECT user_id, email, phone FROM tbl_users WHERE user_id = $1`,
+    [user_id]
+  );
+  return rows[0] || null;
+}
 
 
 // Runs on the caller's transaction client — participates in CreateAccount's
@@ -231,6 +239,7 @@ module.exports = {
   AccountCreationQuery,
   findEmailExist,
   findPhnExist,
+  findUserById,
   getNextZoduId,
   createSession,
   findSessionByRefreshToken,

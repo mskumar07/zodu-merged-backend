@@ -1,9 +1,20 @@
 -- Hard-deletes every row scoped to one (zodu_id, branch_id) in this database,
--- as part of the "delete branch" flow. auth-service's scope is intentionally
--- narrow: only tbl_pos_settings, tbl_invoice_settings, tbl_roles, then
--- tbl_branch itself. tbl_access_control and tbl_user_roles ALSO carry
--- branch_id but are deliberately excluded per product decision — do not add
--- them here without re-confirming that decision.
+-- as part of the "delete branch" flow. auth-service's scope covers
+-- tbl_pos_settings, tbl_invoice_settings, tbl_roles, tbl_user_roles (branch-
+-- scoped rows only), then tbl_branch itself. tbl_access_control still
+-- carries branch_id too but is deliberately excluded per product decision —
+-- do not add it here without re-confirming that decision.
+--
+-- tbl_users/tbl_user_sessions are intentionally NOT touched here (product
+-- decision, 2026-09-17): a user is a company-level concept via
+-- tbl_user_companies, not a branch-level one. Deleting tbl_users directly
+-- from branch-scoped tbl_user_roles rows was tried and reverted — it threw
+-- a foreign key violation on tbl_user_companies_user_id_fkey whenever that
+-- user still had a tbl_user_companies row (this company or any other), since
+-- tbl_user_companies was never cleared first. Only fn_purge_company deletes
+-- tbl_users, and only for a user left with zero tbl_user_companies rows
+-- anywhere after that company's mapping is removed — see
+-- company_purge_function.sql.
 --
 -- Called from auth-service once every other service (retail, restaurant,
 -- employee, payroll, checklist) has successfully purged its own data for
@@ -31,6 +42,10 @@ BEGIN
     DELETE FROM tbl_roles WHERE zodu_id = p_zodu_id AND branch_id = p_branch_id;
     GET DIAGNOSTICS n = ROW_COUNT;
     table_name := 'tbl_roles'; rows_deleted := n; RETURN NEXT;
+
+    DELETE FROM tbl_user_roles WHERE zodu_id = p_zodu_id AND branch_id = p_branch_id;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    table_name := 'tbl_user_roles'; rows_deleted := n; RETURN NEXT;
 
     DELETE FROM tbl_branch WHERE zodu_id = p_zodu_id AND branch_id = p_branch_id;
     GET DIAGNOSTICS n = ROW_COUNT;

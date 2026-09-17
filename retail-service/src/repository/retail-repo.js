@@ -6555,3 +6555,13 @@ exports.purgeBranch = async (zodu_id, branch_id) => {
   );
   return rows;
 };
+
+// ========== Company Purge (delete company cascade, all branches) ==========
+
+exports.purgeCompany = async (zodu_id) => {
+  const { rows } = await conn.query(
+    `SELECT * FROM fn_purge_company($1)`,
+    [zodu_id]
+  );
+  return rows;
+};

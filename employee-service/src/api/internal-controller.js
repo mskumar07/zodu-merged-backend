@@ -16,7 +16,7 @@ router.post('/employee/create-admin', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    const employee_code = await repo.generateEmployeeCode(client, zodu_id);
+    const employee_code = await repo.generateEmployeeCode(client, zodu_id, branch_id || 'B1');
 
     const { rows } = await client.query(
       `INSERT INTO tbl_employees (
@@ -84,6 +84,19 @@ router.post('/branches/:zodu_id/:branch_id/purge', async (req, res) => {
     return res.status(200).json({ success: true, data: results });
   } catch (err) {
     console.error('[internal] purgeBranch:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /internal/companies/:zodu_id/purge — hard-delete every row scoped to
+// this company, all branches. Called by auth-service's delete-company orchestrator.
+router.post('/companies/:zodu_id/purge', async (req, res) => {
+  try {
+    const { zodu_id } = req.params;
+    const results = await repo.purgeCompany(zodu_id);
+    return res.status(200).json({ success: true, data: results });
+  } catch (err) {
+    console.error('[internal] purgeCompany:', err.message);
     return res.status(500).json({ success: false, error: err.message });
   }
 });
