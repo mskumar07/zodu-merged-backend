@@ -34,7 +34,7 @@ async function withTransaction(fn) {
 
 const PRINTER_COLUMNS = `
   p.id, p.printer_uuid, p.zodu_id, p.branch_id, p.printer_name, p.connection_type,
-  p.ip_address, p.port, p.device_name, p.paper_size, p.role, p.active,
+  p.ip_address, p.port, p.device_name, p.paper_size, p.cut_mode, p.role, p.active,
   p.created_at, p.updated_at`;
 
 exports.listPrinters = async (zodu_id, branch_id) => {
@@ -58,13 +58,13 @@ exports.getPrinter = async (id, zodu_id, branch_id) => {
 exports.createPrinter = async (data) => {
   const { rows } = await conn.query(
     `INSERT INTO tbl_kot_printers
-       (zodu_id, branch_id, printer_name, connection_type, ip_address, port, device_name, paper_size, role, active)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       (zodu_id, branch_id, printer_name, connection_type, ip_address, port, device_name, paper_size, role, active, cut_mode)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
      RETURNING *`,
     [
       data.zodu_id, data.branch_id, data.printer_name, data.connection_type,
       data.ip_address || null, data.port || 9100, data.device_name || null,
-      data.paper_size, data.role, data.active,
+      data.paper_size, data.role, data.active, data.cut_mode || "partial",
     ]
   );
   return rows[0];
@@ -74,13 +74,13 @@ exports.updatePrinter = async (id, data) => {
   const { rows } = await conn.query(
     `UPDATE tbl_kot_printers SET
        printer_name = $1, connection_type = $2, ip_address = $3, port = $4, device_name = $5,
-       paper_size = $6, role = $7, active = $8, updated_at = CURRENT_TIMESTAMP
+       paper_size = $6, role = $7, active = $8, cut_mode = $12, updated_at = CURRENT_TIMESTAMP
      WHERE id = $9 AND zodu_id = $10 AND branch_id = $11
      RETURNING *`,
     [
       data.printer_name, data.connection_type, data.ip_address || null, data.port || 9100,
       data.device_name || null, data.paper_size, data.role, data.active,
-      id, data.zodu_id, data.branch_id,
+      id, data.zodu_id, data.branch_id, data.cut_mode || "partial",
     ]
   );
   return rows[0] || null;

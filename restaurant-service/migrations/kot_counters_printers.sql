@@ -38,6 +38,8 @@ ALTER TABLE tbl_kot_printers
     ADD COLUMN IF NOT EXISTS device_name VARCHAR(120),
     -- Thermal roll width in inches: '2' (58 mm) or '3' (80 mm).
     ADD COLUMN IF NOT EXISTS paper_size VARCHAR(2) NOT NULL DEFAULT '3',
+    -- Auto cutter after each slip: partial | full | none (feed only, tear by hand).
+    ADD COLUMN IF NOT EXISTS cut_mode VARCHAR(10) NOT NULL DEFAULT 'partial',
     -- kot_counter | billing | both
     ADD COLUMN IF NOT EXISTS role VARCHAR(12) NOT NULL DEFAULT 'kot_counter',
     ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
