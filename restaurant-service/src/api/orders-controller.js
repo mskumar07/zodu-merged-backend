@@ -140,4 +140,32 @@ router.get("/get/report/order-category", async (req, res) => {
   }
 });
 
+// GET /get/kot-list/:zodu_id/:branch_id — Kitchen Display board data
+router.get("/get/kot-list/:zodu_id/:branch_id", async (req, res) => {
+  try {
+    const { zodu_id, branch_id } = req.params;
+    const result = await service.getKotList(zodu_id, branch_id);
+    if (!result.success) return res.status(400).json({ message: result.message });
+    return res.status(200).json({ message: "Data Get Successfully", data: result.data });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// PUT /api/kot/order-ready — marks tbl_orders.kot_order_status = 'Order Ready'
+// and removes the order's rows from tbl_kot_list
+router.put("/api/kot/order-ready", async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(schema.kot_order_ready, req.body);
+    if (errors) return res.status(400).json({ errors });
+    const result = await service.markKotOrderReady(input.zodu_id, input.branch_id, input.api_order_id);
+    if (!result.success) return res.status(400).json({ message: result.message });
+    return res.status(200).json({ message: "Order marked ready", removedItems: result.removedItems });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;

@@ -54,13 +54,14 @@ exports.getSingleOrder = async (zodu_id, branch_id, api_order_id) => {
 };
 
 exports.createOrder = async (orderData) => {
+  const client = await conn.connect();
   try {
-    await conn.query("BEGIN");
+    await client.query("BEGIN");
 
     const api_order_id = randomUUID();
     const public_order_no = await generatePublicOrderNo(orderData.branch_id, orderData.zodu_id);
 
-    const result = await conn.query(
+    const result = await client.query(
       `INSERT INTO tbl_orders (
         zodu_id, branch_id,
         api_order_id, public_order_no,
@@ -84,17 +85,20 @@ exports.createOrder = async (orderData) => {
       ]
     );
 
-    await conn.query("COMMIT");
+    await client.query("COMMIT");
     return result.rows[0];
   } catch (err) {
-    await conn.query("ROLLBACK");
+    await client.query("ROLLBACK");
     throw err;
+  } finally {
+    client.release();
   }
 };
 
 exports.createOrderedItems = async (orderData) => {
+  const client = await conn.connect();
   try {
-    await conn.query("BEGIN");
+    await client.query("BEGIN");
     const items = orderData.items;
     if (!Array.isArray(items) || items.length === 0) throw new Error("Items array is empty or invalid");
 
@@ -115,7 +119,7 @@ exports.createOrderedItems = async (orderData) => {
         item.gst_percentage, item.tax, item.cgst, item.sgst, item.tax_inclusive ?? false
       );
     }
-    const result = await conn.query(
+    const result = await client.query(
       `INSERT INTO tbl_ordered_items (
         zodu_id, branch_id, api_order_id, item_id, item_name,
         qty, price, item_unit, variant_id, variant_name,
@@ -124,17 +128,20 @@ exports.createOrderedItems = async (orderData) => {
       params
     );
 
-    await conn.query("COMMIT");
+    await client.query("COMMIT");
     return result.rows;
   } catch (err) {
-    await conn.query("ROLLBACK");
+    await client.query("ROLLBACK");
     throw new Error("Unable to create ordered items: " + err.message);
+  } finally {
+    client.release();
   }
 };
 
 exports.StockLedgerInventoryEntry = async (orderData) => {
+  const client = await conn.connect();
   try {
-    await conn.query("BEGIN");
+    await client.query("BEGIN");
     console.log("StockLedgerInventoryEntry orderData:", orderData);
     const items = orderData.items;
     if (!Array.isArray(items) || items.length === 0) throw new Error("Items array is empty or invalid");
@@ -142,7 +149,7 @@ exports.StockLedgerInventoryEntry = async (orderData) => {
     const menuIds = items.map((i) => i.menu_id);
 
     // 1. Batch fetch menu items (only Products need stock tracking)
-    const menuRes = await conn.query(
+    const menuRes = await client.query(
       `SELECT item_uuid, menu_id, menu_name, menu_type, opening_stock FROM tbl_menu_items WHERE menu_id = ANY($1)`,
       [menuIds]
     );
@@ -150,7 +157,7 @@ exports.StockLedgerInventoryEntry = async (orderData) => {
     for (const row of menuRes.rows) menuMap[row.menu_id] = row;
 
     // 2. Batch fetch inventory stock (keyed by item_id = menu_id)
-    const invRes = await conn.query(
+    const invRes = await client.query(
       `SELECT item_id, stock_qty FROM tbl_inventory WHERE item_id = ANY($1)`,
       [menuIds]
     );
@@ -194,7 +201,7 @@ exports.StockLedgerInventoryEntry = async (orderData) => {
 
     // 4. Bulk insert all ledger rows in one query
     if (ledgerValues.length > 0) {
-      await conn.query(
+      await client.query(
         `INSERT INTO tbl_stock_ledger (
           item_uuid, item_id, zodu_id, branch_id, item_name,
           transaction_type, reference_id, qty_change, stock_before, stock_after, notes
@@ -207,7 +214,7 @@ exports.StockLedgerInventoryEntry = async (orderData) => {
     if (invUpdates.length > 0) {
       const stockAfterArr = invUpdates.map((u) => u.stock_after);
       const menuIdArr = invUpdates.map((u) => u.menu_id);
-      await conn.query(
+      await client.query(
         `UPDATE tbl_inventory SET stock_qty = v.stock_after
          FROM unnest($1::numeric[], $2::text[]) AS v(stock_after, menu_id)
          WHERE tbl_inventory.item_id = v.menu_id`,
@@ -215,11 +222,189 @@ exports.StockLedgerInventoryEntry = async (orderData) => {
       );
     }
 
-    await conn.query("COMMIT");
+    await client.query("COMMIT");
     return { success: true };
   } catch (err) {
-    await conn.query("ROLLBACK");
+    await client.query("ROLLBACK");
     throw new Error("Unable to create stock ledger entry: " + err.message);
+  } finally {
+    client.release();
+  }
+};
+
+// Runs the non-Dine-In order creation (order, ordered items, stock ledger +
+// inventory deduction, KOT list rows) as ONE transaction on ONE client, so a
+// failure at any step rolls back all of them instead of each step committing
+// on its own like exports.createOrder/createOrderedItems/
+// StockLedgerInventoryEntry/createKOT do individually. Same SQL as those
+// functions — only the transaction boundary is different.
+exports.createOrderWithKOT = async (orderData) => {
+  const client = await conn.connect();
+  try {
+    await client.query("BEGIN");
+
+    // 1. tbl_orders
+    const api_order_id = randomUUID();
+    const public_order_no = await generatePublicOrderNo(orderData.branch_id, orderData.zodu_id);
+
+    const orderResult = await client.query(
+      `INSERT INTO tbl_orders (
+        zodu_id, branch_id,
+        api_order_id, public_order_no,
+        table_no, order_type, no_of_items,
+        customer_name, customer_phone,
+        subtotal, total_tax, total_amt,
+        discount_type, discount_value, discount_amount,
+        final_payment, payment_type,
+        order_date, order_time
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,true,$16,$17,$18)
+      RETURNING *`,
+      [
+        orderData.zodu_id, orderData.branch_id,
+        api_order_id, public_order_no,
+        orderData.table_no || null, orderData.order_type, orderData.no_of_items,
+        orderData.customer_name || null, orderData.customer_phone || null,
+        orderData.subtotal || 0, orderData.tax_amount || 0, orderData.total_amt,
+        orderData.discount_type || null, orderData.discount_value || 0, orderData.discount_amount || 0,
+        orderData.payment_type || null, orderData.order_date, orderData.order_time
+      ]
+    );
+    const finalOrder = orderResult.rows[0];
+    orderData.api_order_id = finalOrder.api_order_id;
+
+    // 2. tbl_ordered_items
+    const items = orderData.items;
+    if (!Array.isArray(items) || items.length === 0) throw new Error("Items array is empty or invalid");
+
+    {
+      const values = [];
+      const params = [];
+      let idx = 1;
+      for (const item of items) {
+        const hasVariant = !!item.variant_id;
+        values.push(
+          `($${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++})`
+        );
+        params.push(
+          orderData.zodu_id, orderData.branch_id, orderData.api_order_id,
+          item.menu_id, item.name, item.qty, item.price, item.menu_unit,
+          hasVariant ? item.variant_id : null,
+          hasVariant ? item.variant_name : null,
+          item.gst_percentage, item.tax, item.cgst, item.sgst, item.tax_inclusive ?? false
+        );
+      }
+      await client.query(
+        `INSERT INTO tbl_ordered_items (
+          zodu_id, branch_id, api_order_id, item_id, item_name,
+          qty, price, item_unit, variant_id, variant_name,
+          gst_percentage, tax_amount, cgst, sgst, tax_inclusive
+        ) VALUES ${values.join(",")} RETURNING *`,
+        params
+      );
+    }
+
+    // 3. Stock ledger + inventory deduction
+    {
+      const menuIds = items.map((i) => i.menu_id);
+
+      const menuRes = await client.query(
+        `SELECT item_uuid, menu_id, menu_name, menu_type, opening_stock FROM tbl_menu_items WHERE menu_id = ANY($1)`,
+        [menuIds]
+      );
+      const menuMap = {};
+      for (const row of menuRes.rows) menuMap[row.menu_id] = row;
+
+      const invRes = await client.query(
+        `SELECT item_id, stock_qty FROM tbl_inventory WHERE item_id = ANY($1)`,
+        [menuIds]
+      );
+      const invMap = {};
+      for (const row of invRes.rows) invMap[row.item_id] = row;
+
+      const ledgerValues = [];
+      const ledgerParams = [];
+      const invUpdates = [];
+      let idx = 1;
+
+      for (const item of items) {
+        const menu = menuMap[item.menu_id];
+        if (!menu) continue;
+        if (menu.menu_type !== "Product") continue;
+
+        const qty_change = -(Number(item.qty));
+        const stock_before = Number(invMap[item.menu_id]?.stock_qty ?? 0);
+        const stock_after = stock_before + qty_change;
+
+        ledgerValues.push(
+          `($${idx++},$${idx++},$${idx++},$${idx++},$${idx++},'sale',$${idx++},$${idx++},$${idx++},$${idx++},'Sale Order')`
+        );
+        ledgerParams.push(
+          menu.item_uuid,
+          item.menu_id,
+          orderData.zodu_id,
+          orderData.branch_id,
+          menu.menu_name,
+          orderData.api_order_id,
+          qty_change,
+          stock_before,
+          stock_after
+        );
+
+        invUpdates.push({ stock_after, menu_id: item.menu_id });
+      }
+
+      if (ledgerValues.length > 0) {
+        await client.query(
+          `INSERT INTO tbl_stock_ledger (
+            item_uuid, item_id, zodu_id, branch_id, item_name,
+            transaction_type, reference_id, qty_change, stock_before, stock_after, notes
+          ) VALUES ${ledgerValues.join(",")}`,
+          ledgerParams
+        );
+      }
+
+      if (invUpdates.length > 0) {
+        const stockAfterArr = invUpdates.map((u) => u.stock_after);
+        const menuIdArr = invUpdates.map((u) => u.menu_id);
+        await client.query(
+          `UPDATE tbl_inventory SET stock_qty = v.stock_after
+           FROM unnest($1::numeric[], $2::text[]) AS v(stock_after, menu_id)
+           WHERE tbl_inventory.item_id = v.menu_id`,
+          [stockAfterArr, menuIdArr]
+        );
+      }
+    }
+
+    // 4. tbl_kot_list
+    {
+      const values = [];
+      const params = [];
+      let idx = 1;
+      for (const item of items) {
+        const itemName = item.variant_name && item.variant_name.trim() !== "" ? item.variant_name : item.name;
+        values.push(
+          `($${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++})`
+        );
+        params.push(
+          orderData.zodu_id, orderData.branch_id, orderData.api_order_id, orderData.legacy_order_ref,
+          orderData.kot_no, orderData.table_no, item.menu_id, itemName, item.qty, orderData.order_type
+        );
+      }
+      await client.query(
+        `INSERT INTO tbl_kot_list (zodu_id, branch_id, api_order_id, legacy_order_ref, kot_no, table_no, item_id, item_name, qty, order_type)
+         VALUES ${values.join(",")} RETURNING *`,
+        params
+      );
+    }
+
+    await client.query("COMMIT");
+    return finalOrder;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
   }
 };
 
@@ -474,7 +659,7 @@ exports.get_ordered_data = async (branch_id, zodu_id) => {
     LEFT JOIN tbl_tmp_ordered_items i ON o.api_order_id = i.api_order_id
     LEFT JOIN tbl_menu_items mi ON i.item_id = mi.menu_id
     LEFT JOIN tbl_kot_list k ON o.api_order_id = k.api_order_id
-    WHERE o.branch_id = $1 AND o.zodu_id = $2 AND o.final_payment = false
+    WHERE o.branch_id = $1 AND o.zodu_id = $2 
     GROUP BY o.api_order_id, o.legacy_order_ref, o.table_no, o.order_type,
       o.customer_name, o.customer_phone, o.total_amt, o.final_payment,
       o.branch_id, o.zodu_id, o.order_date, o.order_time
@@ -716,63 +901,206 @@ exports.createtmpOrderedItems = async (orderData) => {
   }
 };
 
+// Diffs the incoming cart against what's already on tbl_kot_list for this
+// order (across all of its previous KOT-N sends), instead of wiping and
+// resending everything under one kot_no every time:
+//   - a brand-new item, or the ADDED portion of a raised qty, goes out as a
+//     new KOT card (kot_no = next number for this order) — the kitchen
+//     already started on what was sent before, only the delta is new
+//   - a lowered qty shrinks its existing row(s) in place (oldest rows first),
+//     a removed item deletes its existing row(s) — no new KOT for either
 exports.updateKOT = async (orderData) => {
+  const client = await conn.connect();
   try {
-    await conn.query("BEGIN");
+    await client.query("BEGIN");
     const items = orderData.items;
     if (!Array.isArray(items) || items.length === 0) throw new Error("Items array is empty or invalid");
 
-    await conn.query(`DELETE FROM tbl_kot_list WHERE api_order_id = $1`, [orderData.api_order_id]);
-
-    const columnsPerRow = 9;
-    const values = [];
-    const placeholders = items.map((item, idx) => {
-      const itemName = item.variant_name && item.variant_name.trim() !== "" ? item.variant_name : item.name;
-      values.push(
-        orderData.zodu_id, orderData.branch_id, orderData.api_order_id,
-        orderData.legacy_order_ref, orderData.kot_no, orderData.table_no,
-        item.menu_id, itemName, item.qty
-      );
-      const base = idx * columnsPerRow;
-      const rowPlaceholders = Array.from({ length: columnsPerRow }, (_, i) => `$${base + i + 1}`).join(",");
-      return `(${rowPlaceholders})`;
-    }).join(",");
-
-    const result = await conn.query(
-      `INSERT INTO tbl_kot_list (zodu_id, branch_id, api_order_id, legacy_order_ref, kot_no, table_no, item_id, item_name, qty)
-       VALUES ${placeholders} RETURNING *`,
-      values
+    const existingRes = await client.query(
+      `SELECT id, item_id, qty, kot_no FROM tbl_kot_list WHERE api_order_id = $1 ORDER BY kot_no, id`,
+      [orderData.api_order_id]
     );
 
-    await conn.query("COMMIT");
-    return result.rows;
+    // Group existing rows by item_id — an item can have rows spread across
+    // several past KOT-N sends if it was added to more than once.
+    const existingByItem = new Map();
+    for (const row of existingRes.rows) {
+      const list = existingByItem.get(row.item_id) || [];
+      list.push(row);
+      existingByItem.set(row.item_id, list);
+    }
+
+    const incomingIds = new Set(items.map((i) => i.menu_id));
+    const newRows = []; // items/qty-delta to insert under a fresh kot_no
+
+    for (const item of items) {
+      const existingRows = existingByItem.get(item.menu_id) || [];
+      const existingQty = existingRows.reduce((sum, r) => sum + Number(r.qty), 0);
+      const incomingQty = Number(item.qty);
+
+      if (existingRows.length === 0) {
+        // Brand-new item — the whole qty is new
+        newRows.push(item);
+      } else if (incomingQty > existingQty) {
+        // Raised qty — only the delta is new, existing rows are untouched
+        newRows.push({ ...item, qty: incomingQty - existingQty });
+      } else if (incomingQty < existingQty) {
+        // Lowered qty — shrink/delete existing rows in place, oldest first,
+        // no new KOT card for a decrease
+        let toRemove = existingQty - incomingQty;
+        for (const row of existingRows) {
+          if (toRemove <= 0) break;
+          const rowQty = Number(row.qty);
+          if (rowQty <= toRemove) {
+            await client.query(`DELETE FROM tbl_kot_list WHERE id = $1`, [row.id]);
+            toRemove -= rowQty;
+          } else {
+            await client.query(`UPDATE tbl_kot_list SET qty = $1 WHERE id = $2`, [rowQty - toRemove, row.id]);
+            toRemove = 0;
+          }
+        }
+      }
+      // incomingQty === existingQty: unchanged, nothing to do
+    }
+
+    // Items dropped entirely from the cart — delete all their existing rows
+    for (const [itemId, rows] of existingByItem.entries()) {
+      if (incomingIds.has(itemId)) continue;
+      for (const row of rows) {
+        await client.query(`DELETE FROM tbl_kot_list WHERE id = $1`, [row.id]);
+      }
+    }
+
+    let insertedRows = [];
+    if (newRows.length > 0) {
+      const kotNoRes = await client.query(
+        `SELECT COALESCE(MAX(NULLIF(regexp_replace(kot_no, '\\D', '', 'g'), '')::int), 0) + 1 AS next_no
+         FROM tbl_kot_list WHERE api_order_id = $1`,
+        [orderData.api_order_id]
+      );
+      const nextKotNo = `KOT-${kotNoRes.rows[0].next_no}`;
+
+      const columnsPerRow = 10;
+      const values = [];
+      const placeholders = newRows.map((item, idx) => {
+        const itemName = item.variant_name && item.variant_name.trim() !== "" ? item.variant_name : item.name;
+        values.push(
+          orderData.zodu_id, orderData.branch_id, orderData.api_order_id,
+          orderData.legacy_order_ref, nextKotNo, orderData.table_no,
+          item.menu_id, itemName, item.qty, orderData.order_type
+        );
+        const base = idx * columnsPerRow;
+        const rowPlaceholders = Array.from({ length: columnsPerRow }, (_, i) => `$${base + i + 1}`).join(",");
+        return `(${rowPlaceholders})`;
+      }).join(",");
+
+      const result = await client.query(
+        `INSERT INTO tbl_kot_list (zodu_id, branch_id, api_order_id, legacy_order_ref, kot_no, table_no, item_id, item_name, qty, order_type)
+         VALUES ${placeholders} RETURNING *`,
+        values
+      );
+      insertedRows = result.rows;
+    }
+
+    await client.query("COMMIT");
+    return insertedRows;
   } catch (err) {
-    await conn.query("ROLLBACK");
+    await client.query("ROLLBACK");
     throw new Error("Unable to update KOT: " + err.message);
+  } finally {
+    client.release();
   }
 };
 
 exports.createKOT = async (orderData) => {
+  const client = await conn.connect();
   try {
-    await conn.query("BEGIN");
+    await client.query("BEGIN");
     const items = orderData.items;
     if (!Array.isArray(items) || items.length === 0) throw new Error("Items array is empty or invalid");
 
-    const insertedItems = [];
+    const values = [];
+    const params = [];
+    let idx = 1;
+
     for (const item of items) {
       const itemName = item.variant_name && item.variant_name.trim() !== "" ? item.variant_name : item.name;
-      const result = await conn.query(
-        `INSERT INTO tbl_kot_list (zodu_id, branch_id, api_order_id, legacy_order_ref, kot_no, table_no, item_id, item_name, qty)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-        [orderData.zodu_id, orderData.branch_id, orderData.api_order_id, orderData.legacy_order_ref, orderData.kot_no, orderData.table_no, item.menu_id, itemName, item.qty]
+      values.push(
+        `($${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++})`
       );
-      insertedItems.push(result.rows[0]);
+      params.push(
+        orderData.zodu_id, orderData.branch_id, orderData.api_order_id, orderData.legacy_order_ref,
+        orderData.kot_no, orderData.table_no, item.menu_id, itemName, item.qty, orderData.order_type
+      );
     }
 
-    await conn.query("COMMIT");
-    return insertedItems;
+    const result = await client.query(
+      `INSERT INTO tbl_kot_list (zodu_id, branch_id, api_order_id, legacy_order_ref, kot_no, table_no, item_id, item_name, qty, order_type)
+       VALUES ${values.join(",")} RETURNING *`,
+      params
+    );
+
+    await client.query("COMMIT");
+    return result.rows;
   } catch (err) {
-    await conn.query("ROLLBACK");
+    await client.query("ROLLBACK");
     throw new Error("Unable to create KOT: " + err.message);
+  } finally {
+    client.release();
+  }
+};
+
+// KDS board data — one row per order with its KOT items nested, for the
+// Kitchen Display screen. table_no/order_type/created_at are all stored
+// directly on tbl_kot_list (set at insert time), so no join to
+// tbl_orders/tbl_tmp_orders is needed.
+exports.getKotList = async (zodu_id, branch_id) => {
+  const query = `
+    SELECT
+      k.api_order_id,
+      k.legacy_order_ref,
+      k.kot_no,
+      k.table_no,
+      k.order_type,
+      MIN(k.created_at) AS created_at,
+      JSON_AGG(JSONB_BUILD_OBJECT(
+        'item_id', k.item_id, 'item_name', k.item_name, 'qty', k.qty, 'status', k.status
+      ) ORDER BY k.id) AS items
+    FROM tbl_kot_list k
+    WHERE k.zodu_id = $1 AND k.branch_id = $2
+    GROUP BY k.api_order_id, k.legacy_order_ref, k.kot_no, k.table_no, k.order_type
+    ORDER BY MIN(k.created_at) DESC
+  `;
+  const { rows } = await conn.query(query, [zodu_id, branch_id]);
+  return rows;
+};
+
+// "Order Ready" action from the KDS screen: marks the order Ready on
+// tbl_orders and removes its rows from tbl_kot_list, in one transaction.
+// Dine-In orders aren't in tbl_orders until checkout/completeorder, so the
+// tbl_orders UPDATE is a no-op there — the KOT rows are still cleared either way.
+exports.markKotOrderReady = async (zodu_id, branch_id, api_order_id) => {
+  const client = await conn.connect();
+  try {
+    await client.query("BEGIN");
+
+    await client.query(
+      `UPDATE tbl_orders SET kot_order_status = 'Order Ready'
+       WHERE zodu_id = $1 AND branch_id = $2 AND api_order_id = $3`,
+      [zodu_id, branch_id, api_order_id]
+    );
+
+    const result = await client.query(
+      `DELETE FROM tbl_kot_list WHERE zodu_id = $1 AND branch_id = $2 AND api_order_id = $3 RETURNING *`,
+      [zodu_id, branch_id, api_order_id]
+    );
+
+    await client.query("COMMIT");
+    return result.rows;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw new Error("Unable to mark order ready: " + err.message);
+  } finally {
+    client.release();
   }
 };
