@@ -9,10 +9,10 @@
 --   tables WITH branch_id+zodu_id directly: tbl_category, tbl_customer,
 --     tbl_doc_id_seq, tbl_expense, tbl_expense_menu_item_seq,
 --     tbl_expense_menu_items, tbl_expense_payment, tbl_gst, tbl_hold,
---     tbl_inventory, tbl_kot_counter, tbl_kot_list, tbl_menu_items,
+--     tbl_inventory, tbl_kot_counters, tbl_kot_list, tbl_menu_items,
 --     tbl_ordered_items, tbl_orders, tbl_purchase, tbl_purchase_payment,
 --     tbl_stock_ledger, tbl_tmp_ordered_items, tbl_tmp_orders, tbl_units,
---     tbl_vendor. tbl_kot_counter is referenced by tbl_menu_items.kot_counter_id
+--     tbl_vendor. tbl_kot_counters is referenced by tbl_menu_items.kot_counter_id
 --     with ON DELETE SET NULL, so it can be purged independent of order —
 --     confirmed live 2026-09-16, added here (was a pre-existing gap along
 --     with tbl_expense_menu_item_seq, both missing from earlier versions of
@@ -125,9 +125,9 @@ BEGIN
     GET DIAGNOSTICS n = ROW_COUNT;
     table_name := 'tbl_menu_items'; rows_deleted := n; RETURN NEXT;
 
-    DELETE FROM tbl_kot_counter WHERE zodu_id = p_zodu_id AND branch_id = p_branch_id;
+    DELETE FROM tbl_kot_counters WHERE zodu_id = p_zodu_id AND branch_id = p_branch_id;
     GET DIAGNOSTICS n = ROW_COUNT;
-    table_name := 'tbl_kot_counter'; rows_deleted := n; RETURN NEXT;
+    table_name := 'tbl_kot_counters'; rows_deleted := n; RETURN NEXT;
 
     DELETE FROM tbl_category WHERE zodu_id = p_zodu_id AND branch_id = p_branch_id;
     GET DIAGNOSTICS n = ROW_COUNT;
