@@ -147,7 +147,7 @@ exports.updateFinalPayment = async (data) => {
     /* ----------------------------------------------------
        5️⃣ MOVE TMP ITEMS → FINAL ITEMS
     ---------------------------------------------------- */
-    await conn.query(
+    const movedItemsRes = await conn.query(
       `
       INSERT INTO tbl_ordered_items (
         zodu_id,
@@ -184,6 +184,7 @@ exports.updateFinalPayment = async (data) => {
         tax_inclusive
       FROM tbl_tmp_ordered_items
       WHERE api_order_id = $1
+      RETURNING item_id, item_name, qty
       `,
       [api_order_id]
     );
@@ -195,6 +196,82 @@ exports.updateFinalPayment = async (data) => {
       `DELETE FROM tbl_tmp_orders WHERE api_order_id = $1`,
       [api_order_id]
     );
+
+    /* ----------------------------------------------------
+       6️⃣ STOCK LEDGER + INVENTORY DEDUCTION (same as non-Dine-In createOrder)
+    ---------------------------------------------------- */
+    const orderedItems = movedItemsRes.rows;
+    if (orderedItems.length > 0) {
+      const menuIds = orderedItems.map((i) => i.item_id);
+
+      const menuRes = await conn.query(
+        `SELECT item_uuid, menu_id, menu_name, menu_type FROM tbl_menu_items WHERE menu_id = ANY($1)`,
+        [menuIds]
+      );
+      const menuMap = {};
+      for (const row of menuRes.rows) menuMap[row.menu_id] = row;
+
+      const invRes = await conn.query(
+        `SELECT item_id, stock_qty FROM tbl_inventory WHERE item_id = ANY($1)`,
+        [menuIds]
+      );
+      const invMap = {};
+      for (const row of invRes.rows) invMap[row.item_id] = row;
+
+      const ledgerValues = [];
+      const ledgerParams = [];
+      const invUpdates = [];
+      let idx = 1;
+
+      for (const item of orderedItems) {
+        const menu = menuMap[item.item_id];
+        if (!menu) continue;
+        if (menu.menu_type !== "Product") continue;
+
+        const qty_change = -(Number(item.qty));
+        const stock_before = Number(invMap[item.item_id]?.stock_qty ?? 0);
+        const stock_after = stock_before + qty_change;
+
+        ledgerValues.push(
+          `($${idx++},$${idx++},$${idx++},$${idx++},$${idx++},'sale',$${idx++},$${idx++},$${idx++},$${idx++},'Sale Order')`
+        );
+        ledgerParams.push(
+          menu.item_uuid,
+          item.item_id,
+          zodu_id,
+          branch_id,
+          menu.menu_name,
+          api_order_id,
+          qty_change,
+          stock_before,
+          stock_after
+        );
+
+        invUpdates.push({ stock_after, menu_id: item.item_id });
+      }
+
+      if (ledgerValues.length > 0) {
+        await conn.query(
+          `INSERT INTO tbl_stock_ledger (
+            item_uuid, item_id, zodu_id, branch_id, item_name,
+            transaction_type, reference_id, qty_change, stock_before, stock_after, notes
+          ) VALUES ${ledgerValues.join(",")}`,
+          ledgerParams
+        );
+      }
+
+      if (invUpdates.length > 0) {
+        const stockAfterArr = invUpdates.map((u) => u.stock_after);
+        const menuIdArr = invUpdates.map((u) => u.menu_id);
+        await conn.query(
+          `UPDATE tbl_inventory SET stock_qty = v.stock_after
+           FROM unnest($1::numeric[], $2::text[]) AS v(stock_after, menu_id)
+           WHERE tbl_inventory.item_id = v.menu_id`,
+          [stockAfterArr, menuIdArr]
+        );
+      }
+    }
+
     await conn.query("COMMIT");
     return {
       success: true,

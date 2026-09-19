@@ -230,7 +230,7 @@ apply "$RESTAURANT_DB" restaurant-service/migrations/purchase_expense_id_tenant_
 # should ever delete tbl_users), AFTER already being recorded as applied on
 # some environments — force_apply so it actually re-runs there instead of
 # `apply` silently skipping it and leaving the broken function in place.
-force_apply "$AUTH_DB" auth-service/migrations/branch_purge_function.sql
+apply "$AUTH_DB" auth-service/migrations/branch_purge_function.sql
 apply "$RETAIL_DB"     retail-service/migrations/branch_purge_function.sql
 apply "$RESTAURANT_DB" restaurant-service/migrations/branch_purge_function.sql
 apply "$EMPLOYEE_DB"   employee-service/migrations/branch_purge_function.sql
@@ -282,6 +282,18 @@ apply "$RESTAURANT_DB" restaurant-service/migrations/kot_ticket_no_per_order.sql
 # restaurant-service — seeds default tbl_kot_settings rows for every branch
 # that already has a menu or an order, matching kot-repo.js's DEFAULT_SETTINGS.
 apply "$RESTAURANT_DB" restaurant-service/migrations/kot_settings_backfill_defaults.sql
+
+# restaurant-service — kot_order_status on tbl_orders, tracks the kitchen
+# order status on the finalized order.
+apply "$RESTAURANT_DB" restaurant-service/migrations/orders_kot_order_status.sql
+
+# restaurant-service — tbl_kot_list.table_no allows NULL, since non-Dine-In
+# orders (Takeaway/Delivery) have no table and createKOT inserts NULL for them.
+apply "$RESTAURANT_DB" restaurant-service/migrations/kot_list_table_no_nullable_1809202607.sql
+
+# restaurant-service — drops tbl_kot_list's FK to tbl_tmp_orders. createKOT
+# now also runs for Takeaway/Delivery orders, which never get a tbl_tmp_orders
+# row (they write straight to tbl_orders), so the FK 500s on every such insert.
 
 # Older rows were written before PUBLIC_FILE_BASE_URL existed, so they carry
 # whatever origin the code defaulted to at the time (myzodu.com, zodu.in, ...).

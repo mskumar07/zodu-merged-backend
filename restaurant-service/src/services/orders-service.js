@@ -97,10 +97,10 @@ async function createOrder(orderData) {
       return { success: true, message: "Running order created", order: tmpOrder, kot, kot_error };
     }
 
-    const finalOrder = await repository.createOrder(orderData);
+    // Order, ordered items, stock ledger + inventory, and KOT list rows all
+    // run in one transaction — a failure at any step rolls back all of them.
+    const finalOrder = await repository.createOrderWithKOT(orderData);
     orderData.api_order_id = finalOrder.api_order_id;
-    await repository.createOrderedItems(orderData);
-    await repository.StockLedgerInventoryEntry(orderData);
     const { kot, kot_error } = await kitchenTickets(orderData, "add", finalOrder.public_order_no);
     return { success: true, message: "Order created successfully", order: finalOrder, kot, kot_error };
   } catch (err) {
@@ -129,4 +129,27 @@ async function updateOrder(orderData) {
   }
 }
 
-module.exports = { getReportCategory, getReportServices, getSingleOrder, get_ordered_data, createOrder, updateOrder };
+async function getKotList(zodu_id, branch_id) {
+  try {
+    const data = await repository.getKotList(zodu_id, branch_id);
+    return { success: true, data };
+  } catch (error) {
+    console.error("getKotList Error", error);
+    return { success: false, message: error.message };
+  }
+}
+
+async function markKotOrderReady(zodu_id, branch_id, api_order_id) {
+  try {
+    const removedItems = await repository.markKotOrderReady(zodu_id, branch_id, api_order_id);
+    return { success: true, removedItems };
+  } catch (error) {
+    console.error("markKotOrderReady Error", error);
+    return { success: false, message: error.message };
+  }
+}
+
+module.exports = {
+  getReportCategory, getReportServices, getSingleOrder, get_ordered_data,
+  createOrder, updateOrder, getKotList, markKotOrderReady,
+};
