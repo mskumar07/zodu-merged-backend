@@ -105,9 +105,9 @@ BEGIN
     GET DIAGNOSTICS n = ROW_COUNT;
     table_name := 'tbl_menu_items'; rows_deleted := n; RETURN NEXT;
 
-    DELETE FROM tbl_kot_counter WHERE zodu_id = p_zodu_id;
+    DELETE FROM tbl_kot_counters WHERE zodu_id = p_zodu_id;
     GET DIAGNOSTICS n = ROW_COUNT;
-    table_name := 'tbl_kot_counter'; rows_deleted := n; RETURN NEXT;
+    table_name := 'tbl_kot_counters'; rows_deleted := n; RETURN NEXT;
 
     DELETE FROM tbl_category WHERE zodu_id = p_zodu_id;
     GET DIAGNOSTICS n = ROW_COUNT;
