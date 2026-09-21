@@ -301,7 +301,7 @@ const schema = {
     // Billing layout the restaurant POS screen opens on.
     pos_screen_type: joi.string().valid(...POS_SCREEN_TYPES).insensitive(),
 
-    // Whether the restaurant POS prints a KOT together with the bill.
+    // Restaurant-only: print a KOT with the bill on the billing PC's printer.
     kot_print_enabled: joi.boolean(),
   })
     .min(1)

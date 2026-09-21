@@ -36,7 +36,7 @@ ALTER TABLE tbl_kot_printers
     ADD COLUMN IF NOT EXISTS ip_address VARCHAR(64),
     ADD COLUMN IF NOT EXISTS port INT DEFAULT 9100,
     ADD COLUMN IF NOT EXISTS device_name VARCHAR(120),
-    -- Thermal roll width in inches: '2' (58 mm) or '3' (80 mm).
+    -- Thermal roll width in inches: '2' (58 mm), '3' (80 mm) or '5' (127 mm).
     ADD COLUMN IF NOT EXISTS paper_size VARCHAR(2) NOT NULL DEFAULT '3',
     -- Auto cutter after each slip: partial | full | none (feed only, tear by hand).
     ADD COLUMN IF NOT EXISTS cut_mode VARCHAR(10) NOT NULL DEFAULT 'partial',
