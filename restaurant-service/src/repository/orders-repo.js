@@ -384,15 +384,16 @@ exports.createOrderWithKOT = async (orderData) => {
       for (const item of items) {
         const itemName = item.variant_name && item.variant_name.trim() !== "" ? item.variant_name : item.name;
         values.push(
-          `($${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++})`
+          `($${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++})`
         );
         params.push(
           orderData.zodu_id, orderData.branch_id, orderData.api_order_id, orderData.legacy_order_ref,
-          orderData.kot_no, orderData.table_no, item.menu_id, itemName, item.qty, orderData.order_type
+          orderData.kot_no, orderData.table_no, item.menu_id, itemName, item.qty, orderData.order_type,
+          public_order_no
         );
       }
       await client.query(
-        `INSERT INTO tbl_kot_list (zodu_id, branch_id, api_order_id, legacy_order_ref, kot_no, table_no, item_id, item_name, qty, order_type)
+        `INSERT INTO tbl_kot_list (zodu_id, branch_id, api_order_id, legacy_order_ref, kot_no, table_no, item_id, item_name, qty, order_type, public_order_no)
          VALUES ${values.join(",")} RETURNING *`,
         params
       );
@@ -1055,24 +1056,54 @@ exports.createKOT = async (orderData) => {
 // directly on tbl_kot_list (set at insert time), so no join to
 // tbl_orders/tbl_tmp_orders is needed.
 exports.getKotList = async (zodu_id, branch_id) => {
+  // Single round trip: `filtered` scopes rows to this zodu_id/branch_id once,
+  // `tickets` groups them into per-order KOT cards, `item_summary` rolls the
+  // same filtered rows up item-wise (qty highest to lowest) for the board's
+  // summary panel, and `order_type_summary` counts distinct orders per
+  // order_type (Dine-In/Takeaway/Delivery). All three are combined into one
+  // JSON payload so the DB does all the aggregation work in one query.
   const query = `
+    WITH filtered AS (
+      SELECT * FROM tbl_kot_list
+      WHERE zodu_id = $1 AND branch_id = $2
+    ),
+    tickets AS (
+      SELECT
+        k.api_order_id,
+        k.legacy_order_ref,
+        k.kot_no,
+        k.table_no,
+        k.order_type,
+        k.public_order_no,
+        MIN(k.created_at) AS created_at,
+        JSON_AGG(JSONB_BUILD_OBJECT(
+          'item_id', k.item_id, 'item_name', k.item_name, 'qty', k.qty, 'status', k.status
+        ) ORDER BY k.id) AS items
+      FROM filtered k
+      GROUP BY k.api_order_id, k.legacy_order_ref, k.kot_no, k.table_no, k.order_type, k.public_order_no
+      ORDER BY MIN(k.created_at) DESC
+    ),
+    item_summary AS (
+      SELECT
+        item_name,
+        SUM(qty) AS qty
+      FROM filtered
+      GROUP BY item_name
+      ORDER BY SUM(qty) DESC
+    ),
+    order_type_summary AS (
+      SELECT order_type, COUNT(DISTINCT api_order_id) AS order_count
+      FROM filtered
+      GROUP BY order_type
+      ORDER BY order_count DESC
+    )
     SELECT
-      k.api_order_id,
-      k.legacy_order_ref,
-      k.kot_no,
-      k.table_no,
-      k.order_type,
-      MIN(k.created_at) AS created_at,
-      JSON_AGG(JSONB_BUILD_OBJECT(
-        'item_id', k.item_id, 'item_name', k.item_name, 'qty', k.qty, 'status', k.status
-      ) ORDER BY k.id) AS items
-    FROM tbl_kot_list k
-    WHERE k.zodu_id = $1 AND k.branch_id = $2
-    GROUP BY k.api_order_id, k.legacy_order_ref, k.kot_no, k.table_no, k.order_type
-    ORDER BY MIN(k.created_at) DESC
+      (SELECT COALESCE(JSON_AGG(t.*), '[]') FROM tickets t) AS data,
+      (SELECT COALESCE(JSON_AGG(s.*), '[]') FROM item_summary s) AS item_summary,
+      (SELECT COALESCE(JSON_AGG(o.*), '[]') FROM order_type_summary o) AS order_type_summary
   `;
   const { rows } = await conn.query(query, [zodu_id, branch_id]);
-  return rows;
+  return rows[0] || { data: [], item_summary: [], order_type_summary: [] };
 };
 
 // "Order Ready" action from the KDS screen: marks the order Ready on

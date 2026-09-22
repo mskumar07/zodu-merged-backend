@@ -290,7 +290,7 @@ apply "$RESTAURANT_DB" restaurant-service/migrations/orders_kot_order_status.sql
 # restaurant-service — tbl_kot_list.table_no allows NULL, since non-Dine-In
 # orders (Takeaway/Delivery) have no table and createKOT inserts NULL for them.
 apply "$RESTAURANT_DB" restaurant-service/migrations/kot_list_table_no_nullable_1809202607.sql
-
+apply "$RESTAURANT_DB" restaurant-service/migrations/kot_list_public_order_no_2209202607.sql
 # restaurant-service — drops tbl_kot_list's FK to tbl_tmp_orders. createKOT
 # now also runs for Takeaway/Delivery orders, which never get a tbl_tmp_orders
 # row (they write straight to tbl_orders), so the FK 500s on every such insert.

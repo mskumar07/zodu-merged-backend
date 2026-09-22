@@ -146,7 +146,12 @@ router.get("/get/kot-list/:zodu_id/:branch_id", async (req, res) => {
     const { zodu_id, branch_id } = req.params;
     const result = await service.getKotList(zodu_id, branch_id);
     if (!result.success) return res.status(400).json({ message: result.message });
-    return res.status(200).json({ message: "Data Get Successfully", data: result.data });
+    return res.status(200).json({
+      message: "Data Get Successfully",
+      data: result.data,
+      item_summary: result.item_summary,
+      order_type_summary: result.order_type_summary
+    });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: error.message });

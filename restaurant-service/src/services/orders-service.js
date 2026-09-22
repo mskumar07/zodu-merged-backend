@@ -131,8 +131,8 @@ async function updateOrder(orderData) {
 
 async function getKotList(zodu_id, branch_id) {
   try {
-    const data = await repository.getKotList(zodu_id, branch_id);
-    return { success: true, data };
+    const { data, item_summary, order_type_summary } = await repository.getKotList(zodu_id, branch_id);
+    return { success: true, data, item_summary, order_type_summary };
   } catch (error) {
     console.error("getKotList Error", error);
     return { success: false, message: error.message };
