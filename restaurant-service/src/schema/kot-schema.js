@@ -26,7 +26,7 @@ const printer = Joi.object({
     then: Joi.string().allow(null, "").optional(),
     otherwise: Joi.string().trim().max(120).required(),
   }),
-  paper_size: Joi.string().valid("2", "3","5").default("3"),
+  paper_size: Joi.string().valid("2", "3", "5").default("3"),
   cut_mode: Joi.string().valid("partial", "full", "none").default("partial"),
   role: Joi.string().valid("kot_counter", "billing", "both").default("kot_counter"),
   active: Joi.boolean().default(true),

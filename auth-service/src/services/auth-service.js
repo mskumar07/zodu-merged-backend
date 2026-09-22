@@ -731,10 +731,11 @@ async function GetInvoiceSettings({ user_id, zodu_id, branch_id }) {
     return FormateData({ error: 'Invoice settings not found' });
   }
 
-  // pos_screen_type physically lives on tbl_pos_settings (see
-  // upsertInvoiceSettings) — merge it in so GET mirrors what PUT accepts.
+  // pos_screen_type and kot_print_enabled physically live on tbl_pos_settings
+  // (see upsertInvoiceSettings) — merge them in so GET mirrors what PUT accepts.
   const posSettings = await businessRepo.getPosSettings(zodu_id, branch_id);
   settings.pos_screen_type = posSettings?.pos_screen_type ?? 'Touch';
+  settings.kot_print_enabled = posSettings?.kot_print_enabled ?? false;
 
   return FormateData({ settings });
 }

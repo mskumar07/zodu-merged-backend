@@ -229,6 +229,8 @@ const schema = {
     // Settings" section (this field included) through this endpoint.
     // upsertInvoiceSettings forwards it to upsertPosSettings underneath.
     pos_screen_type: joi.string().valid(...POS_SCREEN_TYPES).insensitive(),
+    // Same story: lives on tbl_pos_settings, forwarded from here.
+    kot_print_enabled: joi.boolean(),
   })
     .min(1)
     // A default the checkout no longer offers would leave the POS preselecting
@@ -298,6 +300,9 @@ const schema = {
 
     // Billing layout the restaurant POS screen opens on.
     pos_screen_type: joi.string().valid(...POS_SCREEN_TYPES).insensitive(),
+
+    // Restaurant-only: print a KOT with the bill on the billing PC's printer.
+    kot_print_enabled: joi.boolean(),
   })
     .min(1)
     // A default the POS no longer offers would leave the screen preselecting

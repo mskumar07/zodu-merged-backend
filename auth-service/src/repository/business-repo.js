@@ -490,6 +490,10 @@ exports.findMaxBranchId = async (zodu_id) => {
 
 // ── INVOICE SETTINGS ─────────────────────────────────────────────────────────
 
+// tbl_pos_settings columns the frontend saves through the invoice-settings
+// endpoint (same "Additional Settings" section) — see upsertInvoiceSettings.
+const POS_FIELDS_SAVED_VIA_INVOICE_SETTINGS = ['pos_screen_type', 'kot_print_enabled'];
+
 exports.getInvoiceSettings = async (zodu_id, branch_id) => {
   const r = await conn.query(
     `SELECT * FROM tbl_invoice_settings WHERE zodu_id=$1 AND branch_id=$2`,
@@ -520,16 +524,28 @@ exports.upsertInvoiceSettings = async (zodu_id, branch_id, fields) => {
   ];
   const cols = Object.keys(fields).filter((k) => allowed.includes(k));
 
-  // pos_screen_type lives on tbl_pos_settings, not tbl_invoice_settings, but
-  // the frontend saves it from this same "Additional Settings" section
-  // through this endpoint — forward it to tbl_pos_settings instead of
-  // dropping it or writing it to the wrong table.
-  if (Object.prototype.hasOwnProperty.call(fields, 'pos_screen_type')) {
-    await exports.upsertPosSettings(zodu_id, branch_id, { pos_screen_type: fields.pos_screen_type });
+  // pos_screen_type and kot_print_enabled live on tbl_pos_settings, not
+  // tbl_invoice_settings, but the frontend saves them from this same
+  // "Additional Settings" section through this endpoint — forward them to
+  // tbl_pos_settings instead of dropping them or writing to the wrong table.
+  const forwarded = {};
+  for (const key of POS_FIELDS_SAVED_VIA_INVOICE_SETTINGS) {
+    if (Object.prototype.hasOwnProperty.call(fields, key)) forwarded[key] = fields[key];
   }
+  const posRow = Object.keys(forwarded).length > 0
+    ? await exports.upsertPosSettings(zodu_id, branch_id, forwarded)
+    : null;
+
+  // Mirror what GET returns (see GetInvoiceSettings) so a PUT response carries
+  // the forwarded fields too, instead of silently omitting what was just saved.
+  const withForwarded = (row) => {
+    if (!row || !posRow) return row;
+    for (const key of Object.keys(forwarded)) row[key] = posRow[key];
+    return row;
+  };
 
   if (cols.length === 0) {
-    return exports.getInvoiceSettings(zodu_id, branch_id);
+    return withForwarded(await exports.getInvoiceSettings(zodu_id, branch_id));
   }
 
   const insertCols = ['zodu_id', 'branch_id', ...cols];
@@ -544,7 +560,7 @@ exports.upsertInvoiceSettings = async (zodu_id, branch_id, fields) => {
      RETURNING *`,
     insertVals
   );
-  return r.rows[0];
+  return withForwarded(r.rows[0]);
 };
 
 // ── POS SETTINGS ─────────────────────────────────────────────────────────────
@@ -564,7 +580,7 @@ exports.upsertPosSettings = async (zodu_id, branch_id, fields) => {
     'quotation_prefix_enabled', 'proforma_prefix_enabled',
     'quotation_suffix', 'quotation_suffix_enabled',
     'proforma_suffix', 'proforma_suffix_enabled',
-    'purchase_order_enabled', 'hold_enabled', 'pos_screen_type',
+    'purchase_order_enabled', 'hold_enabled', 'pos_screen_type', 'kot_print_enabled',
   ];
   const cols = Object.keys(fields).filter((k) => allowed.includes(k));
 

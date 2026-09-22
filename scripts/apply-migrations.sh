@@ -37,13 +37,17 @@ case "$ENV" in
     # psql during development. checklist-service/employee-service/
     # payroll-service/api-gateway have no migrations/*.sql yet — their DB
     # vars are wired up here so future migrations only need an `apply` line.
-    HOST=localhost; PORT=5432; USER=postgres
+    # Override with LOCAL_DB_HOST=host.docker.internal when there's no native
+    # psql client and this runs inside a `docker run ... postgres:16-alpine
+    # bash scripts/apply-migrations.sh local` container instead (localhost
+    # there means the container itself, not this machine).
+    HOST="${LOCAL_DB_HOST:-localhost}"; PORT=5433; USER=postgres
     export PGPASSWORD='postgres'   # uncomment to skip the interactive prompt
     AUTH_DB=retail_auth_service
-    RETAIL_DB=retail_restaurant_service
+    RETAIL_DB=retail_service
     RESTAURANT_DB=restaurant_service
     CHECKLIST_DB=checklist-service
-    EMPLOYEE_DB=employee-service
+    EMPLOYEE_DB=retail_employee_service
     PAYROLL_DB=payroll-service
     # api-gateway (not the frontend on 5173) — it proxies /auth/* to
     # auth-service, so /auth/file/<key> is reachable through here, matching
@@ -165,6 +169,8 @@ apply "$AUTH_DB" auth-service/migrations/pos_settings_purchase_order_enabled.sql
 apply "$AUTH_DB" auth-service/migrations/pos_settings_hold_enabled.sql
 apply "$AUTH_DB" auth-service/migrations/pos_settings_screen_type.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_prefix_enabled_default_true.sql
+apply "$AUTH_DB" auth-service/migrations/pos_settings_kot_print.sql
+
 
 # auth-service — company logo on tbl_business. The create-company INSERT names
 # this column, so an un-migrated database fails every company create.
@@ -324,12 +330,12 @@ WHERE table_name = 'tbl_invoice_settings' AND column_name = 'invoice_digit_count
 SELECT 'tbl_business.company_logo_url present: ' || count(*) || '/1'
 FROM information_schema.columns
 WHERE table_name = 'tbl_business' AND column_name = 'company_logo_url';
-SELECT 'tbl_pos_settings columns present: ' || count(*) || '/15'
+SELECT 'tbl_pos_settings columns present: ' || count(*) || '/16'
 FROM information_schema.columns
 WHERE table_name = 'tbl_pos_settings' AND column_name IN ('pos_types','default_pos_type','invoice_suffix','invoice_suffix_enabled',
                       'quotation_prefix','proforma_prefix','quotation_prefix_enabled','proforma_prefix_enabled',
                       'quotation_suffix','quotation_suffix_enabled','proforma_suffix','proforma_suffix_enabled',
-                      'purchase_order_enabled','hold_enabled','pos_screen_type');
+                      'purchase_order_enabled','hold_enabled','pos_screen_type','kot_print_enabled');
 SQL
 
 for db in "$RETAIL_DB" "$RESTAURANT_DB"; do
