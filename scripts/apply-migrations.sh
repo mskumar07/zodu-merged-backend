@@ -41,13 +41,13 @@ case "$ENV" in
     # psql client and this runs inside a `docker run ... postgres:16-alpine
     # bash scripts/apply-migrations.sh local` container instead (localhost
     # there means the container itself, not this machine).
-    HOST="${LOCAL_DB_HOST:-localhost}"; PORT=5433; USER=postgres
+    HOST="${LOCAL_DB_HOST:-localhost}"; PORT=5432; USER=postgres
     export PGPASSWORD='postgres'   # uncomment to skip the interactive prompt
     AUTH_DB=retail_auth_service
-    RETAIL_DB=retail_service
+    RETAIL_DB=retail_restaurant_service
     RESTAURANT_DB=restaurant_service
     CHECKLIST_DB=checklist-service
-    EMPLOYEE_DB=retail_employee_service
+    EMPLOYEE_DB=employee-service
     PAYROLL_DB=payroll-service
     # api-gateway (not the frontend on 5173) — it proxies /auth/* to
     # auth-service, so /auth/file/<key> is reachable through here, matching
@@ -243,7 +243,7 @@ apply "$CHECKLIST_DB"  checklist-service/migrations/branch_purge_function.sql
 # DeleteCompany). Superset of fn_purge_branch; independent per database.
 apply "$AUTH_DB"       auth-service/migrations/company_purge_function.sql
 apply "$RETAIL_DB"     retail-service/migrations/company_purge_function.sql
-apply "$RESTAURANT_DB" restaurant-service/migrations/company_purge_function.sql
+apply "$RESTAURANT_DB" restaurant-service/migrations/company_purge_function_23092026.sql
 apply "$EMPLOYEE_DB"   employee-service/migrations/company_purge_function.sql
 apply "$PAYROLL_DB"    payroll-service/migrations/company_purge_function.sql
 apply "$CHECKLIST_DB"  checklist-service/migrations/company_purge_function.sql

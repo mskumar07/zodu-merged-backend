@@ -305,6 +305,7 @@ exports.createOrderWithKOT = async (orderData) => {
     }
 
     // 3. Stock ledger + inventory deduction
+    const menuMap = {};
     {
       const menuIds = items.map((i) => i.menu_id);
 
@@ -312,7 +313,6 @@ exports.createOrderWithKOT = async (orderData) => {
         `SELECT item_uuid, menu_id, menu_name, menu_type, opening_stock FROM tbl_menu_items WHERE menu_id = ANY($1)`,
         [menuIds]
       );
-      const menuMap = {};
       for (const row of menuRes.rows) menuMap[row.menu_id] = row;
 
       const invRes = await client.query(
@@ -376,27 +376,32 @@ exports.createOrderWithKOT = async (orderData) => {
       }
     }
 
-    // 4. tbl_kot_list
+    // 4. tbl_kot_list — Product items are sold straight off the shelf and
+    // never go to the kitchen, so they're excluded from the KOT list
     {
-      const values = [];
-      const params = [];
-      let idx = 1;
-      for (const item of items) {
-        const itemName = item.variant_name && item.variant_name.trim() !== "" ? item.variant_name : item.name;
-        values.push(
-          `($${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++})`
-        );
-        params.push(
-          orderData.zodu_id, orderData.branch_id, orderData.api_order_id, orderData.legacy_order_ref,
-          orderData.kot_no, orderData.table_no, item.menu_id, itemName, item.qty, orderData.order_type,
-          public_order_no
+      const kotItems = items.filter((item) => menuMap[item.menu_id]?.menu_type !== "Product");
+
+      if (kotItems.length > 0) {
+        const values = [];
+        const params = [];
+        let idx = 1;
+        for (const item of kotItems) {
+          const itemName = item.variant_name && item.variant_name.trim() !== "" ? item.variant_name : item.name;
+          values.push(
+            `($${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++})`
+          );
+          params.push(
+            orderData.zodu_id, orderData.branch_id, orderData.api_order_id, orderData.legacy_order_ref,
+            orderData.kot_no, orderData.table_no, item.menu_id, itemName, item.qty, orderData.order_type,
+            public_order_no
+          );
+        }
+        await client.query(
+          `INSERT INTO tbl_kot_list (zodu_id, branch_id, api_order_id, legacy_order_ref, kot_no, table_no, item_id, item_name, qty, order_type, public_order_no)
+           VALUES ${values.join(",")} RETURNING *`,
+          params
         );
       }
-      await client.query(
-        `INSERT INTO tbl_kot_list (zodu_id, branch_id, api_order_id, legacy_order_ref, kot_no, table_no, item_id, item_name, qty, order_type, public_order_no)
-         VALUES ${values.join(",")} RETURNING *`,
-        params
-      );
     }
 
     await client.query("COMMIT");
@@ -972,8 +977,12 @@ exports.updateKOT = async (orderData) => {
       }
     }
 
+    // Product items are sold straight off the shelf and never go to the
+    // kitchen, so they're excluded from the KOT list
+    const kotNewRows = newRows.filter((item) => item.menu_type !== "Product");
+
     let insertedRows = [];
-    if (newRows.length > 0) {
+    if (kotNewRows.length > 0) {
       const kotNoRes = await client.query(
         `SELECT COALESCE(MAX(NULLIF(regexp_replace(kot_no, '\\D', '', 'g'), '')::int), 0) + 1 AS next_no
          FROM tbl_kot_list WHERE api_order_id = $1`,
@@ -983,7 +992,7 @@ exports.updateKOT = async (orderData) => {
 
       const columnsPerRow = 10;
       const values = [];
-      const placeholders = newRows.map((item, idx) => {
+      const placeholders = kotNewRows.map((item, idx) => {
         const itemName = item.variant_name && item.variant_name.trim() !== "" ? item.variant_name : item.name;
         values.push(
           orderData.zodu_id, orderData.branch_id, orderData.api_order_id,
@@ -1020,11 +1029,26 @@ exports.createKOT = async (orderData) => {
     const items = orderData.items;
     if (!Array.isArray(items) || items.length === 0) throw new Error("Items array is empty or invalid");
 
+    // Product items are sold straight off the shelf and never go to the
+    // kitchen, so they're excluded from the KOT list
+    const menuRes = await client.query(
+      `SELECT menu_id, menu_type FROM tbl_menu_items WHERE menu_id = ANY($1)`,
+      [items.map((i) => i.menu_id)]
+    );
+    const menuMap = {};
+    for (const row of menuRes.rows) menuMap[row.menu_id] = row;
+    const kotItems = items.filter((item) => menuMap[item.menu_id]?.menu_type !== "Product");
+
+    if (kotItems.length === 0) {
+      await client.query("COMMIT");
+      return [];
+    }
+
     const values = [];
     const params = [];
     let idx = 1;
 
-    for (const item of items) {
+    for (const item of kotItems) {
       const itemName = item.variant_name && item.variant_name.trim() !== "" ? item.variant_name : item.name;
       values.push(
         `($${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++})`
