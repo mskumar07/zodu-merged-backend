@@ -2307,7 +2307,8 @@ exports.get_pos_data = async (branch_id, zodu_id, search) => {
           'favorites', m.favorites,
           'stock_qty', i.stock_qty,
           'stock_alert', i.stock_alert,
-          'menu_code', m.menu_code
+          'menu_code', m.menu_code,
+          'menu_type', m.menu_type
         )
         ORDER BY m.menu_name
       ) AS items

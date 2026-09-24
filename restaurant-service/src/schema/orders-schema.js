@@ -15,6 +15,10 @@ const itemSchema = Joi.object({
   gst_percentage: Joi.number().precision(2).min(0).default(0),
   // Kitchen instruction printed under the item on its KOT ("no onion").
   note: Joi.string().max(200).allow(null, "").optional(),
+  // Used to decide KOT-list inclusion (Product items are excluded). The
+  // add-order flow re-verifies this server-side from tbl_menu_items; the
+  // update-order flow (updateKOT) trusts this client-supplied value.
+  menu_type: Joi.string().max(50).allow(null, "").optional(),
 });
 
 const order_create = Joi.object({
