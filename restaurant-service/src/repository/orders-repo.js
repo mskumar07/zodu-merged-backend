@@ -652,6 +652,7 @@ exports.get_ordered_data = async (branch_id, zodu_id) => {
       o.api_order_id, o.legacy_order_ref, o.table_no, o.order_type,
       o.customer_name, o.customer_phone, o.total_amt, o.final_payment,
       o.branch_id, o.zodu_id, o.order_date, o.order_time,o.discount_type,o.discount_value,o.discount_amount,
+      o.subtotal, o.total_tax,
       COALESCE(JSON_AGG(DISTINCT JSONB_BUILD_OBJECT(
         'item_id', i.item_id, 'item_name', i.item_name, 'qty', i.qty,
         'price', i.price, 'item_unit', i.item_unit, 'item_image', mi.menu_image,
@@ -668,7 +669,7 @@ exports.get_ordered_data = async (branch_id, zodu_id) => {
     WHERE o.branch_id = $1 AND o.zodu_id = $2 
     GROUP BY o.api_order_id, o.legacy_order_ref, o.table_no, o.order_type,
       o.customer_name, o.customer_phone, o.total_amt, o.final_payment,
-      o.branch_id, o.zodu_id, o.order_date, o.order_time
+      o.branch_id, o.zodu_id, o.order_date, o.order_time, o.subtotal, o.total_tax
     ORDER BY o.created_at DESC;
   `;
   try {
