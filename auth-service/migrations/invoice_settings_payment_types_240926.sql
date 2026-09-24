@@ -21,6 +21,13 @@ ALTER TABLE tbl_invoice_settings
     ADD COLUMN IF NOT EXISTS payment_types TEXT[] NOT NULL
     DEFAULT ARRAY['Cash', 'UPI', 'Cheque', 'Bank Transfer', 'Others']::TEXT[];
 
+-- Drop the now-unsupported "UPI + Cash" label from any row that already has
+-- it (an earlier default included it before this vocabulary was finalized),
+-- so the CHECK constraint below can be added without failing on old rows.
+UPDATE tbl_invoice_settings
+SET payment_types = array_remove(payment_types, 'UPI + Cash')
+WHERE 'UPI + Cash' = ANY(payment_types);
+
 ALTER TABLE tbl_invoice_settings
     DROP CONSTRAINT IF EXISTS chk_invoice_settings_payment_types;
 
