@@ -19,7 +19,7 @@
 
 ALTER TABLE tbl_invoice_settings
     ADD COLUMN IF NOT EXISTS payment_types TEXT[] NOT NULL
-    DEFAULT ARRAY['Cash', 'UPI', 'UPI + Cash', 'Cheque', 'Bank Transfer', 'Others']::TEXT[];
+    DEFAULT ARRAY['Cash', 'UPI', 'Cheque', 'Bank Transfer', 'Others']::TEXT[];
 
 ALTER TABLE tbl_invoice_settings
     DROP CONSTRAINT IF EXISTS chk_invoice_settings_payment_types;
@@ -28,5 +28,5 @@ ALTER TABLE tbl_invoice_settings
     ADD CONSTRAINT chk_invoice_settings_payment_types
     CHECK (
         COALESCE(array_length(payment_types, 1), 0) >= 1
-        AND payment_types <@ ARRAY['Cash', 'UPI', 'UPI + Cash', 'Cheque', 'Bank Transfer', 'Others']::TEXT[]
+        AND payment_types <@ ARRAY['Cash', 'UPI', 'Cheque', 'Bank Transfer', 'Others']::TEXT[]
     );
