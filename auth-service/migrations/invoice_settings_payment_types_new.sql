@@ -19,7 +19,21 @@
 
 ALTER TABLE tbl_invoice_settings
     ADD COLUMN IF NOT EXISTS payment_types TEXT[] NOT NULL
-    DEFAULT ARRAY['Cash', 'UPI', 'UPI + Cash', 'Cheque', 'Bank Transfer', 'Others']::TEXT[];
+    DEFAULT ARRAY['Cash', 'UPI', 'Cheque', 'Bank Transfer', 'Others']::TEXT[];
+
+-- Drop the now-unsupported "UPI + Cash" label from any row that already has
+-- it (an earlier default included it before this vocabulary was finalized),
+-- so the CHECK constraint below can be added without failing on old rows.
+UPDATE tbl_invoice_settings
+SET payment_types = array_remove(payment_types, 'UPI + Cash')
+WHERE 'UPI + Cash' = ANY(payment_types);
+
+-- The column's DEFAULT expression itself can carry a stale value independently
+-- of any row (ADD COLUMN IF NOT EXISTS above only sets it on first creation),
+-- so pin it explicitly every run — otherwise a new row relying on the default
+-- can still violate the CHECK below even after every existing row is clean.
+ALTER TABLE tbl_invoice_settings
+    ALTER COLUMN payment_types SET DEFAULT ARRAY['Cash', 'UPI', 'Cheque', 'Bank Transfer', 'Others']::TEXT[];
 
 ALTER TABLE tbl_invoice_settings
     DROP CONSTRAINT IF EXISTS chk_invoice_settings_payment_types;
@@ -28,5 +42,5 @@ ALTER TABLE tbl_invoice_settings
     ADD CONSTRAINT chk_invoice_settings_payment_types
     CHECK (
         COALESCE(array_length(payment_types, 1), 0) >= 1
-        AND payment_types <@ ARRAY['Cash', 'UPI', 'UPI + Cash', 'Cheque', 'Bank Transfer', 'Others']::TEXT[]
+        AND payment_types <@ ARRAY['Cash', 'UPI', 'Cheque', 'Bank Transfer', 'Others']::TEXT[]
     );

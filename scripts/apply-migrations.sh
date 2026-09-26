@@ -153,7 +153,7 @@ apply "$AUTH_DB" auth-service/migrations/invoice_settings_printer_default_by_typ
 apply "$AUTH_DB" auth-service/migrations/invoice_settings_extra_fields.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_settings_theme_color.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_settings_signature_url.sql
-apply "$AUTH_DB" auth-service/migrations/invoice_settings_payment_types.sql
+apply "$AUTH_DB" auth-service/migrations/invoice_settings_payment_types_new.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_settings_template.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_settings_pos_behaviours.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_settings_shipping_address.sql
