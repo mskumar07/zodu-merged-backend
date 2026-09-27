@@ -4,7 +4,7 @@ const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,30}$/;
 
 // Payment types offered at POS checkout. Same vocabulary as the CHECK
 // constraint on tbl_invoice_settings.payment_types — keep the two in step.
-const PAYMENT_TYPES = ['Cash', 'UPI', 'UPI + Cash', 'Cheque', 'Bank Transfer', 'Others'];
+const PAYMENT_TYPES = ['Cash', 'UPI', 'Cheque', 'Bank Transfer', 'Others'];
 
 // Which copy labels a branch prints per sale. Same vocabulary as the CHECK
 // constraint on tbl_invoice_settings.invoice_copy_types — keep the two in step.

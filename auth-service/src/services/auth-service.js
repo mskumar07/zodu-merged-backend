@@ -226,10 +226,7 @@ async function AccountLogin(userInputs, meta = {}) {
         account_type:     companyInfo?.account_type     ?? null,
         ifsc_code: companyInfo?.ifsc_code ?? null,
         business_type: companyInfo?.type ?? null,
-        is_subscripted:            companyInfo?.is_subscripted            ?? null,
-        subscription_start_date:   companyInfo?.subscription_start_date   ?? null,
-        subscription_expiry_date:  companyInfo?.subscription_expiry_date  ?? null,
-        branches,
+        branches, // each branch carries its own subscription_status / subscription_effective_status
       };
     })
   );
