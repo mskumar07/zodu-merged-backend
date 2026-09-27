@@ -1826,7 +1826,7 @@ async function updateOrder(orderData) {
     // =========================================================
     // 7️⃣  UPDATE tbl_sales
     // =========================================================
-    await client.query(
+    const updatedSaleRes = await client.query(
       `UPDATE tbl_sales
        SET
          sale_id               = $1,
@@ -1853,7 +1853,8 @@ async function updateOrder(orderData) {
          vehicle_no            = $22,
          purchase_order_no     = $23,
          purchase_order_date   = $24
-       WHERE sale_uuid = $20`,
+       WHERE sale_uuid = $20
+       RETURNING *`,
       [
         newSaleId,
         normalizedSaleType,
@@ -1900,6 +1901,7 @@ async function updateOrder(orderData) {
     // =========================================================
     // 9️⃣  PAYMENT
     // =========================================================
+    let payment = null;
     if (!isFinalQuotation) {
       // ✅ FIX: delete used newSaleId — orphaned old payments when converting.
       //         Always delete by the ORIGINAL sale.sale_id (covers both edit
@@ -1911,11 +1913,26 @@ async function updateOrder(orderData) {
       );
  
       if (paidAmount > 0) {
-        await repository.createSalesPayment(orderData, updatedSale, client);
+        payment = await repository.createSalesPayment(orderData, updatedSale, client);
       }
     }
+
+    // Same response shape as createOrder — the saved sale row, every line on
+    // it and the payment — so the POS can show / print the edited document
+    // straight from the response.
+    const itemsRes = await client.query(
+      `SELECT * FROM tbl_sale_items WHERE sale_uuid = $1 ORDER BY id`,
+      [saleId]
+    );
  
     await client.query('COMMIT');
+
+    const orderRow = updatedSaleRes.rows[0];
+    const order = orderRow && {
+      ...orderRow,
+      sale_date: orderRow.sale_date ? moment(orderRow.sale_date).format("DD MMM YYYY") : null,
+      due_date:  orderRow.due_date  ? moment(orderRow.due_date).format("DD MMM YYYY")  : null,
+    };
  
     return {
       success: true,
@@ -1927,6 +1944,9 @@ async function updateOrder(orderData) {
         ? 'Proforma updated successfully'
         : 'Order updated successfully',
       sale_id: newSaleId,
+      order,
+      items: itemsRes.rows,
+      payment,
     };
  
   } catch (err) {
