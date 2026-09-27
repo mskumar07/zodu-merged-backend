@@ -47,6 +47,10 @@ BEGIN
     GET DIAGNOSTICS n = ROW_COUNT;
     table_name := 'tbl_user_roles'; rows_deleted := n; RETURN NEXT;
 
+    DELETE FROM tbl_subscription WHERE zodu_id = p_zodu_id AND branch_id = p_branch_id;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    table_name := 'tbl_subscription'; rows_deleted := n; RETURN NEXT;
+
     DELETE FROM tbl_branch WHERE zodu_id = p_zodu_id AND branch_id = p_branch_id;
     GET DIAGNOSTICS n = ROW_COUNT;
     table_name := 'tbl_branch'; rows_deleted := n; RETURN NEXT;

@@ -153,7 +153,7 @@ apply "$AUTH_DB" auth-service/migrations/invoice_settings_printer_default_by_typ
 apply "$AUTH_DB" auth-service/migrations/invoice_settings_extra_fields.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_settings_theme_color.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_settings_signature_url.sql
-apply "$AUTH_DB" auth-service/migrations/invoice_settings_payment_types_240926.sql
+apply "$AUTH_DB" auth-service/migrations/invoice_settings_payment_types_250926.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_settings_template.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_settings_pos_behaviours.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_settings_shipping_address.sql
@@ -170,7 +170,7 @@ apply "$AUTH_DB" auth-service/migrations/pos_settings_hold_enabled.sql
 apply "$AUTH_DB" auth-service/migrations/pos_settings_screen_type.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_prefix_enabled_default_true.sql
 apply "$AUTH_DB" auth-service/migrations/pos_settings_kot_print.sql
-
+apply "$AUTH_DB" auth-service/migrations/branch_subscription.sql
 
 # auth-service — company logo on tbl_business. The create-company INSERT names
 # this column, so an un-migrated database fails every company create.
@@ -230,7 +230,7 @@ apply "$RESTAURANT_DB" restaurant-service/migrations/purchase_expense_id_tenant_
 # should ever delete tbl_users), AFTER already being recorded as applied on
 # some environments — force_apply so it actually re-runs there instead of
 # `apply` silently skipping it and leaving the broken function in place.
-apply "$AUTH_DB" auth-service/migrations/branch_purge_function.sql
+apply "$AUTH_DB" auth-service/migrations/branch_purge_function_25092026.sql
 apply "$RETAIL_DB"     retail-service/migrations/branch_purge_function.sql
 apply "$RESTAURANT_DB" restaurant-service/migrations/branch_purge_function.sql
 apply "$EMPLOYEE_DB"   employee-service/migrations/branch_purge_function.sql

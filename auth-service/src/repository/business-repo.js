@@ -35,16 +35,13 @@ exports.createCompany = async (data, externalClient = null) => {
       bank_details_id = r.rows[0].id;
     }
 
-    // 3. tbl_business — new companies get a 5-year subscription starting now;
-    //    re-registering an existing zodu_id (ON CONFLICT) leaves the
-    //    subscription window untouched.
+    // 3. tbl_business — subscription/trial tracking lives per-branch in
+    //    tbl_subscription now (see createDefaultBranch/createBranch), not here.
     const r = await client.query(
       `INSERT INTO tbl_business
          (zodu_id, business_name, owner_admin_name, mobile_no, mail_id, gst_no, type, address_id, bank_details_id,
-          company_logo_url, status,
-          is_subscripted, subscription_start_date, subscription_expiry_date)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true,
-               true, now(), now() + INTERVAL '5 years')
+          company_logo_url, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true)
        ON CONFLICT (zodu_id) DO UPDATE
          SET business_name    = EXCLUDED.business_name,
              owner_admin_name = EXCLUDED.owner_admin_name,
@@ -167,8 +164,6 @@ exports.getCompany = async (zodu_id) => {
   const r = await conn.query(
     `SELECT b.*,
             b.business_name AS restaurant_name,b.type AS business_type,
-            TO_CHAR(b.subscription_start_date, 'FMDD Mon YYYY')  AS subscription_start_date,
-            TO_CHAR(b.subscription_expiry_date, 'FMDD Mon YYYY') AS subscription_expiry_date,
             a.address_line_1, a.address_line_2,
             a.city, a.district, a.state, a.pincode,
             bd.bank_name, bd.bank_branch, bd.holder_name,
@@ -198,10 +193,23 @@ exports.getBranches = async (zodu_id, branch_id = null) => {
            a.address_line_1, a.address_line_2,
            a.city, a.district, a.state, a.pincode,
            bd.bank_name, bd.bank_branch, bd.holder_name,
-           bd.account_number, bd.account_type, bd.ifsc_code
+           bd.account_number, bd.account_type, bd.ifsc_code,
+           s.status AS subscription_status,
+           s.plan_code AS subscription_plan_code,
+           s.trial_end_date, s.subscription_end_date,
+           CASE
+             WHEN s.status = 'trial'  AND s.trial_end_date        < now() THEN 'trial_expired'
+             WHEN s.status = 'active' AND s.subscription_end_date < now() THEN 'subscription_expired'
+             ELSE s.status
+           END AS subscription_effective_status,
+           CASE WHEN s.status = 'trial'
+             THEN GREATEST(0, CEIL(EXTRACT(EPOCH FROM (s.trial_end_date - now())) / 86400))::int
+             ELSE NULL
+           END AS trial_days_left
     FROM tbl_branch b
     LEFT JOIN tbl_address     a  ON a.id  = b.address_id
     LEFT JOIN tbl_bank_details bd ON bd.id = b.bank_details_id
+    LEFT JOIN tbl_subscription s  ON s.zodu_id = b.zodu_id AND s.branch_id = b.branch_id
     WHERE b.zodu_id = $1`;
   if (branch_id) {
     params.push(branch_id);
@@ -210,6 +218,26 @@ exports.getBranches = async (zodu_id, branch_id = null) => {
   query += ` ORDER BY b.branch_id ASC`;
   const r = await conn.query(query, params);
   return r.rows;
+};
+
+// ── SUBSCRIPTION ─────────────────────────────────────────────────────────────
+
+exports.getSubscriptionStatus = async (zodu_id, branch_id) => {
+  const r = await conn.query(
+    `SELECT status,
+            plan_code, trial_start_date, trial_end_date,
+            subscription_start_date, subscription_end_date,
+            CASE
+              WHEN status = 'trial'  AND trial_end_date        < now() THEN 'trial_expired'
+              WHEN status = 'active' AND subscription_end_date < now() THEN 'subscription_expired'
+              ELSE status
+            END AS effective_status,
+            GREATEST(0, CEIL(EXTRACT(EPOCH FROM (trial_end_date - now())) / 86400))::int AS trial_days_left
+     FROM tbl_subscription
+     WHERE zodu_id = $1 AND branch_id = $2`,
+    [zodu_id, branch_id]
+  );
+  return r.rows[0] || null;
 };
 
 exports.createDefaultBranch = async ({ branch_id, zodu_id, qr_code_id, branch_name, branch_mobile_no, branch_mail_id }, externalClient = null) => {
@@ -234,6 +262,14 @@ exports.createDefaultBranch = async ({ branch_id, zodu_id, qr_code_id, branch_na
     await client.query(
       `INSERT INTO tbl_pos_settings (zodu_id, branch_id)
        VALUES ($1, $2)
+       ON CONFLICT (zodu_id, branch_id) DO NOTHING`,
+      [zodu_id, branch_id]
+    );
+
+    // Start this branch's own 14-day free trial
+    await client.query(
+      `INSERT INTO tbl_subscription (zodu_id, branch_id, status, trial_start_date, trial_end_date)
+       VALUES ($1, $2, 'trial', now(), now() + INTERVAL '14 days')
        ON CONFLICT (zodu_id, branch_id) DO NOTHING`,
       [zodu_id, branch_id]
     );
@@ -348,6 +384,14 @@ exports.createBranch = async (data) => {
     await client.query(
       `INSERT INTO tbl_pos_settings (zodu_id, branch_id)
        VALUES ($1, $2)
+       ON CONFLICT (zodu_id, branch_id) DO NOTHING`,
+      [data.zodu_id, data.branch_id]
+    );
+
+    // Start this branch's own 14-day free trial
+    await client.query(
+      `INSERT INTO tbl_subscription (zodu_id, branch_id, status, trial_start_date, trial_end_date)
+       VALUES ($1, $2, 'trial', now(), now() + INTERVAL '14 days')
        ON CONFLICT (zodu_id, branch_id) DO NOTHING`,
       [data.zodu_id, data.branch_id]
     );
