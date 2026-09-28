@@ -684,3 +684,76 @@ exports.purgeCompany = async (zodu_id) => {
   );
   return rows;
 };
+
+// ── ADMIN CONSOLE ────────────────────────────────────────────────────────────
+// Cross-tenant reads for zodu_admin_panel — never called by the product
+// frontend/gateway, only by admin-service's internal-key-protected calls
+// (see /internal/admin/* in internal-controller.js).
+
+exports.listCompaniesPaged = async ({ page = 1, limit = 20, search = '' }) => {
+  const offset = (Number(page) - 1) * Number(limit);
+  const params = [];
+  let where = '';
+  if (search) {
+    params.push(`%${search}%`);
+    where = `WHERE b.business_name ILIKE $${params.length} OR b.mail_id ILIKE $${params.length}`;
+  }
+
+  const countParams = [...params];
+  const { rows: countRows } = await conn.query(
+    `SELECT COUNT(*)::int AS total FROM tbl_business b ${where}`,
+    countParams
+  );
+
+  params.push(Number(limit), offset);
+  const { rows } = await conn.query(
+    `SELECT b.zodu_id, b.business_name, b.owner_admin_name, b.mobile_no,
+            b.mail_id, b.gst_no, b.type, b.status, b.created_at
+     FROM tbl_business b
+     ${where}
+     ORDER BY b.created_at DESC
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params
+  );
+
+  return { rows, total: countRows[0].total };
+};
+
+exports.listSubscriptionsPaged = async ({ page = 1, limit = 20, status = '' }) => {
+  const offset = (Number(page) - 1) * Number(limit);
+  const params = [];
+  let where = '';
+  if (status) {
+    params.push(status);
+    where = `WHERE CASE
+                WHEN s.status = 'trial'  AND s.trial_end_date        < now() THEN 'trial_expired'
+                WHEN s.status = 'active' AND s.subscription_end_date < now() THEN 'subscription_expired'
+                ELSE s.status
+              END = $${params.length}`;
+  }
+
+  const countParams = [...params];
+  const { rows: countRows } = await conn.query(
+    `SELECT COUNT(*)::int AS total FROM tbl_subscription s ${where}`,
+    countParams
+  );
+
+  params.push(Number(limit), offset);
+  const { rows } = await conn.query(
+    `SELECT s.zodu_id, s.branch_id, b.business_name, b.mail_id, b.mobile_no,
+            s.plan_code, s.trial_end_date, s.subscription_end_date, s.created_at,
+            CASE
+              WHEN s.status = 'trial'  AND s.trial_end_date        < now() THEN 'trial_expired'
+              WHEN s.status = 'active' AND s.subscription_end_date < now() THEN 'subscription_expired'
+              ELSE s.status
+            END AS effective_status
+     FROM tbl_subscription s
+     JOIN tbl_business b ON b.zodu_id = s.zodu_id
+     ${where}
+     ORDER BY s.created_at DESC
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params
+  );
+
+  return { rows, total: countRows[0].total };
+};

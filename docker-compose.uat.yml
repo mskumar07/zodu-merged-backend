@@ -133,6 +133,39 @@ services:
       PUBLIC_FILE_BASE_URL: https://api.myzodu.com
 
 
+  # Admin Panel Service — staff-only console API. Reached ONLY through
+  # api-gateway's /admin route, same as every other service here.
+  admin-service:
+    image: vicky0015/zodu-backend-retail-admin-service:uat
+    container_name: uat-admin-service-latest
+    restart: always
+    expose:
+      - "4006"
+    environment:
+      NODE_ENV: production
+      PORT: 4006
+      DB_HOSTNAME: 72.60.206.59
+      DB_PORT: 5432
+      DB_USERNAME: zodudb
+      DB_PASSWORD: zodu@2025
+      DB_NAME: admin_service
+      APP_SECRET: zodu@2025adminsecretuat
+      JWT_EXPIRES_IN: 8h
+      INTERNAL_SERVICE_KEY: zodu@2025internalkeyuat
+      CORS_ORIGIN: https://admin-uat.zodu.in
+      AUTH_SERVICE_URL: http://auth-service:4000
+      RETAIL_SERVICE_URL: http://retail-service:4001
+      EMPLOYEE_SERVICE_URL: http://employee-service:4002
+      RESTAURANT_SERVICE_URL: http://restaurant-service:4003
+      PAYROLL_SERVICE_URL: http://payroll-service:4004
+      CHECKLIST_SERVICE_URL: http://checklist-service:4005
+    depends_on:
+      - auth-service
+      - retail-service
+      - employee-service
+      - payroll-service
+      - checklist-service
+
   # API Gateway
   apigateway:
     image: vicky0015/zodu-backend-apigateway:uat
@@ -148,6 +181,7 @@ services:
       RESTAURANT_SERVICE_URL: http://restaurant-service:4003
       PAYROLL_SERVICE_URL: http://payroll-service:4004
       CHECKLIST_SERVICE_URL: http://checklist-service:4005
+      ADMIN_SERVICE_URL: http://admin-service:4006
     depends_on:
       - auth-service
       - retail-service
@@ -155,6 +189,7 @@ services:
       - restaurant-service
       - payroll-service
       - checklist-service
+      - admin-service
 
 
 

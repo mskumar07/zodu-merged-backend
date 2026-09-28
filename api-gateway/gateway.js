@@ -16,6 +16,7 @@ const RETAIL_SERVICE_URL     = process.env.RETAIL_SERVICE_URL     || 'http://ret
 const EMPLOYEE_SERVICE_URL   = process.env.EMPLOYEE_SERVICE_URL   || 'http://employee-service:4002';
 const RESTAURANT_SERVICE_URL = process.env.RESTAURANT_SERVICE_URL || 'http://restaurant-service:4003';
 const CHECKLIST_SERVICE_URL = process.env.CHECKLIST_SERVICE_URL || 'http://checklist-service:3006';
+const ADMIN_SERVICE_URL     = process.env.ADMIN_SERVICE_URL     || 'http://admin-service:3007';
 
 const proxyError = (serviceName) => (err, req, res) => {
   console.error(`[${serviceName}] proxy error:`, err.message);
@@ -56,6 +57,15 @@ app.use('/restaurant', createProxyMiddleware({
   autoRewrite: true,
   encodePathChars: false,
   on: { error: proxyError('restaurant-service') }
+}));
+
+// Admin console (zodu_admin_panel_frontend) — same proxy pattern as every
+// other service above. admin-service is still not reachable on its own
+// public port; the gateway is the only door into it now.
+app.use('/admin', createProxyMiddleware({
+  target: ADMIN_SERVICE_URL,
+  changeOrigin: true,
+  on: { error: proxyError('admin-service') }
 }));
 
 app.get('/', (req, res) => {
