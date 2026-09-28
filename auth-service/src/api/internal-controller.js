@@ -154,4 +154,44 @@ router.get('/pos-settings/:zodu_id/:branch_id', async (req, res) => {
   }
 });
 
+// ── ADMIN CONSOLE ────────────────────────────────────────────────────────────
+// Called by admin-service only (zodu_admin_panel), same trust boundary as the
+// rest of this file — not exposed via gateway.
+
+// GET /internal/admin/companies?page=&limit=&search=
+router.get('/admin/companies', async (req, res) => {
+  try {
+    const { page = 1, limit = 20, search = '' } = req.query;
+    const result = await repo.listCompaniesPaged({ page, limit, search });
+    return res.status(200).json({
+      success: true,
+      data: result.rows,
+      total: result.total,
+      page: Number(page),
+      limit: Number(limit),
+    });
+  } catch (err) {
+    console.error('[internal] listCompaniesPaged:', err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET /internal/admin/subscriptions?page=&limit=&status=
+router.get('/admin/subscriptions', async (req, res) => {
+  try {
+    const { page = 1, limit = 20, status = '' } = req.query;
+    const result = await repo.listSubscriptionsPaged({ page, limit, status });
+    return res.status(200).json({
+      success: true,
+      data: result.rows,
+      total: result.total,
+      page: Number(page),
+      limit: Number(limit),
+    });
+  } catch (err) {
+    console.error('[internal] listSubscriptionsPaged:', err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 module.exports = router;
