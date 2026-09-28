@@ -4223,20 +4223,20 @@ exports.deleteSale = async (sale_uuid, zodu_id, branch_id) => {
       return { alreadyCancelled: true, ...sale };
     }
 
-    // Stock only moved at sale time when the branch had Stock Check on (see
-    // createOrder's `!isQuotation && orderData.stock_check` gate) — reversing
-    // it here regardless would add back inventory that was never deducted.
-    // Read the branch's *current* setting; toggling it between the sale and
-    // its deletion is an edge case we accept.
-    let stockCheckEnabled = false;
-    try {
-      const res = await authClient.getInvoiceSettings(zodu_id, branch_id);
-      stockCheckEnabled = !!res?.data?.stock_check_enabled;
-    } catch (err) {
-      console.error('[deleteSale] invoice settings lookup failed, assuming stock check off:', err.message);
-    }
+    // Older sales made with Stock Check off never deducted stock (createOrder
+    // used to skip it), so reversing those would add back inventory that never
+    // left. Reverse only when the sale's own stock ledger entry exists —
+    // independent of the branch's current Stock Check setting.
+    const deductedResult = await client.query(
+      `SELECT 1 FROM tbl_stock_ledger
+        WHERE reference_id::text = $1::text
+          AND transaction_type IN ('sale', 'quotation_converted_to_sale')
+        LIMIT 1`,
+      [sale.sale_uuid]
+    );
+    const stockWasDeducted = deductedResult.rows.length > 0;
 
-    if (stockCheckEnabled) {
+    if (stockWasDeducted) {
       const soldItemsResult = await client.query(
         `SELECT
             si.item_id,

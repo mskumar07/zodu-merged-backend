@@ -1465,7 +1465,10 @@ if (!isQuotation) {
     const items = await repository.createSaleItems(orderData, sale, client);
 
     // 🚫 SKIP STOCK FOR QUOTATION
-    if (!isQuotation && orderData.stock_check) {
+    // Stock moves for every sale. The Stock Check setting (orderData.stock_check)
+    // only decides whether a shortfall blocks the sale; with it off, stock can go
+    // negative and items without an inventory row are simply not tracked.
+    if (!isQuotation) {
       for (const item of orderData.items) {
         const qty = Number(item.quantity || 0);
 
@@ -1479,7 +1482,10 @@ if (!isQuotation) {
         );
 
         if (!inv.rows.length) {
-          throw new Error(`Inventory not found for ${item.item_name}`);
+          if (orderData.stock_check) {
+            throw new Error(`Inventory not found for ${item.item_name}`);
+          }
+          continue;
         }
 
         const stock_before = Number(inv.rows[0].available_qty);
@@ -1576,10 +1582,13 @@ async function applyStockAdjustments(client, {
     invRes.rows.map(r => [r.item_uuid, Number(r.available_qty)])
   );
 
+  // Items without an inventory row are untracked: they only block the edit
+  // when Stock Check is on (the UPDATE below simply matches nothing for them).
   const ledgerRows = adjustments.map(adj => {
     const stock_before = stockBeforeMap.get(adj.item_uuid);
     if (stock_before === undefined) {
-      throw new Error(`Inventory not found for ${adj.item_name}`);
+      if (stockCheck) throw new Error(`Inventory not found for ${adj.item_name}`);
+      return null;
     }
 
     const stock_after = stock_before + adj.qty_change;
@@ -1603,7 +1612,7 @@ async function applyStockAdjustments(client, {
       stock_after,
       notes:            adj.notes ?? defaultNotes,
     };
-  });
+  }).filter(Boolean);
 
   await client.query(
     `UPDATE tbl_inventory inv
