@@ -1,0 +1,29 @@
+{
+  "name": "zodu-admin-panel-backend",
+  "version": "1.0.0",
+  "description": "Zodu Admin Console API — aggregates data across Zodu's microservices for internal/admin use only.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "set NODE_ENV=production&& node src/server.js",
+    "dev": "set NODE_ENV=local&& nodemon src/server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@hapi/joi": "^17.1.1",
+    "axios": "^1.12.2",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.1",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.16.3",
+    "pino": "^9.9.0",
+    "pino-http": "^10.5.0",
+    "pino-pretty": "^13.1.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  }
+}

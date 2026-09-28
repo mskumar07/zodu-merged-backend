@@ -11,6 +11,11 @@
 # every env case below so adding their first migration only needs one new
 # `apply "$X_DB" x-service/migrations/foo.sql` line, no connection-plumbing.
 #
+# admin-service's admin_service database must already exist on the target
+# Postgres server before running this (same as every other *_service/*-service
+# database above — this script only creates tables inside a database, never
+# the database itself, same as it has always done for the others).
+#
 # Every file is ADD COLUMN IF NOT EXISTS / CREATE OR REPLACE / DROP ... IF EXISTS,
 # so re-running is safe and a partially-migrated database converges.
 #
@@ -49,6 +54,7 @@ case "$ENV" in
     CHECKLIST_DB=checklist-service
     EMPLOYEE_DB=employee-service
     PAYROLL_DB=payroll-service
+    ADMIN_DB=admin_service
     # api-gateway (not the frontend on 5173) — it proxies /auth/* to
     # auth-service, so /auth/file/<key> is reachable through here, matching
     # how uat/prod point at their public gateway origins below.
@@ -67,6 +73,7 @@ case "$ENV" in
     CHECKLIST_DB=checklist-service
     EMPLOYEE_DB=employee-service
     PAYROLL_DB=payroll-service
+    ADMIN_DB=admin_service
     PUBLIC_BASE=https://api.myzodu.com
     run_sql() { psql -h "$HOST" -p "$PORT" -U "$USER" -d "$1" -v ON_ERROR_STOP=1 -f "$2"; }
     run_sql_str() { psql -h "$HOST" -p "$PORT" -U "$USER" -d "$1" -v ON_ERROR_STOP=1 -tAc "$2"; }
@@ -83,6 +90,7 @@ case "$ENV" in
     CHECKLIST_DB=checklist-service
     EMPLOYEE_DB=employee_service
     PAYROLL_DB=payroll-service
+    ADMIN_DB=admin_service
     PUBLIC_BASE=https://api.zodu.in
     run_sql() { psql -h "$HOST" -p "$PORT" -U "$USER" -d "$1" -v ON_ERROR_STOP=1 -f "$2"; }
     run_sql_str() { psql -h "$HOST" -p "$PORT" -U "$USER" -d "$1" -v ON_ERROR_STOP=1 -tAc "$2"; }
@@ -145,6 +153,11 @@ force_apply() {  # force_apply <db> <path-relative-to-repo-root>
   run_sql "$1" "$ROOT/$2"
   record_applied "$1" "$2"
 }
+
+# admin-service — tbl_admin_users, the admin console's own login table.
+# Lives in its own admin_service database, never in AUTH_DB — the admin
+# panel's operators are a different concept from customer/business users.
+apply "$ADMIN_DB" admin-service/migrations/001_init.sql
 
 # auth-service — invoice settings. The base table first so a database that has
 # never had this feature converges to the same shape as one that has.

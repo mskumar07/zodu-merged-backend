@@ -130,6 +130,42 @@ services:
       PUBLIC_FILE_BASE_URL: https://api.zodu.in
 
 
+  # Admin Panel Service — staff-only console API. Reached ONLY through
+  # api-gateway's /admin route, same as every other service here — no
+  # published port of its own. Its own outbound calls to auth-service,
+  # retail-service, etc. go straight over the internal network
+  # (AUTH_SERVICE_URL etc.), the same way api-gateway's own proxy targets do.
+  admin-service:
+    image: vicky0015/zodu-backemd-retail-admin-service:latest
+    container_name: retail-admin-service
+    restart: always
+    expose:
+      - "3007"
+    environment:
+      NODE_ENV: production
+      PORT: 3007
+      DB_HOSTNAME: 72.60.206.59
+      DB_PORT: 5433
+      DB_USERNAME: zoduprod
+      DB_PASSWORD: zodu@2025
+      DB_NAME: admin_service
+      APP_SECRET: zodu@2025adminsecret
+      JWT_EXPIRES_IN: 8h
+      INTERNAL_SERVICE_KEY: zodu@2025internalkey
+      CORS_ORIGIN: https://admin.zodu.in
+      AUTH_SERVICE_URL: http://auth-service:3000
+      RETAIL_SERVICE_URL: http://retail-service:3001
+      EMPLOYEE_SERVICE_URL: http://employee-service:3002
+      PAYROLL_SERVICE_URL: http://payroll-service:3003
+      RESTAURANT_SERVICE_URL: http://restaurant-service:3004
+      CHECKLIST_SERVICE_URL: http://checklist-service:3005
+    depends_on:
+      - auth-service
+      - retail-service
+      - employee-service
+      - payroll-service
+      - checklist-service
+
   # API Gateway
   apigateway:
     image: vicky0015/zodu-backemd-retail-apigateway:latest
@@ -145,6 +181,7 @@ services:
       RESTAURANT_SERVICE_URL: http://restaurant-service:3004
       PAYROLL_SERVICE_URL: http://payroll-service:3003
       CHECKLIST_SERVICE_URL: http://checklist-service:3005
+      ADMIN_SERVICE_URL: http://admin-service:3007
     depends_on:
       - auth-service
       - retail-service
@@ -152,3 +189,4 @@ services:
       - restaurant-service
       - payroll-service
       - checklist-service
+      - admin-service
