@@ -5743,6 +5743,7 @@ exports.getSalesRows = async ({ custUuid, branchId, zoduId, fromDate, toDate }) 
        AND s.zodu_id        = $2
        AND s.branch_id      = $3
        AND s.sale_type      = 'S'         -- ✅ exclude quotations (Q), invoices only
+       AND s.cancelled_inv   = false       -- ✅ exclude cancelled invoices
        ${dateClause}
      ORDER BY s.sale_date DESC, s.created_at DESC`,
     params
@@ -5831,6 +5832,7 @@ exports.getPaymentHistory = async ({ custUuid, branchId, zoduId, fromDate, toDat
      WHERE s.customer_uuid = $1
        AND sp.zodu_id       = $2
        AND sp.branch_id     = $3
+      AND s.cancelled_inv = false
        ${dateClause}
        ${methodClause}
      ORDER BY sp.payment_date DESC, sp.created_at DESC`,

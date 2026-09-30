@@ -2326,6 +2326,7 @@ exports.getCustomers = async (filters) => {
             AND s.zodu_id       = tbl_customer.zodu_id
             AND s.branch_id     = tbl_customer.branch_id
             AND s.sale_type     = 'S'
+            AND s.cancelled_inv = false
         ), 0) AS total_sale,
         COALESCE((
           SELECT COUNT(*)
@@ -2334,6 +2335,7 @@ exports.getCustomers = async (filters) => {
             AND s.zodu_id       = tbl_customer.zodu_id
             AND s.branch_id     = tbl_customer.branch_id
             AND s.sale_type     = 'S'
+            AND s.cancelled_inv = false
         ), 0) AS total_invoice,
         COALESCE(opening_balance, 0) + COALESCE((
           SELECT SUM(s.balance_amount)
@@ -2342,6 +2344,7 @@ exports.getCustomers = async (filters) => {
             AND s.zodu_id       = tbl_customer.zodu_id
             AND s.branch_id     = tbl_customer.branch_id
             AND s.sale_type     = 'S'
+            AND s.cancelled_inv = false
         ), 0) AS outstanding_balance
      FROM tbl_customer
      ${whereClause}
@@ -6427,6 +6430,7 @@ exports.getSalesRows = async ({ custUuid, branchId, zoduId, fromDate, toDate }) 
        AND s.zodu_id        = $2
        AND s.branch_id      = $3
        AND s.sale_type      = 'S'         -- ✅ exclude quotations (Q), invoices only
+       AND s.cancelled_inv = false
        ${dateClause}
      ORDER BY s.sale_date DESC, s.created_at DESC`,
     params
@@ -6516,6 +6520,7 @@ exports.getPaymentHistory = async ({ custUuid, branchId, zoduId, fromDate, toDat
      WHERE s.customer_uuid = $1
        AND sp.zodu_id       = $2
        AND sp.branch_id     = $3
+       AND s.cancelled_inv  = false
        ${dateClause}
        ${methodClause}
      ORDER BY sp.payment_date DESC, sp.created_at DESC`,
