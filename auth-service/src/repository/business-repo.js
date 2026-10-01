@@ -742,6 +742,9 @@ exports.listSubscriptionsPaged = async ({ page = 1, limit = 20, status = '' }) =
   const { rows } = await conn.query(
     `SELECT s.zodu_id, s.branch_id, b.business_name, b.mail_id, b.mobile_no,
             s.plan_code, s.trial_end_date, s.subscription_end_date, s.created_at,
+            TO_CHAR(b.created_at,  'DD Mon YYYY') AS company_created_at,
+            br.branch_name,
+            TO_CHAR(br.created_at, 'DD Mon YYYY') AS branch_created_at,
             CASE
               WHEN s.status = 'trial'  AND s.trial_end_date        < now() THEN 'trial_expired'
               WHEN s.status = 'active' AND s.subscription_end_date < now() THEN 'subscription_expired'
@@ -749,6 +752,7 @@ exports.listSubscriptionsPaged = async ({ page = 1, limit = 20, status = '' }) =
             END AS effective_status
      FROM tbl_subscription s
      JOIN tbl_business b ON b.zodu_id = s.zodu_id
+     LEFT JOIN tbl_branch br ON br.zodu_id = s.zodu_id AND br.branch_id = s.branch_id
      ${where}
      ORDER BY s.created_at DESC
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
