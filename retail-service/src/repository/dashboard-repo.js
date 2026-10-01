@@ -238,6 +238,7 @@ async function getReminders(zodu_id, branch_id, limit, offset) {
   )
   SELECT
     ref_id,
+    ref_uuid,
     ref_type,
     txn_date,
     TO_CHAR(due_date, 'DD Mon YYYY') AS due_date,
