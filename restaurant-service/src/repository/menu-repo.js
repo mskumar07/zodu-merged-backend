@@ -129,6 +129,186 @@ exports.createMenuItem = async (menuData) => {
   }
 };
 
+// Bulk counterpart of createMenuItem, for the xlsx upload. Same table, same
+// menu_id scheme and the same "only a Product gets an inventory row" rule —
+// the difference is that everything is batched, and the max menu_id sequence
+// is read once per branch instead of once per row.
+//
+// `client` must be a checked-out connection already inside a transaction: the
+// caller owns BEGIN/COMMIT so a bad sheet leaves nothing behind.
+//
+// Accepts the retail-style column names as aliases (item_name, category_id,
+// gst_type, ...) so a sheet exported from either product screen uploads
+// unchanged.
+const MENU_BATCH_SIZE = 1000;
+
+const truthy = (v) =>
+  v === true || v === 1 ||
+  ["true", "yes", "inclusive", "1"].includes(String(v).trim().toLowerCase());
+
+exports.bulkCreateMenuItems = async (rows, client) => {
+  const db = client ?? conn;
+
+  let inserted = 0;
+  let inventoryProcessed = 0;
+  const skipped = [];
+
+  // One sequence counter per branch, advanced in memory across the whole upload.
+  const seqByBranch = new Map();
+  const nextMenuId = async (zodu_id, branch_id) => {
+    const key = `${zodu_id}|${branch_id}`;
+    if (!seqByBranch.has(key)) {
+      await db.query(
+        `SELECT 1 FROM tbl_menu_items WHERE zodu_id=$1 AND branch_id=$2 FOR UPDATE`,
+        [zodu_id, branch_id]
+      );
+      const { rows: seqRows } = await db.query(
+        `SELECT MAX((regexp_match(menu_id, '([0-9]+)$'))[1]::int) AS max_seq
+           FROM tbl_menu_items WHERE zodu_id=$1 AND branch_id=$2`,
+        [zodu_id, branch_id]
+      );
+      seqByBranch.set(key, seqRows[0].max_seq || 0);
+    }
+    const next = seqByBranch.get(key) + 1;
+    seqByBranch.set(key, next);
+    return `${zodu_id}-${branch_id}-${String(next).padStart(3, "0")}`;
+  };
+
+  for (let i = 0; i < rows.length; i += MENU_BATCH_SIZE) {
+    const batch = rows.slice(i, i + MENU_BATCH_SIZE);
+
+    const values = [];
+    const placeholders = [];
+    let index = 1;
+
+    for (let b = 0; b < batch.length; b++) {
+      const item = batch[b];
+      const zodu_id = item.zodu_id;
+      const branch_id = item.branch_id;
+      const menu_name = item.menu_name ?? item.item_name;
+      const menu_category_id = item.menu_category_id ?? item.category_id;
+
+      // These four are NOT NULL on tbl_menu_items. Report the row and the
+      // field rather than dropping it on the floor — a silently short import
+      // is worse than a loud one.
+      const missing = [];
+      if (!zodu_id) missing.push("zodu_id");
+      if (!branch_id) missing.push("branch_id");
+      if (!menu_name) missing.push("item_name");
+      if (menu_category_id === undefined || menu_category_id === null || menu_category_id === "") {
+        missing.push("category_id");
+      }
+      if (missing.length) {
+        // +2: one for the header row, one because sheet rows are 1-based.
+        skipped.push({ row: i + b + 2, item_name: menu_name || null, missing });
+        continue;
+      }
+
+      const menu_type = String(item.menu_type ?? item.item_type ?? "Food");
+
+      values.push(
+        zodu_id,
+        branch_id,
+        parseInt(menu_category_id, 10),
+        menu_name,
+        menu_type,
+        item.food_type || null,
+        // sell_price / purchase_price are varchar on this table
+        item.sell_price != null ? String(item.sell_price) : null,
+        (item.purchase_price ?? item.cost_price) != null
+          ? String(item.purchase_price ?? item.cost_price)
+          : null,
+        item.hsn_code || null,
+        item.gst_tax ?? item.gst_type ?? item.gst_percentage ?? 0,
+        truthy(item.tax_include_or_exclude ?? item.tax_incl_type),
+        item.menu_image || item.item_img || null,
+        item.menu_code || item.sku || item.item_id || null,
+        await nextMenuId(zodu_id, branch_id),
+        (item.menu_unit ?? item.unit) != null && (item.menu_unit ?? item.unit) !== ""
+          ? parseInt(item.menu_unit ?? item.unit, 10)
+          : null,
+        Number(item.opening_stock ?? item.available_qty ?? 0),
+        Number(item.alert_stock ?? item.reorder_level ?? 0),
+        item.description || null
+      );
+
+      placeholders.push(
+        `($${index++}, $${index++}, $${index++}, $${index++},
+          $${index++}, $${index++}, $${index++}, $${index++},
+          $${index++}, $${index++}, $${index++}, $${index++},
+          $${index++}, $${index++}, $${index++}, $${index++},
+          $${index++}, $${index++}, false)`
+      );
+    }
+
+    if (!values.length) continue;
+
+    const { rows: created } = await db.query(
+      `INSERT INTO tbl_menu_items (
+         zodu_id, branch_id, menu_category_id, menu_name,
+         menu_type, food_type, sell_price, purchase_price,
+         hsn_code, gst_tax, tax_include_or_exclude, menu_image,
+         menu_code, menu_id, menu_unit, opening_stock,
+         alert_stock, description, favorites
+       )
+       VALUES ${placeholders.join(",")}
+       RETURNING item_uuid, menu_id, zodu_id, branch_id, menu_name,
+                 menu_type, menu_category_id, menu_unit,
+                 purchase_price, sell_price, opening_stock, alert_stock`,
+      values
+    );
+    inserted += created.length;
+
+    // Only Products are stocked. The menu_ids were just generated, so no
+    // inventory row can already exist — a plain insert is enough (and
+    // tbl_inventory has no unique key to upsert against anyway).
+    const products = created.filter(
+      (r) => String(r.menu_type || "").toLowerCase() === "product"
+    );
+    if (!products.length) continue;
+
+    const invValues = [];
+    const invPlaceholders = [];
+    let invIndex = 1;
+
+    for (const row of products) {
+      invValues.push(
+        row.zodu_id,
+        row.branch_id,
+        row.menu_id,
+        row.menu_category_id,
+        row.menu_name,
+        row.menu_unit,
+        Number(row.opening_stock || 0),
+        Number(row.alert_stock || 0),
+        // numeric here, varchar on tbl_menu_items — "" would fail the cast
+        row.purchase_price ? Number(row.purchase_price) : null,
+        row.sell_price ? Number(row.sell_price) : null,
+        row.item_uuid
+      );
+      invPlaceholders.push(
+        `($${invIndex++}, $${invIndex++}, $${invIndex++}, $${invIndex++},
+          $${invIndex++}, $${invIndex++}, $${invIndex++}, $${invIndex++},
+          $${invIndex++}, $${invIndex++}, 'direct', NOW(), NOW(), $${invIndex++})`
+      );
+    }
+
+    await db.query(
+      `INSERT INTO tbl_inventory (
+         zodu_id, branch_id, item_id, category_id,
+         item_name, item_unit, stock_qty, stock_alert,
+         purchase_price, selling_price, inventory_type,
+         last_purchase_date, created_at, item_uuid
+       )
+       VALUES ${invPlaceholders.join(",")}`,
+      invValues
+    );
+    inventoryProcessed += invPlaceholders.length;
+  }
+
+  return { inserted, inventoryProcessed, skipped };
+};
+
 exports.getNextMenuId = async (zoduId, branchId) => {
   try {
     // Lock all rows for this branch so concurrent inserts serialize here

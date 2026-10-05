@@ -206,16 +206,22 @@ async function getDashboardOrders(zodu_id, branch_id, { page, limit, sortOrder }
 exports.getDashboardSummary = async (zodu_id, branch_id ) => {
   const query = `
     SELECT
+      -- A cancelled order is not a sale: it must not be counted here, the same
+      -- way the recent-orders and top-items queries below already exclude it.
       (SELECT COUNT(*)
        FROM tbl_orders o
        WHERE o.zodu_id = $1 AND o.branch_id = $2 AND o.final_payment = true
+         AND o.cancelled_order = false
       ) AS total_orders,
 
       TRUNC((SELECT COALESCE(SUM(o.total_amt), 0)
        FROM tbl_orders o
        WHERE o.zodu_id = $1 AND o.branch_id = $2 AND o.final_payment = true
+         AND o.cancelled_order = false
       )) AS total_sales,
 
+      -- Expenses have no cancel flag (they are hard-deleted), but a cancelled
+      -- purchase is no longer owed.
       TRUNC((SELECT COALESCE(SUM(p.balance_amount), 0)
        FROM tbl_expense p
        WHERE p.zodu_id = $1 AND p.branch_id = $2
@@ -224,6 +230,7 @@ exports.getDashboardSummary = async (zodu_id, branch_id ) => {
       (SELECT COALESCE(SUM(p.balance_amount), 0)
        FROM tbl_purchase p
        WHERE p.zodu_id = $1 AND p.branch_id = $2
+         AND p.cancelled_purchase = false
       )) AS total_due,
 
       (SELECT COUNT(*)

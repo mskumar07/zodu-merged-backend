@@ -456,7 +456,7 @@ router.post(
         branch_id,
         file: req.file,
       });
-      if (data.error) return res.status(400).json(data);
+      if (data.error || data.data?.error) return res.status(400).json(data);
       return res.status(STATUS_CODES.OK).json(data);
     } catch (error) {
       logger.error(error);
@@ -474,12 +474,82 @@ router.delete('/api/invoice-settings/:zodu_id/:branch_id/signature', ValidateSig
       zodu_id,
       branch_id,
     });
-    if (data.error) return res.status(400).json(data);
+    if (data.error || data.data?.error) return res.status(400).json(data);
     return res.status(STATUS_CODES.OK).json(data);
   } catch (error) {
     logger.error(error);
     return res.status(STATUS_CODES.INTERNAL_ERROR).json({ message: error.message });
   }
 });
+
+// ── Watermark + receiver signature images ─────────────────────────────────────
+// Same contract as the signature routes above:
+//   POST   /api/invoice-settings/:zodu_id/:branch_id/watermark            (field `watermark`)
+//   DELETE /api/invoice-settings/:zodu_id/:branch_id/watermark
+//   POST   /api/invoice-settings/:zodu_id/:branch_id/receiver-signature   (field `receiver_signature`)
+//   DELETE /api/invoice-settings/:zodu_id/:branch_id/receiver-signature
+// Both return the full updated settings row.
+const INVOICE_IMAGE_ROUTES = [
+  { path: 'watermark',          kind: 'watermark',          field: 'watermark',          label: 'Watermark',          maxMb: 5 },
+  { path: 'receiver-signature', kind: 'receiver_signature', field: 'receiver_signature', label: 'Receiver signature', maxMb: 2 },
+];
+
+for (const { path, kind, field, label, maxMb } of INVOICE_IMAGE_ROUTES) {
+  const route = `/api/invoice-settings/:zodu_id/:branch_id/${path}`;
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: maxMb * 1024 * 1024 },
+  }).single(field);
+
+  const handleUpload = (req, res, next) =>
+    upload(req, res, (err) => {
+      if (!err) return next();
+      const message =
+        err.code === 'LIMIT_FILE_SIZE'
+          ? `${label} image exceeds the ${maxMb}MB limit`
+          : err.code === 'LIMIT_UNEXPECTED_FILE'
+          ? `Unexpected file field — send the image as '${field}'`
+          : err.message;
+      return res.status(STATUS_CODES.BAD_REQUEST).json({ message });
+    });
+
+  router.post(route, ValidateSignature, handleUpload, async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(STATUS_CODES.BAD_REQUEST).json({ message: `No file uploaded — send the image as '${field}'` });
+      }
+      const { zodu_id, branch_id } = req.params;
+      const data = await authService.UploadInvoiceImage({
+        kind,
+        user_id: req.user.user_id,
+        zodu_id,
+        branch_id,
+        file: req.file,
+      });
+      if (data.error || data.data?.error) return res.status(400).json(data);
+      return res.status(STATUS_CODES.OK).json(data);
+    } catch (error) {
+      logger.error(error);
+      return res.status(STATUS_CODES.INTERNAL_ERROR).json({ message: error.message });
+    }
+  });
+
+  router.delete(route, ValidateSignature, async (req, res) => {
+    try {
+      const { zodu_id, branch_id } = req.params;
+      const data = await authService.DeleteInvoiceImage({
+        kind,
+        user_id: req.user.user_id,
+        zodu_id,
+        branch_id,
+      });
+      if (data.error || data.data?.error) return res.status(400).json(data);
+      return res.status(STATUS_CODES.OK).json(data);
+    } catch (error) {
+      logger.error(error);
+      return res.status(STATUS_CODES.INTERNAL_ERROR).json({ message: error.message });
+    }
+  });
+}
 
 module.exports = router;

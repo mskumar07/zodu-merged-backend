@@ -96,6 +96,23 @@ exports.uploadCompanyLogo = (file, zodu_id) =>
     maxBytes: LOGO_MAX_BYTES,
   });
 
+// Upload an invoice watermark → { fileUrl, fileKey }
+// Usually a logo-style image, so it gets the logo's size budget.
+exports.uploadWatermark = (file, zodu_id, branch_id) =>
+  uploadImage(file, {
+    label: 'Watermark',
+    keyPrefix: `watermark-${zodu_id}-${branch_id}`,
+    maxBytes: LOGO_MAX_BYTES,
+  });
+
+// Upload a receiver-signature image → { fileUrl, fileKey }
+exports.uploadReceiverSignature = (file, zodu_id, branch_id) =>
+  uploadImage(file, {
+    label: 'Receiver signature',
+    keyPrefix: `receiver-signature-${zodu_id}-${branch_id}`,
+    maxBytes: SIGNATURE_MAX_BYTES,
+  });
+
 exports.LOGO_MAX_BYTES = LOGO_MAX_BYTES;
 exports.SIGNATURE_MAX_BYTES = SIGNATURE_MAX_BYTES;
 

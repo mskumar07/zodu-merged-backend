@@ -3218,27 +3218,59 @@ exports.updateMenuItem= async (item_uuid, data) => {
   return rows[0];
 }
 
+// Products and menu items share one table — there is no tbl_products. This is
+// the menu-repo.createMenuItem path expressed in the product API's vocabulary:
+// the request speaks item_name/cost_price/gst_percentage, the table speaks
+// menu_name/purchase_price/gst_tax.
+//
+// Columns tbl_menu_items does not have are dropped on the floor rather than
+// failing the request: mrp and barcode have nowhere to go here.
 exports.createProduct = async (data) => {
   try {
+    // menu_category_id is NOT NULL, and product_create lets category_id through
+    // as null — catch it here so the caller gets the field name instead of a
+    // raw not-null violation.
+    if (data.category_id === undefined || data.category_id === null || data.category_id === '') {
+      throw new Error('category_id is required');
+    }
+
+    // Same id shape and sequence as menu-service: <zodu>-<branch>-<3 digits>.
+    // The FOR UPDATE lock serializes concurrent creates for this branch.
+    await conn.query(
+      `SELECT 1 FROM tbl_menu_items WHERE zodu_id = $1 AND branch_id = $2 FOR UPDATE`,
+      [data.zodu_id, data.branch_id]
+    );
+    const seqRes = await conn.query(
+      `SELECT MAX((regexp_match(menu_id, '([0-9]+)$'))[1]::int) AS max_seq
+         FROM tbl_menu_items WHERE zodu_id = $1 AND branch_id = $2`,
+      [data.zodu_id, data.branch_id]
+    );
+    const nextSeq = (seqRes.rows[0].max_seq || 0) + 1;
+    const menu_id = `${data.zodu_id}-${data.branch_id}-${String(nextSeq).padStart(3, '0')}`;
+
+    // This endpoint adds products; menu_type drives whether an inventory row
+    // follows, exactly as it does in createMenuItem.
+    const menu_type = /^f/i.test(String(data.item_type || '')) ? 'Food' : 'Product';
 
     const query = `
-      INSERT INTO tbl_products(
+      INSERT INTO tbl_menu_items(
         zodu_id,
         branch_id,
-        item_type,
-        item_name,
-        category_id,
-        sku,
-        barcode,
-        hsn_code,
-        unit,
-        mrp,
+        menu_category_id,
+        menu_name,
+        menu_type,
         sell_price,
-        cost_price,
-        gst_percentage
+        purchase_price,
+        hsn_code,
+        gst_tax,
+        menu_code,
+        menu_id,
+        menu_unit,
+        active,
+        favorites
       )
       VALUES(
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,false
       )
       RETURNING *
     `;
@@ -3246,22 +3278,51 @@ exports.createProduct = async (data) => {
     const values = [
       data.zodu_id,
       data.branch_id,
-      data.item_type,
+      parseInt(data.category_id, 10),
       data.item_name,
-      data.category_id,
-      data.sku,
-      data.barcode,
-      data.hsn_code,
-      data.unit,
-      data.mrp,
-      data.sell_price,
-      data.cost_price,
-      data.gst_percentage
+      menu_type,
+      // sell_price / purchase_price are varchar on this table
+      data.sell_price != null ? String(data.sell_price) : null,
+      data.cost_price != null ? String(data.cost_price) : null,
+      data.hsn_code || null,
+      data.gst_percentage ?? null,
+      data.sku || null,
+      menu_id,
+      data.unit != null && data.unit !== '' ? parseInt(data.unit, 10) : null,
+      data.status ? data.status === 'active' : true,
     ];
 
     const result = await conn.query(query, values);
+    const created = result.rows[0];
 
-    return result.rows[0];
+    // A Product carries its stock in tbl_inventory; a Food row keeps it on the
+    // menu row. menu_id is freshly generated, so no inventory row can exist yet.
+    if (created.menu_type && created.menu_type.toLowerCase() === 'product') {
+      await conn.query(
+        `INSERT INTO tbl_inventory (
+           zodu_id, branch_id, item_id, category_id, item_name, item_unit,
+           stock_qty, stock_alert, purchase_price, selling_price,
+           inventory_type, last_purchase_date, created_at, item_uuid
+         )
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'direct',NOW(),NOW(),$11)`,
+        [
+          created.zodu_id,
+          created.branch_id,
+          created.menu_id,
+          created.menu_category_id,
+          created.menu_name,
+          created.menu_unit,
+          Number(data.opening_stock || 0),
+          Number(data.alert_stock || 0),
+          // numeric on tbl_inventory, varchar on tbl_menu_items
+          created.purchase_price ? Number(created.purchase_price) : null,
+          created.sell_price ? Number(created.sell_price) : null,
+          created.item_uuid,
+        ]
+      );
+    }
+
+    return created;
 
   } catch (err) {
     throw new Error(err.message);

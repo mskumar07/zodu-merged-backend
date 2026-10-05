@@ -653,15 +653,23 @@ exports.getStockHistoryRepo = async ({ item_uuid, zodu_id, branch_id }) => {
 
   // ✅ 2. Get Ledger History (ONLY if exists)
   const historyQuery = `
-    SELECT 
+    SELECT
       l.ledger_id,
-      l.transaction_type,
+
+      -- A quotation that became a sale is just a sale as far as the stock
+      -- history is concerned; the distinction only matters to the reversal
+      -- logic in deleteSale, which reads the raw column from the table. The UI
+      -- renders this field directly, so hand it the sale wording.
+      CASE
+        WHEN l.transaction_type = 'quotation_converted_to_sale' THEN 'sale'
+        ELSE l.transaction_type
+      END AS transaction_type,
 
       COALESCE(
         CASE
           WHEN l.transaction_type = 'SALE_RETURN'
             THEN sr.return_id::TEXT
-          WHEN l.transaction_type IN ('sale', 'sale_update', 'sale_update_reverse', 'sale_deleted', 'sale_edit_qty_changed', 'sale_edit_item_added', 'sale_edit_item_removed', 'sale_edit_item_replaced')
+          WHEN l.transaction_type IN ('sale', 'sale_update', 'sale_update_reverse', 'sale_deleted', 'sale_edit_qty_changed', 'sale_edit_item_added', 'sale_edit_item_removed', 'sale_edit_item_replaced', 'quotation_converted_to_sale')
             THEN s.sale_id::TEXT
           WHEN l.transaction_type IN ('purchase', 'purchase_item_added', 'purchase_item_qty_updated', 'purchase_item_removed', 'purchase_delete')
             THEN p.purchase_id::TEXT
@@ -685,7 +693,7 @@ exports.getStockHistoryRepo = async ({ item_uuid, zodu_id, branch_id }) => {
       CASE
         WHEN l.transaction_type = 'sale_deleted' THEN 'Reverse'
         WHEN l.transaction_type = 'SALE_RETURN' THEN 'Sale Return'
-        WHEN l.transaction_type IN ('sale', 'sale_update') THEN 'Sale'
+        WHEN l.transaction_type IN ('sale', 'sale_update', 'quotation_converted_to_sale') THEN 'Sale'
         WHEN l.transaction_type = 'sale_update_reverse' THEN 'Sale Adjust'
         WHEN l.transaction_type = 'purchase' THEN 'Purchase'
         WHEN l.transaction_type IN ('purchase_item_added', 'purchase_item_qty_updated') THEN 'Purchase Update'

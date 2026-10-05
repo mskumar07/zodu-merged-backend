@@ -152,13 +152,20 @@ exports.getStockHistoryRepo = async ({ item_uuid, zodu_id, branch_id }) => {
   const historyQuery = `
     SELECT
       l.ledger_id,
-      l.transaction_type,
+
+      -- A quotation that became a sale is just a sale in the stock history;
+      -- the distinction only matters to the reversal logic, which reads the
+      -- raw column from the table. The UI renders this field directly.
+      CASE
+        WHEN l.transaction_type = 'quotation_converted_to_sale' THEN 'sale'
+        ELSE l.transaction_type
+      END AS transaction_type,
 
       COALESCE(
         CASE
           WHEN l.transaction_type IN ('purchase', 'purchase_item_added', 'purchase_item_qty_updated', 'purchase_item_removed', 'purchase_cancel')
             THEN p.purchase_id::TEXT
-          WHEN l.transaction_type IN ('sale', 'sale_cancel')
+          WHEN l.transaction_type IN ('sale', 'sale_cancel', 'quotation_converted_to_sale')
             THEN o.public_order_no
         END,
         l.reference_id::TEXT
@@ -179,7 +186,7 @@ exports.getStockHistoryRepo = async ({ item_uuid, zodu_id, branch_id }) => {
 
       CASE
         WHEN l.transaction_type = 'sale_cancel' THEN 'Reverse'
-        WHEN l.transaction_type IN ('sale', 'sale_update') THEN 'Sale'
+        WHEN l.transaction_type IN ('sale', 'sale_update', 'quotation_converted_to_sale') THEN 'Sale'
         WHEN l.transaction_type = 'sale_update_reverse' THEN 'Sale Adjust'
         WHEN l.transaction_type = 'purchase' THEN 'Purchase'
         WHEN l.transaction_type IN ('purchase_item_added', 'purchase_item_qty_updated') THEN 'Purchase Update'
@@ -196,7 +203,7 @@ exports.getStockHistoryRepo = async ({ item_uuid, zodu_id, branch_id }) => {
       ON o.api_order_id = l.reference_id
       AND o.zodu_id = l.zodu_id
       AND o.branch_id = l.branch_id
-      AND l.transaction_type IN ('sale', 'sale_cancel')
+      AND l.transaction_type IN ('sale', 'sale_cancel', 'quotation_converted_to_sale')
 
     WHERE l.item_uuid = $1
       AND l.zodu_id = $2

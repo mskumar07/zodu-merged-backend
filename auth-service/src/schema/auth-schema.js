@@ -24,6 +24,19 @@ const POS_TYPES = ['Invoice', 'Quotation', 'Proforma'];
 // enforced, so keep it in step with the frontend.
 const POS_SCREEN_TYPES = ['Touch', 'Keyboard'];
 
+// Companies and branches need a mobile number OR an email ID — either one is
+// enough. On create, at least one must be filled in. On edit, a field left out
+// of the payload is untouched, so only a payload that sends BOTH and leaves
+// both blank is rejected (it would wipe the last way to reach them).
+const hasText = (v) => typeof v === 'string' && v.trim() !== '';
+const requireOneContact = (phoneKey, emailKey, { partial = false } = {}) => (value, helpers) => {
+  const phone = value[phoneKey];
+  const email = value[emailKey];
+  if (partial && (phone === undefined || email === undefined)) return value;
+  if (hasText(phone) || hasText(email)) return value;
+  return helpers.message('Enter a mobile number or an email ID');
+};
+
 const schema = {
   account_create: joi.object({
     restaurant_name: joi.string().max(50).required(),
@@ -62,8 +75,8 @@ const schema = {
     owner_admin_name: joi.string().max(100).allow(null, ''),
     gst_no: joi.string().max(50).allow(null, ''),
     type: joi.string().max(50).allow(null, ''),
-    phone_number:    joi.string().length(10).pattern(/^[0-9]+$/).required(),
-    email:           joi.string().email().required(),
+    phone_number:    joi.string().length(10).pattern(/^[0-9]+$/).allow(null, ''),
+    email:           joi.string().email().allow(null, ''),
     pincode: joi.string().pattern(/^[0-9]{5,10}$/).allow(null, ''),
     city: joi.string().max(50).allow(null, ''),
     district: joi.string().max(50).allow(null, ''),
@@ -81,7 +94,7 @@ const schema = {
     // an already-uploaded image, or clear it with null.
     company_logo_url: joi.string().uri().allow(null, ''),
     can_use_for_branch: joi.boolean().default(true),
-  }),
+  }).custom(requireOneContact('phone_number', 'email')),
 
   edit_business: joi.object({
     zodu_id: joi.string().required(),
@@ -89,8 +102,8 @@ const schema = {
     owner_admin_name: joi.string().max(100).allow(null, ''),
     gst_no: joi.string().max(50).allow(null, ''),
     type: joi.string().max(50).allow(null, ''),
-    phone_number: joi.string().length(10).pattern(/^[0-9]+$/),
-    email: joi.string().email(),
+    phone_number: joi.string().length(10).pattern(/^[0-9]+$/).allow(null, ''),
+    email: joi.string().email().allow(null, ''),
     pincode: joi.string().pattern(/^[0-9]{5,10}$/).allow(null, ''),
     city: joi.string().max(50).allow(null, ''),
     district: joi.string().max(50).allow(null, ''),
@@ -108,14 +121,14 @@ const schema = {
     // an already-uploaded image, or clear it with null.
     company_logo_url: joi.string().uri().allow(null, ''),
     can_use_for_branch: joi.boolean(),
-  }).min(2),
+  }).min(2).custom(requireOneContact('phone_number', 'email', { partial: true })),
 
   add_branch: joi.object({
     zodu_id: joi.string().required(),
     branch_name: joi.string().max(100).required(),
     branch_manager_or_admin: joi.string().max(100).allow(null, ''),
-    branch_mobile_no: joi.string().pattern(/^[0-9]{10,15}$/).required(),
-    branch_mail_id: joi.string().email().required(),
+    branch_mobile_no: joi.string().pattern(/^[0-9]{10,15}$/).allow(null, ''),
+    branch_mail_id: joi.string().email().allow(null, ''),
     branch_city: joi.string().max(50).allow(null, ''),
     branch_pincode: joi.string().pattern(/^[0-9]{5,10}$/).allow(null, ''),
     branch_district: joi.string().max(50).allow(null, ''),
@@ -133,7 +146,7 @@ const schema = {
     account_number: joi.string().max(30).allow(null, ''),
     account_type: joi.string().allow(null, ''),
     ifsc_code: joi.string().max(20).allow(null, ''),
-  }),
+  }).custom(requireOneContact('branch_mobile_no', 'branch_mail_id')),
 
   edit_branch: joi.object({
     zodu_id: joi.string().required(),
@@ -159,7 +172,7 @@ const schema = {
     ifsc_code: joi.string().max(20).allow(null, ''),
     same_as_address: joi.boolean(),
     same_as_bank_details: joi.boolean(),
-  }).min(3),
+  }).min(3).custom(requireOneContact('branch_mobile_no', 'branch_mail_id', { partial: true })),
 
   edit_invoice_settings: joi.object({
     zodu_id: joi.string().required(),
@@ -214,12 +227,24 @@ const schema = {
     // Normally set by the signature upload endpoint; allowed here so the
     // client can clear it (null) without a separate call.
     signature_url: joi.string().uri().allow(null, ''),
+    // Same contract for the watermark and the receiver signature: toggle +
+    // image URL set by their own upload endpoints.
+    show_watermark: joi.boolean(),
+    watermark_url: joi.string().uri().allow(null, ''),
+    show_receiver_signature: joi.boolean(),
+    receiver_signature_url: joi.string().uri().allow(null, ''),
 
     // Free-text blocks (shown only when their toggle is on)
     show_terms_conditions: joi.boolean(),
     terms_conditions: joi.string().max(2000).allow(null, ''),
     show_notes: joi.boolean(),
     notes: joi.string().max(2000).allow(null, ''),
+    // Quotation / proforma terms — printed instead of the general terms on
+    // that document type when their toggle is on.
+    show_quotation_terms: joi.boolean(),
+    quotation_terms: joi.string().max(2000).allow(null, ''),
+    show_proforma_terms: joi.boolean(),
+    proforma_terms: joi.string().max(2000).allow(null, ''),
 
     // POS settings — Additional Settings
     stock_check_enabled: joi.boolean(),
@@ -303,6 +328,9 @@ const schema = {
 
     // Restaurant-only: print a KOT with the bill on the billing PC's printer.
     kot_print_enabled: joi.boolean(),
+
+    // Restaurant-only: show menu item photos on the POS cards.
+    show_item_image: joi.boolean(),
   })
     .min(1)
     // A default the POS no longer offers would leave the screen preselecting

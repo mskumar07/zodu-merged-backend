@@ -788,12 +788,31 @@ async function EditPosSettings({ user_id, zodu_id, branch_id, ...fields }) {
   }
 }
 
-// ── Invoice signature image ───────────────────────────────────────────────────
-// The image lives in MinIO; tbl_invoice_settings only stores its URL. The old
+// ── Invoice images: signature, watermark, receiver signature ──────────────────
+// Each image lives in MinIO; tbl_invoice_settings only stores its URL. The old
 // object is removed only after the new URL is committed, so a failed upload
-// never leaves the branch without a signature.
+// never leaves the branch without its image.
 
-async function UploadInvoiceSignature({ user_id, zodu_id, branch_id, file }) {
+const INVOICE_IMAGES = {
+  signature: {
+    column: 'signature_url',
+    label: 'Signature',
+    upload: minio.uploadSignature,
+  },
+  watermark: {
+    column: 'watermark_url',
+    label: 'Watermark',
+    upload: minio.uploadWatermark,
+  },
+  receiver_signature: {
+    column: 'receiver_signature_url',
+    label: 'Receiver signature',
+    upload: minio.uploadReceiverSignature,
+  },
+};
+
+async function UploadInvoiceImage({ kind, user_id, zodu_id, branch_id, file }) {
+  const image = INVOICE_IMAGES[kind];
   const userCompanies = await repository.getUserCompanies({ user_id });
   const hasAccess = userCompanies.some((company) => company.zodu_id === zodu_id);
 
@@ -803,23 +822,24 @@ async function UploadInvoiceSignature({ user_id, zodu_id, branch_id, file }) {
 
   try {
     const existing = await businessRepo.getInvoiceSettings(zodu_id, branch_id);
-    const { fileUrl } = await minio.uploadSignature(file, zodu_id, branch_id);
+    const { fileUrl } = await image.upload(file, zodu_id, branch_id);
 
     const settings = await businessRepo.upsertInvoiceSettings(zodu_id, branch_id, {
-      signature_url: fileUrl,
+      [image.column]: fileUrl,
     });
 
-    await minio.deleteFile(minio.keyFromUrl(existing?.signature_url));
+    await minio.deleteFile(minio.keyFromUrl(existing?.[image.column]));
 
-    return FormateData({ message: 'Signature uploaded successfully', settings });
+    return FormateData({ message: `${image.label} uploaded successfully`, settings });
   } catch (err) {
     const message = minio.describeError(err);
-    console.error('upload invoice signature failed:', message);
+    console.error(`upload invoice ${kind} failed:`, message);
     return FormateData({ error: message });
   }
 }
 
-async function DeleteInvoiceSignature({ user_id, zodu_id, branch_id }) {
+async function DeleteInvoiceImage({ kind, user_id, zodu_id, branch_id }) {
+  const image = INVOICE_IMAGES[kind];
   const userCompanies = await repository.getUserCompanies({ user_id });
   const hasAccess = userCompanies.some((company) => company.zodu_id === zodu_id);
 
@@ -831,17 +851,20 @@ async function DeleteInvoiceSignature({ user_id, zodu_id, branch_id }) {
     const existing = await businessRepo.getInvoiceSettings(zodu_id, branch_id);
 
     const settings = await businessRepo.upsertInvoiceSettings(zodu_id, branch_id, {
-      signature_url: null,
+      [image.column]: null,
     });
 
-    await minio.deleteFile(minio.keyFromUrl(existing?.signature_url));
+    await minio.deleteFile(minio.keyFromUrl(existing?.[image.column]));
 
-    return FormateData({ message: 'Signature removed successfully', settings });
+    return FormateData({ message: `${image.label} removed successfully`, settings });
   } catch (err) {
-    console.error('delete invoice signature failed:', err.message);
-    return FormateData({ error: 'Failed to remove signature. Please try again.' });
+    console.error(`delete invoice ${kind} failed:`, err.message);
+    return FormateData({ error: `Failed to remove ${image.label.toLowerCase()}. Please try again.` });
   }
 }
+
+const UploadInvoiceSignature = (args) => UploadInvoiceImage({ ...args, kind: 'signature' });
+const DeleteInvoiceSignature = (args) => DeleteInvoiceImage({ ...args, kind: 'signature' });
 
 // ── GetAllSettings ────────────────────────────────────────────────────────────
 // Aggregates every settings category for a branch into one response.
@@ -924,6 +947,8 @@ module.exports = {
   EditPosSettings,
   UploadInvoiceSignature,
   DeleteInvoiceSignature,
+  UploadInvoiceImage,
+  DeleteInvoiceImage,
   UploadCompanyLogo,
   DeleteCompanyLogo,
   GetAllSettings,

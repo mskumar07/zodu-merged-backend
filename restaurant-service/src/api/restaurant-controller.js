@@ -21,6 +21,7 @@ const moment = require('moment/moment');
 const jwt = require("jsonwebtoken");
 const { validateDateFilter } = require("../utils/Date_Folder/valaidator");
 const { MINIO_HOST, MINIO_PORT, MINIO_ACCESSKEY, BUCKET_NAME, MINIO_SECRETKEY, APP_SECRET } = require("../config");
+const menuRepo = require("../repository/menu-repo");
 
 
 const router = express.Router();
@@ -278,7 +279,6 @@ router.post(
     }
   }
 );
-const BATCH_SIZE = 1000;
 
 router.post(
   "/api/products/upload-excel",
@@ -301,128 +301,18 @@ router.post(
 
       await client.query("BEGIN");
 
-      let totalInserted = 0;
-      let totalInventoryProcessed = 0;
-
-      for (let i = 0; i < data.length; i += BATCH_SIZE) {
-        const batch = data.slice(i, i + BATCH_SIZE);
-
-        // ── 1. tbl_menu_items ──────────────────────────────────────────
-        const productValues = [];
-        const productPlaceholders = [];
-        let index = 1;
-        const validBatch = []; // track valid rows for inventory step
-
-        for (const item of batch) {
-          if (!item.item_name || !item.zodu_id) continue;
-
-          productValues.push(
-            item.item_id || null,
-            item.zodu_id || null,
-            item.branch_id || null,
-            item.item_type || "S",
-            item.item_name || null,
-            item.category_id || null,
-            item.sku || null,
-            item.barcode || null,
-            item.hsn_code || null,
-            item.unit || null,
-            item.mrp || 0,
-            item.sell_price || 0,
-            item.purchase_price || 0,
-            item.gst_type || 0,
-            item.tax_incl_type ?? false,
-            item.item_img || null
-          );
-
-          productPlaceholders.push(
-            `(
-              gen_random_uuid(),
-              $${index++}, $${index++}, $${index++}, $${index++},
-              $${index++}, $${index++}, $${index++}, $${index++},
-              $${index++}, $${index++}, $${index++}, $${index++},
-              $${index++}, $${index++}, $${index++}, $${index++}
-            )`
-          );
-
-          validBatch.push(item); // collect for inventory insert
-        }
-
-        if (!productValues.length) continue;
-
-        const productQuery = `
-          INSERT INTO tbl_menu_items (
-            item_uuid,
-            item_id, zodu_id, branch_id, item_type,
-            item_name, category_id, sku, barcode,
-            hsn_code, unit, mrp, sell_price,
-            purchase_price, gst_type, tax_incl_type, item_img
-          )
-          VALUES ${productPlaceholders.join(",")}
-          ON CONFLICT (barcode) DO NOTHING
-          RETURNING item_uuid, item_id, zodu_id, branch_id, item_name
-        `;
-
-        const productResult = await client.query(productQuery, productValues);
-        totalInserted += productPlaceholders.length;
-
-        // ── 2. tbl_inventory (using returned UUIDs) ────────────────────
-        if (!productResult.rows.length) continue;
-
-        const inventoryValues = [];
-        const inventoryPlaceholders = [];
-        let invIndex = 1;
-
-        for (const row of productResult.rows) {
-          inventoryValues.push(
-            row.item_uuid,
-            row.item_id,
-            row.zodu_id,
-            row.branch_id,
-            row.item_name,
-            // pull qty / reorder from original excel row if provided
-            validBatch.find(i => i.item_id === row.item_id)?.available_qty || 0,
-            validBatch.find(i => i.item_id === row.item_id)?.reorder_level || 0
-          );
-
-          inventoryPlaceholders.push(
-            `(
-              gen_random_uuid(),
-              $${invIndex++}, $${invIndex++}, $${invIndex++}, $${invIndex++},
-              $${invIndex++}, $${invIndex++}, $${invIndex++},
-              CURRENT_TIMESTAMP
-            )`
-          );
-        }
-
-        const inventoryQuery = `
-          INSERT INTO tbl_inventory (
-            inventory_uuid,
-            item_uuid, item_id, zodu_id, branch_id,
-            item_name, available_qty, reorder_level,
-            created_at
-          )
-          VALUES ${inventoryPlaceholders.join(",")}
-          ON CONFLICT (item_uuid, branch_id)
-          DO UPDATE SET
-            item_id         = EXCLUDED.item_id,
-            item_name       = EXCLUDED.item_name,
-            available_qty   = EXCLUDED.available_qty,
-            reorder_level   = EXCLUDED.reorder_level,
-            last_stock_update = CURRENT_TIMESTAMP
-        `;
-
-        await client.query(inventoryQuery, inventoryValues);
-        totalInventoryProcessed += inventoryPlaceholders.length;
-      }
+      const { inserted, inventoryProcessed, skipped } =
+        await menuRepo.bulkCreateMenuItems(data, client);
 
       await client.query("COMMIT");
 
       res.json({
         success: true,
-        message: "Products and inventory uploaded successfully",
-        inserted: totalInserted,
-        inventoryProcessed: totalInventoryProcessed,
+        message: "Menu items uploaded successfully",
+        inserted,
+        inventoryProcessed,
+        skippedCount: skipped.length,
+        skipped: skipped.slice(0, 50),
       });
 
     } catch (error) {

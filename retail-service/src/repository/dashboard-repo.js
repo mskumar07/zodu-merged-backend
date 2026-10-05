@@ -27,7 +27,7 @@ async function getStats(zodu_id, branch_id) {
           COUNT(CASE WHEN payment_status IN ('pending','partial') THEN 1 END)          AS purchase_due_count,
           COALESCE(SUM(balance_amount), 0)                                             AS purchase_payable_balance
         FROM tbl_purchase
-        WHERE zodu_id = $1 AND branch_id = $2
+        WHERE zodu_id = $1 AND branch_id = $2 AND cancelled_purchase = false
       ),
 
       -- Single scan of tbl_sale_items: covers top_item_name, top_item_sold, total_sold

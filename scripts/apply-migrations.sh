@@ -183,8 +183,10 @@ apply "$AUTH_DB" auth-service/migrations/pos_settings_hold_enabled.sql
 apply "$AUTH_DB" auth-service/migrations/pos_settings_screen_type.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_prefix_enabled_default_true.sql
 apply "$AUTH_DB" auth-service/migrations/pos_settings_kot_print.sql
+apply "$AUTH_DB" auth-service/migrations/pos_settings_show_item_image.sql
+apply "$AUTH_DB" auth-service/migrations/invoice_settings_watermark_receiver_signature.sql
 apply "$AUTH_DB" auth-service/migrations/branch_subscription.sql
-
+apply "$AUTH_DB" auth-service/migrations/invoice_settings_quotation_proforma_terms.sql
 # auth-service — company logo on tbl_business. The create-company INSERT names
 # this column, so an un-migrated database fails every company create.
 apply "$AUTH_DB" auth-service/migrations/business_company_logo_url.sql
@@ -230,6 +232,10 @@ apply "$RESTAURANT_DB" restaurant-service/migrations/customer_id_sequence.sql
 # collides — see the migration file for full detail on the PK swap.
 apply "$RETAIL_DB"     retail-service/migrations/purchase_expense_id_tenant_scoped_unique.sql
 apply "$RESTAURANT_DB" restaurant-service/migrations/purchase_expense_id_tenant_scoped_unique.sql
+
+# Stock Check off means "sell anyway", so a sale may take stock below zero.
+# chk_stock_non_negative rejected that UPDATE and failed the whole sale.
+apply "$RETAIL_DB"     retail-service/migrations/inventory_allow_negative_stock.sql
 
 # fn_purge_branch(zodu_id, branch_id) per database — hard-deletes every row
 # scoped to one branch, called by auth-service's delete-branch orchestrator
