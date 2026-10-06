@@ -38,11 +38,6 @@ exports.employee_create = Joi.object({
   bank_name:           Joi.string().max(100).allow(null, ''),
   ifsc_code:           Joi.string().max(20).allow(null, ''),
 
-  role_id:      Joi.string().uuid().allow(null, ''),
-
-  password: Joi.string().pattern(/^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{8,20}$/).allow(null, '').messages({
-    'string.pattern.base': 'Password must be 8-20 chars with 1 uppercase, 1 number, 1 special char',
-  }),
   notes: Joi.string().allow(null, ''),
 });
 
@@ -77,13 +72,26 @@ exports.employee_update = Joi.object({
   bank_name:           Joi.string().max(100).allow(null, ''),
   ifsc_code:           Joi.string().max(20).allow(null, ''),
 
-  role_id:      Joi.string().uuid().allow(null, ''),
-
-  password: Joi.string().pattern(/^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{8,20}$/).allow(null, '').messages({
-    'string.pattern.base': 'Password must be 8-20 chars with 1 uppercase, 1 number, 1 special char',
-  }),
   notes: Joi.string().allow(null, ''),
 }).min(1);
+
+// ── LOGIN DETAILS (Set User modal) ────────────────────────────────────────────
+// Send only the missing field(s): role_id and/or password (+ confirm_password); login_user = true/false.
+
+exports.employee_login_details = Joi.object({
+  ...zodu_branch,
+  role_id:  Joi.string().uuid(),
+  login_user: Joi.boolean(),
+  password: Joi.string().pattern(/^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{8,20}$/).messages({
+    'string.pattern.base': 'Password must be 8-20 chars with 1 uppercase, 1 number, 1 special char',
+  }),
+  confirm_password: Joi.string().valid(Joi.ref('password')).when('password', {
+    is: Joi.exist(), then: Joi.required(), otherwise: Joi.forbidden(),
+  }).messages({
+    'any.only':     'Password and confirm password do not match',
+    'any.required': 'confirm_password is required when password is set',
+  }),
+}).or('role_id', 'password', 'login_user');
 
 // ── DOCUMENT ──────────────────────────────────────────────────────────────────
 

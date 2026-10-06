@@ -154,6 +154,37 @@ router.put('/internal/employee/:user_id/update-user', async (req, res) => {
   }
 });
 
+// POST /internal/employee/login-status
+// Body: { user_ids: [uuid], zodu_id, branch_id } → { data: { [user_id]: { has_password, has_role } } }
+router.post('/internal/employee/login-status', async (req, res) => {
+  try {
+    const { user_ids, zodu_id, branch_id } = req.body;
+    if (!Array.isArray(user_ids) || !zodu_id || !branch_id) {
+      return res.status(400).json({ success: false, error: 'user_ids[], zodu_id and branch_id are required' });
+    }
+    const result = await roleService.getLoginStatus({ user_ids, zodu_id, branch_id });
+    return res.status(200).json(result);
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// PUT /internal/employee/login-details
+// Body: { user_id, zodu_id, branch_id, role_id?, password?, email?, phone?, ... } — sets only what is sent.
+// user_id is reserved by employee-service; if no tbl_users row has it yet, the row is created with that id.
+router.put('/internal/employee/login-details', async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(schema.setEmployeeLogin, req.body);
+    if (errors) return res.status(400).json({ success: false, errors });
+
+    const result = await roleService.setEmployeeLogin(input);
+    return res.status(200).json(result);
+  } catch (err) {
+    const status = err.message === 'Role not found' ? 404 : err.message.includes('already registered') ? 409 : (err.message.includes('phone is required') || err.message.includes('Password is required')) ? 400 : 500;
+    return res.status(status).json({ success: false, error: err.message });
+  }
+});
+
 router.put('/internal/employee/:user_id/deactivate', async (req, res) => {
   try {
     const result = await roleService.deactivateEmployee(req.params.user_id);

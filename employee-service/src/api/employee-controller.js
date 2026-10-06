@@ -75,6 +75,22 @@ router.put('/:id', async (req, res) => {
   }
 });
 
+// ── SET LOGIN DETAILS  PUT /api/employees/:id/login-details ──────────────────
+// Body: { zodu_id, branch_id, role_id?, password?, confirm_password? } — only the
+// fields the employee is missing (see has_role / has_password on the list API)
+router.put('/:id/login-details', async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(schema.employee_login_details, req.body);
+    if (errors) return res.status(400).json({ success: false, errors });
+
+    const result = await service.setLoginDetails(req.params.id, input);
+    return res.status(200).json(result);
+  } catch (err) {
+    const status = err.message === 'Employee not found' ? 404 : (err.status || 500);
+    return res.status(status).json({ success: false, error: err.message });
+  }
+});
+
 // ── DELETE  DELETE /api/employees/:id ────────────────────────────────────────
 // Body: { zodu_id, branch_id }
 router.delete('/:id', async (req, res) => {

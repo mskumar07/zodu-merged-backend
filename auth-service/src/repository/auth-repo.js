@@ -9,11 +9,11 @@ async function getNextZoduId() {
 
 async function findEmailExist({ email }) {
   return conn.query(
-    `SELECT u.user_id, u.email, u.phone, u.password_hash, u.user_type, u.is_active, u.is_deleted,
+    `SELECT u.user_id, u.email, u.phone, u.password_hash, u.user_type, u.is_active, u.is_deleted, u.login_user,
             uc.zodu_id, uc.is_primary
      FROM tbl_users u
      JOIN tbl_user_companies uc ON uc.user_id = u.user_id 
-     WHERE u.email = $1`,
+     WHERE u.email = $1 AND u.login_user = true`,
     [email]
   );
 }
@@ -22,11 +22,11 @@ async function findEmailExist({ email }) {
 
 async function findPhnExist({ phone_number }) {
   return conn.query(
-    `SELECT u.user_id, u.email, u.phone, u.password_hash, u.user_type, u.is_active, u.is_deleted,
+    `SELECT u.user_id, u.email, u.phone, u.password_hash, u.user_type, u.is_active, u.is_deleted, u.login_user,
             uc.zodu_id, uc.is_primary
      FROM tbl_users u
      JOIN tbl_user_companies uc ON uc.user_id = u.user_id
-     WHERE u.phone = $1`,
+     WHERE u.phone = $1 AND u.login_user = true`,
     [phone_number]
   );
 }

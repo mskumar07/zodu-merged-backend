@@ -45,3 +45,19 @@ exports.updateEmployeeRole = Joi.object({
   branch_id:            Joi.string(),
   reporting_manager_id: Joi.string().uuid().allow(null, ''),
 }).min(1);
+
+exports.setEmployeeLogin = Joi.object({
+  user_id:              Joi.string().uuid().required(),
+  zodu_id:              Joi.string().required(),
+  branch_id:            Joi.string().required(),
+  role_id:              Joi.string().uuid(),
+  password:             Joi.string().pattern(/^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{8,20}$/).messages({
+    'string.pattern.base': 'Password must be 8-20 chars with 1 uppercase, 1 number, 1 special char',
+  }),
+  login_user:           Joi.boolean(),
+  reporting_manager_id: Joi.string().uuid().allow(null, ''),
+  // Used only when the login user does not exist yet and has to be created
+  email:                Joi.string().email().allow(null, ''),
+  phone:                Joi.string().pattern(/^[0-9]{10,15}$/).allow(null, ''),
+  is_first_employee:    Joi.boolean().default(false),
+}).or('role_id', 'password', 'login_user');

@@ -108,7 +108,7 @@ exports.findAll = async ({ zodu_id, branch_id, status, search, limit, offset }) 
        e.employee_id, e.employee_code, e.name, e.phone, e.email,
        e.status, e.employment_type,
        TO_CHAR(e.date_of_joining, 'YYYY-MM-DD') AS date_of_joining,
-       e.reporting_manager_name, e.branch_id, e.created_at
+       e.reporting_manager_name, e.branch_id, e.created_at, e.user_id
      FROM tbl_employees e
      WHERE ${conds.join(' AND ')}
      ORDER BY e.created_at DESC

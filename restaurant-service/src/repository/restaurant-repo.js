@@ -2684,10 +2684,10 @@ exports.createCategory = async (zodu_id, branch_id, name, type) => {
     // 1️⃣ Check if category already exists in this branch
     const checkQuery = `
       SELECT * FROM tbl_category
-      WHERE zodu_id = $1 AND branch_id = $2 AND LOWER(name) = LOWER($3)
+      WHERE zodu_id = $1 AND branch_id = $2 AND LOWER(name) = LOWER($3) AND type = $4
       LIMIT 1;
     `;
-    const checkValues = [zodu_id, branch_id, name];
+    const checkValues = [zodu_id, branch_id, name, type];
     const checkResult = await conn.query(checkQuery, checkValues);
 
     if (checkResult.rows.length > 0) {

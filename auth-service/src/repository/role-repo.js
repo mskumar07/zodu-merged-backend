@@ -118,12 +118,18 @@ exports.findAllModules = async () => {
 
 // ── EMPLOYEE USER (internal) ──────────────────────────────────────────────────
 
-exports.createEmployeeUser = async (client, { email, phone, zodu_id, password_hash, user_type = 'employee' }) => {
-  const user_id = uuidv4();
+exports.userExists = async (client, user_id) => {
+  const { rowCount } = await client.query(`SELECT 1 FROM tbl_users WHERE user_id = $1`, [user_id]);
+  return rowCount > 0;
+};
+
+// user_id may be pre-assigned by employee-service (reserved at Add Employee time).
+exports.createEmployeeUser = async (client, { user_id: given_user_id, email, phone, zodu_id, password_hash, user_type = 'employee', login_user = true }) => {
+  const user_id = given_user_id || uuidv4();
   await client.query(
-    `INSERT INTO tbl_users (user_id, email, phone, password_hash, user_type, is_active)
-     VALUES ($1, $2, $3, $4, $5, true)`,
-    [user_id, email || null, phone || null, password_hash, user_type]
+    `INSERT INTO tbl_users (user_id, email, phone, password_hash, user_type, is_active, login_user)
+     VALUES ($1, $2, $3, $4, $5, true, $6)`,
+    [user_id, email || null, phone || null, password_hash, user_type, login_user]
   );
   await client.query(
     `INSERT INTO tbl_user_companies (user_id, zodu_id, is_primary)
@@ -220,4 +226,47 @@ exports.checkPhoneExistsExcluding = async (phone, exclude_user_id) => {
     [phone, exclude_user_id || null]
   );
   return rowCount > 0;
+};
+
+// Login status for a batch of users — drives has_password / has_role flags on the employee list.
+exports.findLoginStatus = async (user_ids, { zodu_id, branch_id }) => {
+  const { rows } = await conn.query(
+    `SELECT
+       u.user_id,
+       (u.password_hash IS NOT NULL AND u.password_hash <> '') AS has_password,
+       u.login_user,
+       EXISTS (
+         SELECT 1 FROM tbl_user_roles ur
+         WHERE ur.user_id = u.user_id AND ur.zodu_id = $2 AND ur.branch_id = $3
+       ) AS has_role
+     FROM tbl_users u
+     WHERE u.user_id = ANY($1::uuid[])`,
+    [user_ids, zodu_id, branch_id]
+  );
+  return rows;
+};
+
+exports.setLoginUser = async (client, user_id, login_user) => {
+  await client.query(
+    `UPDATE tbl_users SET login_user = $1, updated_at = NOW() WHERE user_id = $2`,
+    [login_user, user_id]
+  );
+};
+
+exports.setUserPassword = async (client, user_id, password_hash) => {
+  await client.query(
+    `UPDATE tbl_users SET password_hash = $1, updated_at = NOW() WHERE user_id = $2`,
+    [password_hash, user_id]
+  );
+};
+
+// Sets only the role — keeps access_level / reporting_manager_id of an existing row.
+exports.setUserRole = async (client, { user_id, role_id, zodu_id, branch_id, reporting_manager_id }) => {
+  await client.query(
+    `INSERT INTO tbl_user_roles (user_id, role_id, zodu_id, branch_id, reporting_manager_id, access_level)
+     VALUES ($1, $2, $3, $4, $5, 'Custom')
+     ON CONFLICT (user_id, zodu_id, branch_id)
+     DO UPDATE SET role_id = EXCLUDED.role_id, updated_at = NOW()`,
+    [user_id, role_id, zodu_id, branch_id, reporting_manager_id || null]
+  );
 };

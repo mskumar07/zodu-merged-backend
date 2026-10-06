@@ -11,6 +11,12 @@ function requireParams(res, ...params) {
   return true;
 }
 
+function validDateRange(res, ...dates) {
+  if (dates.every((d) => !d || /^\d{4}-\d{2}-\d{2}$/.test(d))) return true;
+  res.status(400).json({ success: false, error: "from_date/to_date must be YYYY-MM-DD" });
+  return false;
+}
+
 // GET /api/report/sales/summary?zodu_id=&branch_id=&year=
 // Summary cards: total monthly sales, total yearly sales, growth %, top month
 router.get("/sales/summary", async (req, res) => {
@@ -265,6 +271,41 @@ router.get("/expense/datewise", async (req, res) => {
     res.json({ success: true, ...result });
   } catch (err) {
     console.error("[report] getExpenseDatewiseBreakdown:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/report/expense/category-wise/summary?zodu_id=&branch_id=&from_date=&to_date=
+// Summary cards: total_entries, total_expense, total_paid, total_pending for the date range
+router.get("/expense/category-wise/summary", async (req, res) => {
+  const { zodu_id, branch_id, from_date, to_date } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"])) return;
+  if (!validDateRange(res, from_date, to_date)) return;
+
+  try {
+    const data = await service.getExpenseCategoryWiseSummary(zodu_id, branch_id, from_date, to_date);
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error("[report] getExpenseCategoryWiseSummary:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/report/expense/category-wise?zodu_id=&branch_id=&from_date=&to_date=&page=&limit=
+// Paginated category-wise expense breakdown (category type 'E'), one row per category
+router.get("/expense/category-wise", async (req, res) => {
+  const { zodu_id, branch_id, from_date, to_date } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"])) return;
+  if (!validDateRange(res, from_date, to_date)) return;
+
+  const page  = Math.max(parseInt(req.query.page)  || 1, 1);
+  const limit = Math.min(Math.max(parseInt(req.query.limit) || 10, 1), 100);
+
+  try {
+    const result = await service.getExpenseCategoryWise(zodu_id, branch_id, from_date, to_date, page, limit);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error("[report] getExpenseCategoryWise:", err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
