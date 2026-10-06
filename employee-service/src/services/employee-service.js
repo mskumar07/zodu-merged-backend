@@ -14,34 +14,18 @@ exports.createEmployee = async (data, created_by) => {
 
     const employee_id   = uuidv4();
     const employee_code = await repo.generateEmployeeCode(client, data.zodu_id, data.branch_id);
-    const is_first_employee = employee_code === 'EMP001';
 
-    // 1. Create login user in auth-service (blocking)
-    let user_id;
-    try {
-      const { data: authRes } = await axios.post(
-        `${AUTH_SERVICE_URL}/internal/employee/create-user`,
-        {
-          email: data.email, phone: data.phone,
-          zodu_id: data.zodu_id, branch_id: data.branch_id,
-          role_id: data.role_id,
-          reporting_manager_id: data.reporting_manager_id || null,
-          password: data.password || null,
-          is_first_employee,
-        }
-      );
-      user_id = authRes.user_id;
-      if (!user_id) throw new Error('auth-service did not return user_id');
-    } catch (err) {
-      throw new Error(err.response?.data?.error || err.message);
-    }
+    // Employee-service only: no tbl_users row is created here. A user_id is
+    // reserved on the employee; the auth-service creates the login user with
+    // this same id when "Set User" (PUT /:id/login-details) is first called.
+    const user_id = uuidv4();
 
-    // 2. Insert employee
+    // 1. Insert employee
     const employee = await repo.createEmployee(client, {
       ...data, employee_id, employee_code, user_id, created_by,
     });
 
-    // 3. Emergency contact
+    // 2. Emergency contact
     if (data.emergency_contact_name && data.emergency_mobile) {
       await repo.upsertEmergencyContact(client, {
         employee_id, zodu_id: data.zodu_id, branch_id: data.branch_id,
@@ -53,7 +37,7 @@ exports.createEmployee = async (data, created_by) => {
 
     await client.query('COMMIT');
 
-    // 4. Salary in payroll-service (non-blocking)
+    // 3. Salary in payroll-service (non-blocking)
     if (data.basic_salary != null) {
       axios.post(`${PAYROLL_SERVICE_URL}/internal/salary/create`, {
         employee_id, user_id,
@@ -75,6 +59,25 @@ exports.createEmployee = async (data, created_by) => {
   }
 };
 
+// ── LOGIN STATUS (auth-service) ──────────────────────────────────────────────
+// Returns { [user_id]: { has_password, has_role } }. If auth-service is down the
+// map is empty and callers report null ("unknown") rather than a wrong false.
+
+async function fetchLoginStatus(user_ids, { zodu_id, branch_id }) {
+  const ids = [...new Set(user_ids.filter(Boolean))];
+  if (!ids.length) return {};
+  try {
+    const { data } = await axios.post(
+      `${AUTH_SERVICE_URL}/internal/employee/login-status`,
+      { user_ids: ids, zodu_id, branch_id }
+    );
+    return data.data || {};
+  } catch (err) {
+    console.error('[auth] login-status failed:', err.message);
+    return {};
+  }
+}
+
 // ── LIST ──────────────────────────────────────────────────────────────────────
 
 exports.getEmployees = async ({ zodu_id, branch_id, status, page = 1, limit = 10, search }) => {
@@ -86,9 +89,17 @@ exports.getEmployees = async ({ zodu_id, branch_id, status, page = 1, limit = 10
     repo.countAll({ zodu_id, branch_id, status, search }),
   ]);
 
+  const loginStatus = await fetchLoginStatus(rows.map((r) => r.user_id), { zodu_id, branch_id });
+  const data = rows.map(({ user_id, ...emp }) => ({
+    ...emp,
+    has_password: loginStatus[user_id]?.has_password ?? null,
+    has_role:     loginStatus[user_id]?.has_role     ?? null,
+    login_user:   loginStatus[user_id]?.login_user   ?? null,
+  }));
+
   return {
     success: true,
-    data: rows,
+    data,
     pagination: { total, page: +page, limit: parsedLimit, pages: Math.ceil(total / parsedLimit) },
   };
 };
@@ -99,19 +110,68 @@ exports.getEmployeeById = async (employee_id, { zodu_id, branch_id }) => {
   const employee = await repo.findById(employee_id, { zodu_id, branch_id });
   if (!employee) return null;
 
-  const [docsResult, authResult, salaryResult] = await Promise.allSettled([
-    repo.findDocuments(employee_id),
-    axios.get(`${AUTH_SERVICE_URL}/internal/employee/${employee.user_id}/role`),
-    axios.get(`${PAYROLL_SERVICE_URL}/internal/salary/${employee_id}`),
+  const [[docsResult, authResult, salaryResult], loginStatus] = await Promise.all([
+    Promise.allSettled([
+      repo.findDocuments(employee_id),
+      axios.get(`${AUTH_SERVICE_URL}/internal/employee/${employee.user_id}/role`),
+      axios.get(`${PAYROLL_SERVICE_URL}/internal/salary/${employee_id}`),
+    ]),
+    fetchLoginStatus([employee.user_id], { zodu_id, branch_id }),
   ]);
+  const ls = loginStatus[employee.user_id];
 
   return {
     success: true,
     data: {
       ...employee,
+      has_password: ls?.has_password ?? null,
+      has_role:     ls?.has_role     ?? null,
+      login_user:   ls?.login_user   ?? null,
       documents: docsResult.status  === 'fulfilled' ? docsResult.value              : [],
       role_info: authResult.status   === 'fulfilled' ? authResult.value.data.data   : null,
       salary:    salaryResult.status === 'fulfilled' ? salaryResult.value.data.data : null,
+    },
+  };
+};
+
+// ── SET LOGIN DETAILS (role / password) ──────────────────────────────────────
+// Used by the "Set User / Login Details" modal. Sets only what is sent. The
+// employee already holds a reserved user_id; on the first call the auth-service
+// creates the tbl_users row with that id (from the employee's email / phone),
+// plus the company link and role. Later calls only update role / password.
+
+exports.setLoginDetails = async (employee_id, { zodu_id, branch_id, role_id, password, login_user }) => {
+  const employee = await repo.findById(employee_id, { zodu_id, branch_id });
+  if (!employee) throw new Error('Employee not found');
+
+  try {
+    await axios.put(
+      `${AUTH_SERVICE_URL}/internal/employee/login-details`,
+      {
+        user_id: employee.user_id,
+        zodu_id, branch_id, role_id, password, login_user,
+        reporting_manager_id: employee.reporting_manager_id || null,
+        email: employee.email || null,
+        phone: employee.phone || null,
+        is_first_employee: employee.employee_code === 'EMP001',
+      }
+    );
+  } catch (err) {
+    const code = err.response?.status;
+    const e = new Error(err.response?.data?.error || 'Failed to update login details');
+    e.status = [400, 404, 409].includes(code) ? code : 500;
+    throw e;
+  }
+
+  const status = (await fetchLoginStatus([employee.user_id], { zodu_id, branch_id }))[employee.user_id];
+  return {
+    success: true,
+    data: {
+      employee_id,
+      user_id:      employee.user_id,
+      has_password: status?.has_password ?? null,
+      has_role:     status?.has_role     ?? null,
+      login_user:   status?.login_user   ?? null,
     },
   };
 };
@@ -139,12 +199,12 @@ exports.updateEmployee = async (employee_id, data, updated_by) => {
       if (dupCheck.phone_taken) throw new Error('Phone already used by another employee');
     }
 
-    // Sync email, phone, password to tbl_users in auth-service (blocking)
-    if (emailToCheck || phoneToCheck || data.password) {
+    // Sync email / phone to tbl_users (no-op until Set User has created the login)
+    if (emailToCheck || phoneToCheck) {
       try {
         await axios.put(
           `${AUTH_SERVICE_URL}/internal/employee/${current.user_id}/update-user`,
-          { email: data.email, phone: data.phone, password: data.password }
+          { email: data.email, phone: data.phone }
         );
       } catch (err) {
         throw new Error(err.response?.data?.error || 'Failed to update user credentials');
@@ -154,7 +214,7 @@ exports.updateEmployee = async (employee_id, data, updated_by) => {
     const updated = await repo.updateEmployee(client, employee_id, {
       ...data, updated_by,
     });
-    // null means no updatable fields were sent (e.g. only password) — use current
+    // null means no updatable employee fields were sent (e.g. only salary fields) — use current
     const result = updated || current;
 
     if (data.emergency_contact_name !== undefined || data.emergency_mobile !== undefined || data.emergency_relationship !== undefined) {
@@ -167,14 +227,6 @@ exports.updateEmployee = async (employee_id, data, updated_by) => {
     }
 
     await client.query('COMMIT');
-
-    // Sync role to tbl_user_roles in auth-service (non-blocking)
-    if (data.role_id) {
-      axios.put(`${AUTH_SERVICE_URL}/internal/employee/${result.user_id}/role`, {
-        role_id: data.role_id,
-        zodu_id: data.zodu_id, branch_id: data.branch_id,
-      }).catch(err => console.error('[auth] role update failed:', err.message));
-    }
 
     // Sync salary — only send fields actually present in request
     const salaryFields = ['basic_salary','allowances','payment_type','bank_name','ifsc_code','bank_account_number'];

@@ -137,9 +137,9 @@ exports.createEmployeeUser = async ({ email, phone, zodu_id, branch_id, role_id,
     const phoneExists = await repo.checkPhoneExists(client, phone);
     if (phoneExists) throw new Error('Phone already registered');
 
-    const salt          = await bcrypt.genSalt(10);
-    const rawPassword   = password || `${phone.slice(-4)}@Zodu`;
-    const password_hash = await bcrypt.hash(rawPassword, salt);
+    // tbl_users.password_hash is NOT NULL — a login cannot be created without a password.
+    if (!password) throw new Error('Password is required to create the login');
+    const password_hash = await bcrypt.hash(password, await bcrypt.genSalt(10));
 
     const user_type = is_first_employee ? 'super_admin' : 'employee';
     const id = await repo.createEmployeeUser(client, { email, phone, zodu_id, password_hash, user_type });
@@ -212,4 +212,58 @@ exports.checkDuplicate = async ({ email, phone, exclude_user_id }) => {
   }
 
   return result;
+};
+
+// ── INTERNAL — login status (has_password / has_role) for many users ─────────
+
+exports.getLoginStatus = async ({ user_ids, zodu_id, branch_id }) => {
+  const rows = await repo.findLoginStatus(user_ids, { zodu_id, branch_id });
+  // An employee whose login has not been set up yet has no tbl_users row → false / false.
+  const data = {};
+  for (const id of user_ids) data[id] = { has_password: false, has_role: false, login_user: false };
+  for (const r of rows) data[r.user_id] = { has_password: r.has_password, has_role: r.has_role, login_user: r.login_user };
+  return { success: true, data };
+};
+
+// ── INTERNAL — set role and/or password (Set User / Login Details) ───────────
+
+exports.setEmployeeLogin = async ({ user_id, role_id, password, login_user, zodu_id, branch_id, reporting_manager_id, email, phone, is_first_employee }) => {
+  await withTransaction(async (client) => {
+    // Serialize concurrent Set User calls for the same employee: the second one
+    // waits here, then sees the user already exists and only updates.
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`login:${user_id}`]);
+
+    if (role_id) {
+      const role = await repo.findRoleById(role_id, { zodu_id, branch_id });
+      if (!role) throw new Error('Role not found');
+    }
+
+    const password_hash = password ? await bcrypt.hash(password, await bcrypt.genSalt(10)) : null;
+
+    if (!(await repo.userExists(client, user_id))) {
+      // First time this employee gets a login → create the tbl_users row (+ company link) now.
+      // password_hash is NOT NULL, so the password must come with the first call.
+      if (!password) throw new Error('Password is required to create the login');
+      if (!phone) throw new Error('Employee phone is required to create the login');
+
+      // Serialize check-then-insert for the same phone across different employees.
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`phone:${phone}`]);
+      if (email && await repo.checkEmailExists(client, email)) throw new Error('Email already registered');
+      if (await repo.checkPhoneExists(client, phone))          throw new Error('Phone already registered');
+
+      await repo.createEmployeeUser(client, {
+        user_id, email, phone, zodu_id, password_hash,
+        user_type: is_first_employee ? 'super_admin' : 'employee',
+        login_user: login_user ?? true,
+      });
+    } else {
+      if (password_hash)          await repo.setUserPassword(client, user_id, password_hash);
+      if (login_user !== undefined) await repo.setLoginUser(client, user_id, login_user);
+    }
+
+    if (role_id) {
+      await repo.setUserRole(client, { user_id, role_id, zodu_id, branch_id, reporting_manager_id });
+    }
+  });
+  return { success: true, user_id };
 };

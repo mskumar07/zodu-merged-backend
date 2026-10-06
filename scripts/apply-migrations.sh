@@ -191,6 +191,9 @@ apply "$AUTH_DB" auth-service/migrations/invoice_settings_quotation_proforma_ter
 # this column, so an un-migrated database fails every company create.
 apply "$AUTH_DB" auth-service/migrations/business_company_logo_url.sql
 
+# auth-service — tbl_users.login_user, written by the employee "Set User" API.
+apply "$AUTH_DB" auth-service/migrations/tbl_users_login_user.sql
+
 # retail-service / restaurant-service — item description
 apply "$RETAIL_DB"     retail-service/migrations/item_description.sql
 apply "$RESTAURANT_DB" restaurant-service/migrations/item_description.sql
@@ -236,6 +239,14 @@ apply "$RESTAURANT_DB" restaurant-service/migrations/purchase_expense_id_tenant_
 # Stock Check off means "sell anyway", so a sale may take stock below zero.
 # chk_stock_non_negative rejected that UPDATE and failed the whole sale.
 apply "$RETAIL_DB"     retail-service/migrations/inventory_allow_negative_stock.sql
+
+
+# retail-service / restaurant-service — covering indexes for the expense
+# reports (date-wise, category-wise). CREATE INDEX CONCURRENTLY: psql -f runs
+# each statement in autocommit (no wrapping transaction), which CONCURRENTLY
+# requires — do not add --single-transaction to run_sql.
+apply "$RETAIL_DB"     retail-service/migrations/expense_report_indexes.sql
+apply "$RESTAURANT_DB" restaurant-service/migrations/expense_report_indexes.sql
 
 # fn_purge_branch(zodu_id, branch_id) per database — hard-deletes every row
 # scoped to one branch, called by auth-service's delete-branch orchestrator

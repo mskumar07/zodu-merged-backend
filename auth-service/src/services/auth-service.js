@@ -241,6 +241,7 @@ async function AccountLogin(userInputs, meta = {}) {
       email:         user.email,
       phone:         user.phone,
       user_type: user.user_type,
+      login_user: user.login_user,
       reporting_manager_id: employeeInfo?.reporting_manager_id ?? null,
       employee_id:   employeeInfo?.employee_id   ?? null,
       employee_code: employeeInfo?.employee_code ?? null,

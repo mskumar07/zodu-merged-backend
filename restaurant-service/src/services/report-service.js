@@ -437,6 +437,48 @@ async function getExpenseDatewiseBreakdown(zodu_id, branch_id, from_date, to_dat
   };
 }
 
+async function getExpenseCategoryWiseSummary(zodu_id, branch_id, from_date, to_date) {
+  const defaults = getDefaultDateRange();
+  const from     = from_date || defaults.from;
+  const to       = to_date   || defaults.to;
+
+  const raw = await repo.getExpenseCategoryWiseSummary(zodu_id, branch_id, from, to);
+
+  return {
+    from_date:     from,
+    to_date:       to,
+    total_entries: parseInt(raw?.total_entries  || 0),
+    total_expense: parseFloat(raw?.total_expense || 0),
+    total_paid:    parseFloat(raw?.total_paid    || 0),
+    total_pending: parseFloat(raw?.total_pending || 0),
+  };
+}
+
+async function getExpenseCategoryWise(zodu_id, branch_id, from_date, to_date, page, limit) {
+  const defaults = getDefaultDateRange();
+  const from     = from_date || defaults.from;
+  const to       = to_date   || defaults.to;
+
+  const { page: pg, limit: lmt, offset } = getPagination({ page, limit });
+  const { rows, total } = await repo.getExpenseCategoryWise(zodu_id, branch_id, from, to, lmt, offset);
+
+  const data = rows.map((r) => ({
+    category_id:    r.category_id,
+    category_name:  r.category_name,
+    total_entries:  r.total_entries,
+    total_expense:  parseFloat(r.total_expense),
+    total_paid:     parseFloat(r.total_paid),
+    total_pending:  parseFloat(r.total_pending),
+  }));
+
+  return {
+    from_date: from,
+    to_date:   to,
+    data,
+    pagination: getMeta({ page: pg, limit: lmt, total }),
+  };
+}
+
 // ── Profit Calculation ────────────────────────────────────────
 async function getProfitByYear(zodu_id, branch_id, year) {
   const currentYear = new Date().getFullYear();
@@ -521,6 +563,8 @@ module.exports = {
   getExpenseMonthlyBreakdown,
   getExpenseDatewiseSummary,
   getExpenseDatewiseBreakdown,
+  getExpenseCategoryWiseSummary,
+  getExpenseCategoryWise,
   getProfitByYear,
   getProfitYearwise,
   getProfitActiveYears,
