@@ -63,20 +63,25 @@ exports.createEmployee = async (data, created_by) => {
 // Returns { [user_id]: { has_password, has_role } }. If auth-service is down the
 // map is empty and callers report null ("unknown") rather than a wrong false.
 
-async function fetchLoginStatus(user_ids, { zodu_id, branch_id }) {
+// Full login-status response: { data: {[user_id]: flags}, login_user_count }.
+// with_count asks auth-service to also count the branch's login_user = true users
+// (the list's pagination needs it; detail/set-login callers don't).
+async function callLoginStatus(user_ids, { zodu_id, branch_id }, with_count = false) {
   const ids = [...new Set(user_ids.filter(Boolean))];
-  if (!ids.length) return {};
+  if (!ids.length && !with_count) return {};
   try {
     const { data } = await axios.post(
       `${AUTH_SERVICE_URL}/internal/employee/login-status`,
-      { user_ids: ids, zodu_id, branch_id }
+      { user_ids: ids, zodu_id, branch_id, with_count }
     );
-    return data.data || {};
+    return data;
   } catch (err) {
     console.error('[auth] login-status failed:', err.message);
     return {};
   }
 }
+
+const fetchLoginStatus = async (user_ids, scope) => (await callLoginStatus(user_ids, scope)).data || {};
 
 // ── LIST ──────────────────────────────────────────────────────────────────────
 
@@ -89,7 +94,9 @@ exports.getEmployees = async ({ zodu_id, branch_id, status, page = 1, limit = 10
     repo.countAll({ zodu_id, branch_id, status, search }),
   ]);
 
-  const loginStatus = await fetchLoginStatus(rows.map((r) => r.user_id), { zodu_id, branch_id });
+  // login_user_count is null (unknown) if auth-service is unreachable.
+  const { data: loginStatus = {}, login_user_count = null } =
+    await callLoginStatus(rows.map((r) => r.user_id), { zodu_id, branch_id }, true);
   const data = rows.map(({ user_id, ...emp }) => ({
     ...emp,
     has_password: loginStatus[user_id]?.has_password ?? null,
@@ -100,7 +107,7 @@ exports.getEmployees = async ({ zodu_id, branch_id, status, page = 1, limit = 10
   return {
     success: true,
     data,
-    pagination: { total, page: +page, limit: parsedLimit, pages: Math.ceil(total / parsedLimit) },
+    pagination: { total, page: +page, limit: parsedLimit, pages: Math.ceil(total / parsedLimit), login_user_count },
   };
 };
 
@@ -261,11 +268,12 @@ exports.updateEmployee = async (employee_id, data, updated_by) => {
 
 // ── DELETE ────────────────────────────────────────────────────────────────────
 
-exports.deleteEmployee = async (employee_id, { zodu_id, branch_id }) => {
+exports.deleteEmployee = async (employee_id, { zodu_id, branch_id, status }) => {
   const employee = await repo.findById(employee_id, { zodu_id, branch_id });
+  console.log('Deleting employee:', employee_id, 'zodu_id:', zodu_id, 'branch_id:', branch_id, 'status:', status);
   if (!employee) throw new Error('Employee not found');
 
-  await repo.softDelete(employee_id, { zodu_id, branch_id });
+  await repo.softDelete(employee_id, { zodu_id, branch_id, status });
 
   axios.put(`${AUTH_SERVICE_URL}/internal/employee/${employee.user_id}/deactivate`)
     .catch(err => console.error('[auth] deactivate failed:', err.message));

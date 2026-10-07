@@ -357,7 +357,8 @@ router.get('/api/settings/:zodu_id/:branch_id', ValidateSignature, async (req, r
   }
 });
 
-// ── GET /api/invoice-settings/:zodu_id/:branch_id ─────────────────────────────
+// ── GET /api/invoice-settings/:zodu_id/:branch_id?document_type=invoice|quotation|proforma
+// document_type defaults to 'invoice'; quotation/proforma are Retail-only (400 otherwise).
 router.get('/api/invoice-settings/:zodu_id/:branch_id', ValidateSignature, async (req, res) => {
   try {
     const { zodu_id, branch_id } = req.params;
@@ -365,8 +366,9 @@ router.get('/api/invoice-settings/:zodu_id/:branch_id', ValidateSignature, async
       user_id: req.user.user_id,
       zodu_id,
       branch_id,
+      document_type: req.query.document_type,
     });
-    if (data.error) return res.status(400).json(data);
+    if (data.error || data.data?.error) return res.status(400).json(data);
     return res.status(STATUS_CODES.OK).json(data);
   } catch (error) {
     logger.error(error);
@@ -382,14 +384,15 @@ router.put('/api/invoice-settings/:zodu_id/:branch_id', ValidateSignature, async
       zodu_id: req.params.zodu_id,
       branch_id: req.params.branch_id,
     });
-    console.log("input",input,errors);
     if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
 
+    // `document_type` is in the body (validated above) and is passed through
+    // with the rest of `input`.
     const data = await authService.EditInvoiceSettings({
       user_id: req.user.user_id,
       ...input,
     });
-    if (data.error) return res.status(400).json(data);
+    if (data.error || data.data?.error) return res.status(400).json(data);
     return res.status(STATUS_CODES.OK).json(data);
   } catch (error) {
     logger.error(error);
@@ -455,6 +458,7 @@ router.post(
         zodu_id,
         branch_id,
         file: req.file,
+        document_type: req.query.document_type,
       });
       if (data.error || data.data?.error) return res.status(400).json(data);
       return res.status(STATUS_CODES.OK).json(data);
@@ -473,6 +477,7 @@ router.delete('/api/invoice-settings/:zodu_id/:branch_id/signature', ValidateSig
       user_id: req.user.user_id,
       zodu_id,
       branch_id,
+      document_type: req.query.document_type,
     });
     if (data.error || data.data?.error) return res.status(400).json(data);
     return res.status(STATUS_CODES.OK).json(data);
@@ -525,6 +530,7 @@ for (const { path, kind, field, label, maxMb } of INVOICE_IMAGE_ROUTES) {
         zodu_id,
         branch_id,
         file: req.file,
+        document_type: req.query.document_type,
       });
       if (data.error || data.data?.error) return res.status(400).json(data);
       return res.status(STATUS_CODES.OK).json(data);
@@ -542,6 +548,7 @@ for (const { path, kind, field, label, maxMb } of INVOICE_IMAGE_ROUTES) {
         user_id: req.user.user_id,
         zodu_id,
         branch_id,
+        document_type: req.query.document_type,
       });
       if (data.error || data.data?.error) return res.status(400).json(data);
       return res.status(STATUS_CODES.OK).json(data);

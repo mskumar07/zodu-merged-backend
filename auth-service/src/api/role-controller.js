@@ -155,14 +155,16 @@ router.put('/internal/employee/:user_id/update-user', async (req, res) => {
 });
 
 // POST /internal/employee/login-status
-// Body: { user_ids: [uuid], zodu_id, branch_id } → { data: { [user_id]: { has_password, has_role } } }
+// Body: { user_ids: [uuid], zodu_id, branch_id, with_count? }
+// → { data: { [user_id]: { has_password, has_role, login_user } }, login_user_count? }
+// login_user_count (only when with_count) = users with login_user = true in that company + branch.
 router.post('/internal/employee/login-status', async (req, res) => {
   try {
-    const { user_ids, zodu_id, branch_id } = req.body;
+    const { user_ids, zodu_id, branch_id, with_count } = req.body;
     if (!Array.isArray(user_ids) || !zodu_id || !branch_id) {
       return res.status(400).json({ success: false, error: 'user_ids[], zodu_id and branch_id are required' });
     }
-    const result = await roleService.getLoginStatus({ user_ids, zodu_id, branch_id });
+    const result = await roleService.getLoginStatus({ user_ids, zodu_id, branch_id, with_count: with_count === true });
     return res.status(200).json(result);
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
@@ -187,6 +189,7 @@ router.put('/internal/employee/login-details', async (req, res) => {
 
 router.put('/internal/employee/:user_id/deactivate', async (req, res) => {
   try {
+    console.log('Deactivating employee user:', req.params.user_id);
     const result = await roleService.deactivateEmployee(req.params.user_id);
     return res.status(result.success ? 200 : 400).json(result);
   } catch (err) {

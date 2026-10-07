@@ -168,8 +168,9 @@ exports.findEmployeeRole = async (user_id) => {
 };
 
 exports.deactivateEmployeeUser = async (user_id) => {
+  console.log('Deactivating employee user in auth-service repo:', user_id);
   await conn.query(
-    `UPDATE tbl_users SET is_active = false, updated_at = NOW() WHERE user_id = $1`,
+    `UPDATE tbl_users SET login_user = false, updated_at = NOW() WHERE user_id = $1`,
     [user_id]
   );
 };
@@ -244,6 +245,23 @@ exports.findLoginStatus = async (user_ids, { zodu_id, branch_id }) => {
     [user_ids, zodu_id, branch_id]
   );
   return rows;
+};
+
+// Users with login enabled that hold a role in this company + branch — one
+// indexed count, independent of the employee list's page/status/search filters.
+// A role row with branch_id NULL is company-wide (the owner/admin created at
+// signup), so it applies to every branch and is counted too.
+exports.countLoginUsers = async ({ zodu_id, branch_id }) => {
+  const { rows } = await conn.query(
+    `SELECT COUNT(DISTINCT u.user_id)::int AS count
+     FROM tbl_user_roles ur
+     JOIN tbl_users u ON u.user_id = ur.user_id
+     WHERE ur.zodu_id = $1
+       AND (ur.branch_id = $2 OR ur.branch_id IS NULL)
+       AND u.login_user = true`,
+    [zodu_id, branch_id]
+  );
+  return rows[0].count;
 };
 
 exports.setLoginUser = async (client, user_id, login_user) => {
