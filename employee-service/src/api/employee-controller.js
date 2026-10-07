@@ -91,15 +91,16 @@ router.put('/:id/login-details', async (req, res) => {
   }
 });
 
-// ── DELETE  DELETE /api/employees/:id ────────────────────────────────────────
-// Body: { zodu_id, branch_id }
-router.delete('/:id', async (req, res) => {
+// ── PUT  PUT /api/employees/:id ────────────────────────────────────────
+// Body: { zodu_id, branch_id, status }
+router.put('/active-inactive/:id', async (req, res) => {
   try {
-    const { zodu_id, branch_id } = req.body;
+    const { zodu_id, branch_id, status } = req.body;
     if (!zodu_id)   return res.status(400).json({ success: false, error: 'zodu_id is required' });
     if (!branch_id) return res.status(400).json({ success: false, error: 'branch_id is required' });
-
-    const result = await service.deleteEmployee(req.params.id, { zodu_id, branch_id });
+    if (!status) return res.status(400).json({ success: false, error: 'status is required' });
+    
+    const result = await service.deleteEmployee(req.params.id, { zodu_id, branch_id, status });
     return res.status(result.success ? 200 : 400).json(result);
   } catch (err) {
     const status = err.message === 'Employee not found' ? 404 : 500;

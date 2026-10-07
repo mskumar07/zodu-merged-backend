@@ -716,7 +716,22 @@ async function DeleteCompany({ zodu_id, user_id }) {
 
 // ── Invoice Settings ──────────────────────────────────────────────────────────
 
-async function GetInvoiceSettings({ user_id, zodu_id, branch_id }) {
+// Validates the requested document type. Only Retail companies have
+// quotation/proforma rows; anything else asking for them is a client error (400),
+// never a silently-created row. The tbl_business lookup only runs for non-invoice
+// types, so the common invoice path costs nothing extra.
+async function resolveInvoiceDocType(zodu_id, raw) {
+  const document_type = String(raw ?? 'invoice').trim().toLowerCase();
+  if (!businessRepo.INVOICE_DOC_TYPES.includes(document_type)) {
+    return { error: `document_type must be one of: ${businessRepo.INVOICE_DOC_TYPES.join(', ')}` };
+  }
+  if (document_type !== 'invoice' && !(await businessRepo.isRetailCompany(zodu_id))) {
+    return { error: `document_type '${document_type}' is only available for Retail companies` };
+  }
+  return { document_type };
+}
+
+async function GetInvoiceSettings({ user_id, zodu_id, branch_id, document_type: rawType }) {
   const userCompanies = await repository.getUserCompanies({ user_id });
   const hasAccess = userCompanies.some((company) => company.zodu_id === zodu_id);
 
@@ -724,7 +739,16 @@ async function GetInvoiceSettings({ user_id, zodu_id, branch_id }) {
     return FormateData({ error: 'You do not have access to view settings for this company' });
   }
 
-  const settings = await businessRepo.getInvoiceSettings(zodu_id, branch_id);
+  const { document_type, error } = await resolveInvoiceDocType(zodu_id, rawType);
+  if (error) return FormateData({ error });
+
+  let settings = await businessRepo.getInvoiceSettings(zodu_id, branch_id, document_type);
+  // Retail branch created before per-document-type settings: build the missing
+  // quotation/proforma row from defaults. Invoice stays strict — a missing
+  // invoice row still means the branch doesn't exist.
+  if (!settings && document_type !== 'invoice') {
+    settings = await businessRepo.ensureInvoiceSettings(zodu_id, branch_id, document_type);
+  }
   if (!settings) {
     return FormateData({ error: 'Invoice settings not found' });
   }
@@ -738,7 +762,7 @@ async function GetInvoiceSettings({ user_id, zodu_id, branch_id }) {
   return FormateData({ settings });
 }
 
-async function EditInvoiceSettings({ user_id, zodu_id, branch_id, ...fields }) {
+async function EditInvoiceSettings({ user_id, zodu_id, branch_id, document_type: rawType, ...fields }) {
   const userCompanies = await repository.getUserCompanies({ user_id });
   const hasAccess = userCompanies.some((company) => company.zodu_id === zodu_id);
 
@@ -746,8 +770,11 @@ async function EditInvoiceSettings({ user_id, zodu_id, branch_id, ...fields }) {
     return FormateData({ error: 'You do not have access to edit settings for this company' });
   }
 
+  const { document_type, error } = await resolveInvoiceDocType(zodu_id, rawType);
+  if (error) return FormateData({ error });
+
   try {
-    const settings = await businessRepo.upsertInvoiceSettings(zodu_id, branch_id, fields);
+    const settings = await businessRepo.upsertInvoiceSettings(zodu_id, branch_id, fields, document_type);
     return FormateData({ message: 'Invoice settings updated successfully', settings });
   } catch (err) {
     console.error('update invoice settings failed:', err.message);
@@ -812,7 +839,7 @@ const INVOICE_IMAGES = {
   },
 };
 
-async function UploadInvoiceImage({ kind, user_id, zodu_id, branch_id, file }) {
+async function UploadInvoiceImage({ kind, user_id, zodu_id, branch_id, file, document_type: rawType }) {
   const image = INVOICE_IMAGES[kind];
   const userCompanies = await repository.getUserCompanies({ user_id });
   const hasAccess = userCompanies.some((company) => company.zodu_id === zodu_id);
@@ -821,13 +848,16 @@ async function UploadInvoiceImage({ kind, user_id, zodu_id, branch_id, file }) {
     return FormateData({ error: 'You do not have access to edit settings for this company' });
   }
 
+  const { document_type, error } = await resolveInvoiceDocType(zodu_id, rawType);
+  if (error) return FormateData({ error });
+
   try {
-    const existing = await businessRepo.getInvoiceSettings(zodu_id, branch_id);
+    const existing = await businessRepo.getInvoiceSettings(zodu_id, branch_id, document_type);
     const { fileUrl } = await image.upload(file, zodu_id, branch_id);
 
     const settings = await businessRepo.upsertInvoiceSettings(zodu_id, branch_id, {
       [image.column]: fileUrl,
-    });
+    }, document_type);
 
     await minio.deleteFile(minio.keyFromUrl(existing?.[image.column]));
 
@@ -839,7 +869,7 @@ async function UploadInvoiceImage({ kind, user_id, zodu_id, branch_id, file }) {
   }
 }
 
-async function DeleteInvoiceImage({ kind, user_id, zodu_id, branch_id }) {
+async function DeleteInvoiceImage({ kind, user_id, zodu_id, branch_id, document_type: rawType }) {
   const image = INVOICE_IMAGES[kind];
   const userCompanies = await repository.getUserCompanies({ user_id });
   const hasAccess = userCompanies.some((company) => company.zodu_id === zodu_id);
@@ -848,12 +878,15 @@ async function DeleteInvoiceImage({ kind, user_id, zodu_id, branch_id }) {
     return FormateData({ error: 'You do not have access to edit settings for this company' });
   }
 
+  const { document_type, error } = await resolveInvoiceDocType(zodu_id, rawType);
+  if (error) return FormateData({ error });
+
   try {
-    const existing = await businessRepo.getInvoiceSettings(zodu_id, branch_id);
+    const existing = await businessRepo.getInvoiceSettings(zodu_id, branch_id, document_type);
 
     const settings = await businessRepo.upsertInvoiceSettings(zodu_id, branch_id, {
       [image.column]: null,
-    });
+    }, document_type);
 
     await minio.deleteFile(minio.keyFromUrl(existing?.[image.column]));
 
@@ -879,13 +912,20 @@ async function GetAllSettings({ user_id, zodu_id, branch_id }) {
     return FormateData({ error: 'You do not have access to view settings for this company' });
   }
 
-  const invoice = await businessRepo.getInvoiceSettings(zodu_id, branch_id);
-  const pos     = await businessRepo.getPosSettings(zodu_id, branch_id);
+  const [invoiceRows, pos] = await Promise.all([
+    businessRepo.getAllInvoiceSettings(zodu_id, branch_id),
+    businessRepo.getPosSettings(zodu_id, branch_id),
+  ]);
+  const byType = Object.fromEntries(invoiceRows.map((row) => [row.document_type, row]));
 
   return FormateData({
     settings: {
-      invoice: invoice || null,
-      pos:     pos     || null,
+      // `invoice` keeps its old shape (the single invoice row); quotation and
+      // proforma rows (Retail only) are exposed alongside it.
+      invoice:   byType.invoice   || null,
+      quotation: byType.quotation || null,
+      proforma:  byType.proforma  || null,
+      pos:       pos              || null,
     },
   });
 }

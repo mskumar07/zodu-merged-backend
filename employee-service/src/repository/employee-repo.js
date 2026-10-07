@@ -202,11 +202,11 @@ exports.updateEmployee = async (client, employee_id, fields) => {
 
 // ── SOFT DELETE ───────────────────────────────────────────────────────────────
 
-exports.softDelete = async (employee_id, { zodu_id, branch_id }) => {
+exports.softDelete = async (employee_id, { zodu_id, branch_id, status }) => {
   const { rowCount } = await db.query(
-    `UPDATE tbl_employees SET status = 'inactive', updated_at = NOW()
+    `UPDATE tbl_employees SET status = $4, updated_at = NOW()
      WHERE employee_id = $1 AND zodu_id = $2 AND branch_id = $3`,
-    [employee_id, zodu_id, branch_id]
+    [employee_id, zodu_id, branch_id, status ]
   );
   return rowCount > 0;
 };

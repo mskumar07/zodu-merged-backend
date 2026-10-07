@@ -1,5 +1,24 @@
 const conn = require('../database/connection');
 
+// Retail companies keep one tbl_invoice_settings row per document type; every
+// other business type (Restaurant) has only the 'invoice' row.
+const INVOICE_DOC_TYPES = ['invoice', 'quotation', 'proforma'];
+exports.INVOICE_DOC_TYPES = INVOICE_DOC_TYPES;
+
+// Seeds a branch's default settings rows in ONE statement — 3 rows for Retail,
+// 1 for anything else. Always yields at least the 'invoice' row, even if the
+// tbl_business lookup finds nothing. Params: $1 zodu_id, $2 branch_id.
+const SEED_INVOICE_SETTINGS_SQL = `
+  INSERT INTO tbl_invoice_settings (zodu_id, branch_id, document_type)
+  SELECT $1::varchar, $2::varchar, t
+  FROM unnest(
+    CASE WHEN EXISTS (SELECT 1 FROM tbl_business WHERE zodu_id = $1::varchar AND lower(type) = 'retail')
+         THEN ARRAY['invoice','quotation','proforma']
+         ELSE ARRAY['invoice']
+    END
+  ) AS t
+  ON CONFLICT (zodu_id, branch_id, document_type) DO NOTHING`;
+
 // All tables (tbl_business, tbl_branch, tbl_address, tbl_bank_details) live in retail_auth_service DB
 
 // ── COMPANY ───────────────────────────────────────────────────────────────────
@@ -252,12 +271,7 @@ exports.createDefaultBranch = async ({ branch_id, zodu_id, qr_code_id, branch_na
       [branch_id, zodu_id, qr_code_id || null, branch_name, branch_mobile_no || null, branch_mail_id || null]
     );
 
-    await client.query(
-      `INSERT INTO tbl_invoice_settings (zodu_id, branch_id)
-       VALUES ($1, $2)
-       ON CONFLICT (zodu_id, branch_id) DO NOTHING`,
-      [zodu_id, branch_id]
-    );
+    await client.query(SEED_INVOICE_SETTINGS_SQL, [zodu_id, branch_id]);
 
     await client.query(
       `INSERT INTO tbl_pos_settings (zodu_id, branch_id)
@@ -373,12 +387,7 @@ exports.createBranch = async (data) => {
     );
 
     // ── Seed default invoice settings for this branch ──────────────────────
-    await client.query(
-      `INSERT INTO tbl_invoice_settings (zodu_id, branch_id)
-       VALUES ($1, $2)
-       ON CONFLICT (zodu_id, branch_id) DO NOTHING`,
-      [data.zodu_id, data.branch_id]
-    );
+    await client.query(SEED_INVOICE_SETTINGS_SQL, [data.zodu_id, data.branch_id]);
 
     // ── Seed default POS settings for this branch ───────────────────────────
     await client.query(
@@ -538,15 +547,47 @@ exports.findMaxBranchId = async (zodu_id) => {
 // endpoint (same "Additional Settings" section) — see upsertInvoiceSettings.
 const POS_FIELDS_SAVED_VIA_INVOICE_SETTINGS = ['pos_screen_type', 'kot_print_enabled'];
 
-exports.getInvoiceSettings = async (zodu_id, branch_id) => {
+exports.getInvoiceSettings = async (zodu_id, branch_id, document_type = 'invoice') => {
   const r = await conn.query(
-    `SELECT * FROM tbl_invoice_settings WHERE zodu_id=$1 AND branch_id=$2`,
-    [zodu_id, branch_id]
+    `SELECT * FROM tbl_invoice_settings WHERE zodu_id=$1 AND branch_id=$2 AND document_type=$3`,
+    [zodu_id, branch_id, document_type]
   );
   return r.rows[0] || null;
 };
 
-exports.upsertInvoiceSettings = async (zodu_id, branch_id, fields) => {
+// Every document-type row of a branch (Retail: up to 3, others: 1).
+exports.getAllInvoiceSettings = async (zodu_id, branch_id) => {
+  const r = await conn.query(
+    `SELECT * FROM tbl_invoice_settings WHERE zodu_id=$1 AND branch_id=$2 ORDER BY id`,
+    [zodu_id, branch_id]
+  );
+  return r.rows;
+};
+
+// Row for a Retail branch that predates per-document-type settings has no
+// quotation/proforma row yet — create it from column defaults on first access.
+// ON CONFLICT DO NOTHING makes concurrent first-opens safe; the fallback SELECT
+// covers the request that lost the race.
+exports.ensureInvoiceSettings = async (zodu_id, branch_id, document_type) => {
+  const r = await conn.query(
+    `INSERT INTO tbl_invoice_settings (zodu_id, branch_id, document_type)
+     SELECT zodu_id, branch_id, $3::varchar FROM tbl_branch WHERE zodu_id = $1 AND branch_id = $2
+     ON CONFLICT (zodu_id, branch_id, document_type) DO NOTHING
+     RETURNING *`,
+    [zodu_id, branch_id, document_type]
+  );
+  return r.rows[0] || exports.getInvoiceSettings(zodu_id, branch_id, document_type);
+};
+
+exports.isRetailCompany = async (zodu_id) => {
+  const r = await conn.query(
+    `SELECT 1 FROM tbl_business WHERE zodu_id=$1 AND lower(type)='retail'`,
+    [zodu_id]
+  );
+  return r.rowCount > 0;
+};
+
+exports.upsertInvoiceSettings = async (zodu_id, branch_id, fields, document_type = 'invoice') => {
   const allowed = [
     // Invoice numbering
     'invoice_prefix', 'invoice_prefix_enabled', 'invoice_start_number',
@@ -594,18 +635,18 @@ exports.upsertInvoiceSettings = async (zodu_id, branch_id, fields) => {
   };
 
   if (cols.length === 0) {
-    return withForwarded(await exports.getInvoiceSettings(zodu_id, branch_id));
+    return withForwarded(await exports.getInvoiceSettings(zodu_id, branch_id, document_type));
   }
 
-  const insertCols = ['zodu_id', 'branch_id', ...cols];
-  const insertVals = [zodu_id, branch_id, ...cols.map((c) => fields[c])];
+  const insertCols = ['zodu_id', 'branch_id', 'document_type', ...cols];
+  const insertVals = [zodu_id, branch_id, document_type, ...cols.map((c) => fields[c])];
   const placeholders = insertVals.map((_, i) => `$${i + 1}`).join(', ');
   const updateSet = cols.map((c) => `${c} = EXCLUDED.${c}`).join(', ');
 
   const r = await conn.query(
     `INSERT INTO tbl_invoice_settings (${insertCols.join(', ')})
      VALUES (${placeholders})
-     ON CONFLICT (zodu_id, branch_id) DO UPDATE SET ${updateSet}
+     ON CONFLICT (zodu_id, branch_id, document_type) DO UPDATE SET ${updateSet}
      RETURNING *`,
     insertVals
   );

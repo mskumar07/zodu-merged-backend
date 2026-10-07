@@ -187,6 +187,9 @@ apply "$AUTH_DB" auth-service/migrations/pos_settings_show_item_image.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_settings_watermark_receiver_signature.sql
 apply "$AUTH_DB" auth-service/migrations/branch_subscription.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_settings_quotation_proforma_terms.sql
+# One tbl_invoice_settings row per document type (invoice/quotation/proforma) for
+# Retail; the upsert's ON CONFLICT target needs this before the new code serves traffic.
+apply "$AUTH_DB" auth-service/migrations/invoice_settings_document_type.sql
 # auth-service — company logo on tbl_business. The create-company INSERT names
 # this column, so an un-migrated database fails every company create.
 apply "$AUTH_DB" auth-service/migrations/business_company_logo_url.sql

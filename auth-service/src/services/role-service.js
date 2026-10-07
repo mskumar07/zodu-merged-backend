@@ -216,13 +216,18 @@ exports.checkDuplicate = async ({ email, phone, exclude_user_id }) => {
 
 // ── INTERNAL — login status (has_password / has_role) for many users ─────────
 
-exports.getLoginStatus = async ({ user_ids, zodu_id, branch_id }) => {
-  const rows = await repo.findLoginStatus(user_ids, { zodu_id, branch_id });
+exports.getLoginStatus = async ({ user_ids, zodu_id, branch_id, with_count = false }) => {
+  const [rows, login_user_count] = await Promise.all([
+    user_ids.length ? repo.findLoginStatus(user_ids, { zodu_id, branch_id }) : [],
+    with_count ? repo.countLoginUsers({ zodu_id, branch_id }) : undefined,
+  ]);
   // An employee whose login has not been set up yet has no tbl_users row → false / false.
   const data = {};
   for (const id of user_ids) data[id] = { has_password: false, has_role: false, login_user: false };
   for (const r of rows) data[r.user_id] = { has_password: r.has_password, has_role: r.has_role, login_user: r.login_user };
-  return { success: true, data };
+  // login_user_count: users with login_user = true holding a role in this
+  // company + branch — a branch-wide figure, independent of user_ids.
+  return { success: true, data, login_user_count };
 };
 
 // ── INTERNAL — set role and/or password (Set User / Login Details) ───────────

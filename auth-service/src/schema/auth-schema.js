@@ -178,6 +178,11 @@ const schema = {
     zodu_id: joi.string().required(),
     branch_id: joi.string().required(),
 
+    // Which document's settings this request edits. Defaults to 'invoice'
+    // downstream; quotation/proforma are accepted only for Retail companies
+    // (rejected with a 400 in the service, which knows the business type).
+    document_type: joi.string().valid('invoice', 'quotation', 'proforma').insensitive().lowercase(),
+
     // Invoice numbering
     invoice_prefix: joi.string().max(20).allow(null, ''),
     // Lets a branch save a prefix without applying it (toggle off = no
