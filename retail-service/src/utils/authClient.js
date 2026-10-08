@@ -20,6 +20,13 @@ async function call(fn) {
   }
 }
 
+// ── Branch / Company ──────────────────────────────────────────────────────────
+exports.getBranch = (zodu_id, branch_id) =>
+  call(() => client.get(`/branches/${zodu_id}/${branch_id}`));
+
+exports.getCompany = (zodu_id) =>
+  call(() => client.get(`/company/${zodu_id}`));
+
 // ── Invoice Settings ──────────────────────────────────────────────────────────
 exports.getInvoiceSettings = (zodu_id, branch_id) =>
   call(() => client.get(`/invoice-settings/${zodu_id}/${branch_id}`));
