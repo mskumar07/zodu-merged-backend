@@ -790,7 +790,160 @@ async function getExpenseCategoryWise(zodu_id, branch_id, from_date, to_date, li
   return { rows, total: countResult.rows[0]?.total || 0 };
 }
 
+// ── GSTR-1 B2B ────────────────────────────────────────────────
+// B2B = non-cancelled sale invoices (sale_type 'S') of customers that have a GSTIN.
+// IGST / CESS are not supported yet, so they are returned as 0 by the service.
+const GSTR1_B2B_BASE = `
+  WITH inv AS (
+    SELECT
+      s.sale_uuid,
+      s.sale_id                         AS invoice_no,
+      TO_CHAR(s.sale_date, 'YYYY-MM-DD') AS invoice_date,
+      c.cust_name                       AS customer_name,
+      UPPER(TRIM(c.gst))                AS gstin,
+      s.subtotal                        AS taxable_value,
+      COALESCE(t.cgst, 0)               AS cgst,
+      COALESCE(t.sgst, 0)               AS sgst,
+      s.total_amount                    AS total_value
+    FROM tbl_sales s
+    JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid
+    LEFT JOIN LATERAL (
+      SELECT SUM(si.cgst) AS cgst, SUM(si.sgst) AS sgst
+      FROM tbl_sale_items si
+      WHERE si.sale_uuid = s.sale_uuid
+    ) t ON true
+    WHERE s.zodu_id = $1 AND s.branch_id = $2
+      AND s.sale_date BETWEEN $3 AND $4
+      AND s.sale_type = 'S'
+      AND s.cancelled_inv = false
+      AND COALESCE(TRIM(c.gst), '') <> ''
+      AND ($5::text IS NULL OR UPPER(TRIM(c.gst)) = $5)
+      AND ($6::text IS NULL
+           OR s.sale_id ILIKE $6 OR c.cust_name ILIKE $6 OR c.gst ILIKE $6)
+  )`;
+
+async function getGstr1B2BGstins(zodu_id, branch_id, from_date, to_date) {
+  const { rows } = await conn.query(
+    `SELECT UPPER(TRIM(c.gst)) AS gstin, MAX(c.cust_name) AS customer_name
+     FROM tbl_sales s
+     JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid
+     WHERE s.zodu_id = $1 AND s.branch_id = $2
+       AND s.sale_date BETWEEN $3 AND $4
+       AND s.sale_type = 'S' AND s.cancelled_inv = false
+       AND COALESCE(TRIM(c.gst), '') <> ''
+     GROUP BY UPPER(TRIM(c.gst))
+     ORDER BY customer_name`,
+    [zodu_id, branch_id, from_date, to_date]
+  );
+  return rows;
+}
+
+async function getGstr1B2B(zodu_id, branch_id, from_date, to_date, gstin, search, limit, offset) {
+  const params = [zodu_id, branch_id, from_date, to_date, gstin, search];
+
+  const [summaryResult, rowsResult] = await Promise.all([
+    conn.query(
+      `${GSTR1_B2B_BASE}
+       SELECT
+         COUNT(*)::int                     AS total_invoices,
+         COALESCE(SUM(taxable_value), 0)   AS total_taxable_value,
+         COALESCE(SUM(cgst), 0)            AS total_cgst,
+         COALESCE(SUM(sgst), 0)            AS total_sgst,
+         COALESCE(SUM(total_value), 0)     AS total_value
+       FROM inv`,
+      params
+    ),
+    conn.query(
+      `${GSTR1_B2B_BASE}
+       SELECT * FROM inv
+       ORDER BY invoice_date, invoice_no
+       LIMIT $7 OFFSET $8`,
+      [...params, limit, offset]
+    ),
+  ]);
+
+  return { summary: summaryResult.rows[0], rows: rowsResult.rows };
+}
+
+// ── GSTR-1 B2C Large ──────────────────────────────────────────
+// B2C Large = non-cancelled sale invoices to customers WITHOUT a GSTIN, where the
+// place of supply (customer state) differs from the branch state (inter-state) and
+// the invoice value exceeds the threshold. The branch state is passed in by the
+// service (tbl_branch lives in auth-service). Filtering is done first on the
+// lightweight `inv` CTE; per-item CGST/SGST is looked up afterwards (for the page
+// only in the rows query) so we never aggregate tbl_sale_items for discarded rows.
+const GSTR1_B2CL_BASE = `
+  WITH inv AS (
+    SELECT
+      s.sale_uuid,
+      s.sale_id                          AS invoice_no,
+      s.sale_date,
+      c.cust_name                        AS customer_name,
+      c.state                            AS place_of_supply,
+      s.subtotal                         AS taxable_value,
+      s.total_amount                     AS total_value
+    FROM tbl_sales s
+    JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid
+    WHERE s.zodu_id = $1 AND s.branch_id = $2
+      AND s.sale_date BETWEEN $3 AND $4
+      AND s.sale_type = 'S'
+      AND s.cancelled_inv = false
+      AND COALESCE(TRIM(c.gst), '') = ''
+      AND COALESCE(TRIM(c.state), '') <> ''
+      AND LOWER(TRIM(c.state)) <> $5
+      AND s.total_amount > $6
+      AND ($7::text IS NULL OR s.sale_id ILIKE $7 OR c.cust_name ILIKE $7)
+  )`;
+
+async function getGstr1B2CLarge(zodu_id, branch_id, from_date, to_date, branch_state, threshold, search, limit, offset) {
+  const params = [zodu_id, branch_id, from_date, to_date, branch_state, threshold, search];
+
+  const [summaryResult, rowsResult] = await Promise.all([
+    conn.query(
+      `${GSTR1_B2CL_BASE}
+       SELECT
+         COUNT(*)::int                     AS total_invoices,
+         COALESCE(SUM(i.taxable_value), 0) AS total_taxable_value,
+         COALESCE(SUM(t.cgst), 0)          AS total_cgst,
+         COALESCE(SUM(t.sgst), 0)          AS total_sgst,
+         COALESCE(SUM(i.total_value), 0)   AS total_value
+       FROM inv i
+       LEFT JOIN LATERAL (
+         SELECT SUM(si.cgst) AS cgst, SUM(si.sgst) AS sgst
+         FROM tbl_sale_items si WHERE si.sale_uuid = i.sale_uuid
+       ) t ON true`,
+      params
+    ),
+    conn.query(
+      `${GSTR1_B2CL_BASE}
+       SELECT
+         p.invoice_no,
+         TO_CHAR(p.sale_date, 'YYYY-MM-DD') AS invoice_date,
+         p.customer_name, p.place_of_supply,
+         p.taxable_value, p.total_value,
+         COALESCE(t.cgst, 0) AS cgst,
+         COALESCE(t.sgst, 0) AS sgst
+       FROM (
+         SELECT * FROM inv
+         ORDER BY sale_date, invoice_no, sale_uuid
+         LIMIT $8 OFFSET $9
+       ) p
+       LEFT JOIN LATERAL (
+         SELECT SUM(si.cgst) AS cgst, SUM(si.sgst) AS sgst
+         FROM tbl_sale_items si WHERE si.sale_uuid = p.sale_uuid
+       ) t ON true
+       ORDER BY p.sale_date, p.invoice_no, p.sale_uuid`,
+      [...params, limit, offset]
+    ),
+  ]);
+
+  return { summary: summaryResult.rows[0], rows: rowsResult.rows };
+}
+
 module.exports = {
+  getGstr1B2CLarge,
+  getGstr1B2BGstins,
+  getGstr1B2B,
   getSalesSummary,
   getMonthlyBreakdown,
   getHistoricalPerformance,

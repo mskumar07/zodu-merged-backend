@@ -360,4 +360,49 @@ router.get("/profit", async (req, res) => {
   }
 });
 
+// GET /api/report/gst/gstr1/b2b/gstins?zodu_id=&branch_id=&financial_year=2026-27&month=10
+// GSTIN dropdown: distinct customer GSTINs that have B2B invoices in the period
+router.get("/gst/gstr1/b2b/gstins", async (req, res) => {
+  const { zodu_id, branch_id, financial_year, month } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"], [financial_year, "financial_year"])) return;
+
+  try {
+    const data = await service.getGstr1B2BGstins(zodu_id, branch_id, financial_year, month);
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error("[report] getGstr1B2BGstins:", err.message);
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/report/gst/gstr1/b2b?zodu_id=&branch_id=&financial_year=2026-27&month=10&gstin=&search=&page=&limit=
+// Summary cards (full filtered set) + paginated B2B invoice table in one response
+router.get("/gst/gstr1/b2b", async (req, res) => {
+  const { zodu_id, branch_id, financial_year, month, gstin, search, page = 1, limit = 50 } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"], [financial_year, "financial_year"])) return;
+
+  try {
+    const result = await service.getGstr1B2B(zodu_id, branch_id, { financial_year, month, gstin, search, page, limit });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error("[report] getGstr1B2B:", err.message);
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/report/gst/gstr1/b2c-large?zodu_id=&branch_id=&financial_year=2026-27&month=10&search=&page=&limit=
+// Summary cards (full filtered set) + paginated B2C Large invoice table in one response
+router.get("/gst/gstr1/b2c-large", async (req, res) => {
+  const { zodu_id, branch_id, financial_year, month, search, page = 1, limit = 50 } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"], [financial_year, "financial_year"])) return;
+
+  try {
+    const result = await service.getGstr1B2CLarge(zodu_id, branch_id, { financial_year, month, search, page, limit });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error("[report] getGstr1B2CLarge:", err.message);
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
 module.exports = router;

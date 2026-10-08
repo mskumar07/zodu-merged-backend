@@ -1,4 +1,5 @@
 const repo       = require("../repository/report-repo");
+const authClient = require("../utils/authClient");
 const { getPagination, getMeta } = require("../utils/pagination");
 
 async function getSalesSummary(zodu_id, branch_id, year) {
@@ -545,7 +546,158 @@ async function getProfitActiveYears(zodu_id, branch_id) {
   return { active_years: years };
 }
 
+// ── GSTR-1 B2B ───────────────────────────────────────────────
+// Indian FY: "2026-27" = 01-Apr-2026 .. 31-Mar-2027. month (1-12) optional → whole FY.
+function resolveGstPeriod(financial_year, month) {
+  const m = /^(\d{4})-(\d{2})$/.exec(financial_year || "");
+  if (!m) {
+    const err = new Error("financial_year must be like 2026-27");
+    err.status = 400;
+    throw err;
+  }
+  const startYear = parseInt(m[1]);
+  const mon = month ? parseInt(month) : null;
+  if (mon !== null && !(mon >= 1 && mon <= 12)) {
+    const err = new Error("month must be between 1 and 12");
+    err.status = 400;
+    throw err;
+  }
+
+  const pad = (n) => String(n).padStart(2, "0");
+  if (mon === null) {
+    return { from_date: `${startYear}-04-01`, to_date: `${startYear + 1}-03-31` };
+  }
+  const year = mon >= 4 ? startYear : startYear + 1;
+  const lastDay = new Date(year, mon, 0).getDate();
+  return { from_date: `${year}-${pad(mon)}-01`, to_date: `${year}-${pad(mon)}-${lastDay}` };
+}
+
+async function getGstr1B2BGstins(zodu_id, branch_id, financial_year, month) {
+  const { from_date, to_date } = resolveGstPeriod(financial_year, month);
+  const rows = await repo.getGstr1B2BGstins(zodu_id, branch_id, from_date, to_date);
+  return rows.map((r) => ({ gstin: r.gstin, customer_name: r.customer_name }));
+}
+
+async function getGstr1B2B(zodu_id, branch_id, { financial_year, month, gstin, search, page, limit }) {
+  const { from_date, to_date } = resolveGstPeriod(financial_year, month);
+  const { page: pg, limit: lmt, offset } = getPagination({ page, limit });
+
+  const gstinFilter  = gstin && gstin !== "All" ? gstin.trim().toUpperCase() : null;
+  const searchFilter = search && search.trim() ? `%${search.trim()}%` : null;
+
+  const { summary, rows } = await repo.getGstr1B2B(
+    zodu_id, branch_id, from_date, to_date, gstinFilter, searchFilter, lmt, offset
+  );
+
+  const n = (v) => parseFloat(v) || 0;
+  const total = summary.total_invoices;
+
+  return {
+    period: { financial_year, month: month ? parseInt(month) : null, from_date, to_date },
+    summary: {
+      total_invoices:      total,
+      total_taxable_value: n(summary.total_taxable_value),
+      total_igst:          0,
+      total_cgst:          n(summary.total_cgst),
+      total_sgst:          n(summary.total_sgst),
+      total_cess:          0,
+      total_value:         n(summary.total_value),
+    },
+    data: rows.map((r, i) => ({
+      s_no:          offset + i + 1,
+      invoice_no:    r.invoice_no,
+      invoice_date:  r.invoice_date,
+      customer_name: r.customer_name,
+      gstin:         r.gstin,
+      taxable_value: n(r.taxable_value),
+      igst:          0,
+      cgst:          n(r.cgst),
+      sgst:          n(r.sgst),
+      cess:          0,
+      total_value:   n(r.total_value),
+    })),
+    meta: getMeta({ page: pg, limit: lmt, total }),
+  };
+}
+
+// Branch state lives in auth-service. Falls back to the company state when the branch has none.
+async function getBranchState(zodu_id, branch_id) {
+  let state = null;
+  try {
+    const branch = await authClient.getBranch(zodu_id, branch_id);
+    state = branch?.data?.state;
+    console.log(`Branch state for zodu_id=${zodu_id}, branch_id=${branch_id}: ${state}`);
+    if (!state) {
+      const company = await authClient.getCompany(zodu_id);
+      state = company?.data?.state;
+    }
+  } catch (err) {
+    const e = new Error(`Unable to fetch branch details: ${err.message}`);
+    e.status = 502;
+    throw e;
+  }
+
+  if (!state || !state.trim()) {
+    const e = new Error("Branch state is not configured; set it in branch settings to run this report");
+    e.status = 422;
+    throw e;
+  }
+  return state.trim().toLowerCase();
+}
+
+// B2C Large threshold: inter-state invoice value above ₹1,00,000 (GSTR-1 rule from Aug 2024)
+const B2CL_THRESHOLD = 100000;
+
+async function getGstr1B2CLarge(zodu_id, branch_id, { financial_year, month, search, page, limit }) {
+  const { from_date, to_date } = resolveGstPeriod(financial_year, month);
+  const pg     = Math.max(parseInt(page) || 1, 1);
+  const lmt    = Math.min(Math.max(parseInt(limit) || 50, 1), 200);
+  const offset = (pg - 1) * lmt;
+
+  const searchFilter = search && search.trim() ? `%${search.trim()}%` : null;
+
+  const branchState = await getBranchState(zodu_id, branch_id);
+
+  const { summary, rows } = await repo.getGstr1B2CLarge(
+    zodu_id, branch_id, from_date, to_date, branchState, B2CL_THRESHOLD, searchFilter, lmt, offset
+  );
+
+  const n = (v) => parseFloat(v) || 0;
+  const total = summary.total_invoices;
+
+  return {
+    period: { financial_year, month: month ? parseInt(month) : null, from_date, to_date },
+    summary: {
+      total_invoices:      total,
+      total_taxable_value: n(summary.total_taxable_value),
+      total_igst:          0,
+      total_cgst:          n(summary.total_cgst),
+      total_sgst:          n(summary.total_sgst),
+      total_cess:          0,
+      total_value:         n(summary.total_value),
+    },
+    data: rows.map((r, i) => ({
+      s_no:            offset + i + 1,
+      invoice_no:      r.invoice_no,
+      invoice_date:    r.invoice_date,
+      customer_name:   r.customer_name,
+      place_of_supply: r.place_of_supply,
+      invoice_value:   n(r.total_value),
+      taxable_value:   n(r.taxable_value),
+      igst:            0,
+      cgst:            n(r.cgst),
+      sgst:            n(r.sgst),
+      cess:            0,
+      total_value:     n(r.total_value),
+    })),
+    meta: getMeta({ page: pg, limit: lmt, total }),
+  };
+}
+
 module.exports = {
+  getGstr1B2CLarge,
+  getGstr1B2BGstins,
+  getGstr1B2B,
   getSalesSummary,
   getMonthlyBreakdown,
   getHistoricalPerformance,
