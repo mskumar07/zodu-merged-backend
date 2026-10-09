@@ -694,8 +694,102 @@ async function getGstr1B2CLarge(zodu_id, branch_id, { financial_year, month, sea
   };
 }
 
+const B2CS_MAX_INVOICE_VALUE = 250000;
+
+async function getGstr1B2CSmall(zodu_id, branch_id, { financial_year, month, search, page, limit }) {
+  const { from_date, to_date } = resolveGstPeriod(financial_year, month);
+  const pg = Math.max(parseInt(page) || 1, 1);
+  const lmt = Math.min(Math.max(parseInt(limit) || 50, 1), 200);
+  const offset = (pg - 1) * lmt;
+  const searchFilter = search && search.trim() ? `%${search.trim()}%` : null;
+
+  const { summary, rows } = await repo.getGstr1B2CSmall(
+    zodu_id, branch_id, from_date, to_date, B2CS_MAX_INVOICE_VALUE, searchFilter, lmt, offset
+  );
+
+  const n = (v) => parseFloat(v) || 0;
+  const total = summary.total_invoices;
+
+  return {
+    period: { financial_year, month: month ? parseInt(month) : null, from_date, to_date },
+    summary: {
+      total_invoices:      total,
+      total_taxable_value: n(summary.total_taxable_value),
+      total_igst:          0,
+      total_cgst:          n(summary.total_cgst),
+      total_sgst:          n(summary.total_sgst),
+      total_cess:          0,
+      total_value:         n(summary.total_value),
+    },
+    data: rows.map((r, i) => ({
+      s_no:            offset + i + 1,
+      invoice_no:      r.invoice_no,
+      invoice_date:    r.invoice_date,
+      customer_name:   r.customer_name,
+      place_of_supply: r.place_of_supply,
+      invoice_value:   n(r.total_value),
+      taxable_value:   n(r.taxable_value),
+      igst:            0,
+      cgst:            n(r.cgst),
+      sgst:            n(r.sgst),
+      cess:            0,
+      total_value:     n(r.total_value),
+    })),
+    meta: getMeta({ page: pg, limit: lmt, total }),
+  };
+}
+
+function getGstr1NilRated({ financial_year, month, page, limit }) {
+  const { from_date, to_date } = resolveGstPeriod(financial_year, month);
+  const pg = Math.max(parseInt(page) || 1, 1);
+  const lmt = Math.min(Math.max(parseInt(limit) || 50, 1), 200);
+
+  return {
+    period: { financial_year, month: month ? parseInt(month) : null, from_date, to_date },
+    summary: {
+      total_invoices: 0,
+      total_invoice_value: 0,
+    },
+    data: [],
+    meta: getMeta({ page: pg, limit: lmt, total: 0 }),
+  };
+}
+
+async function getGstr1CDNR({ financial_year, month, gstin, search, page, limit }) {
+  const { from_date, to_date } = resolveGstPeriod(financial_year, month);
+  const pg = Math.max(parseInt(page) || 1, 1);
+  const lmt = Math.min(Math.max(parseInt(limit) || 50, 1), 200);
+  const gstinFilter = gstin && gstin !== "All" ? gstin.trim().toUpperCase() || null : null;
+  const searchFilter = search && search.trim() ? `%${search.trim()}%` : null;
+  const offset = (pg - 1) * lmt;
+  const { summary, rows } = await repo.getGstr1CDNR(
+    from_date, to_date, gstinFilter, searchFilter, lmt, offset
+  );
+  const n = (value) => parseFloat(value) || 0;
+  const total = summary.total_notes;
+
+  return {
+    period: { financial_year, month: month ? parseInt(month) : null, from_date, to_date },
+    summary: {
+      total_notes: total,
+      total_credit_note_value: n(summary.total_credit_note_value),
+      total_taxable_value: n(summary.total_taxable_value),
+      total_igst: n(summary.total_igst),
+      total_cgst: n(summary.total_cgst),
+      total_sgst: n(summary.total_sgst),
+      total_cess: n(summary.total_cess),
+      total_note_value: n(summary.total_note_value),
+    },
+    data: rows.map((note, index) => ({ s_no: offset + index + 1, ...note })),
+    meta: getMeta({ page: pg, limit: lmt, total }),
+  };
+}
+
 module.exports = {
   getGstr1B2CLarge,
+  getGstr1B2CSmall,
+  getGstr1NilRated,
+  getGstr1CDNR,
   getGstr1B2BGstins,
   getGstr1B2B,
   getSalesSummary,

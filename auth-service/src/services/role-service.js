@@ -224,7 +224,7 @@ exports.getLoginStatus = async ({ user_ids, zodu_id, branch_id, with_count = fal
   // An employee whose login has not been set up yet has no tbl_users row → false / false.
   const data = {};
   for (const id of user_ids) data[id] = { has_password: false, has_role: false, login_user: false };
-  for (const r of rows) data[r.user_id] = { has_password: r.has_password, has_role: r.has_role, login_user: r.login_user };
+  for (const r of rows) data[r.user_id] = { has_password: r.has_password, has_role: r.has_role, login_user: r.login_user, role_name: r.role_name };
   // login_user_count: users with login_user = true holding a role in this
   // company + branch — a branch-wide figure, independent of user_ids.
   return { success: true, data, login_user_count };

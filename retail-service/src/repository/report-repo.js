@@ -940,8 +940,157 @@ async function getGstr1B2CLarge(zodu_id, branch_id, from_date, to_date, branch_s
   return { summary: summaryResult.rows[0], rows: rowsResult.rows };
 }
 
+// B2C Small = non-cancelled sale invoices to customers without a GSTIN valued at
+// Rs 2,50,000 or less. Tax for detail rows is aggregated only after pagination.
+const GSTR1_B2CS_BASE = `
+  WITH inv AS (
+    SELECT
+      s.sale_uuid,
+      s.sale_id                          AS invoice_no,
+      s.sale_date,
+      c.cust_name                        AS customer_name,
+      c.state                            AS place_of_supply,
+      s.subtotal                         AS taxable_value,
+      s.total_amount                     AS total_value
+    FROM tbl_sales s
+    JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid
+    WHERE s.zodu_id = $1 AND s.branch_id = $2
+      AND s.sale_date BETWEEN $3 AND $4
+      AND s.sale_type = 'S'
+      AND s.cancelled_inv = false
+      AND COALESCE(TRIM(c.gst), '') = ''
+      AND s.total_amount <= $5
+      AND ($6::text IS NULL OR s.sale_id ILIKE $6 OR c.cust_name ILIKE $6)
+  )`;
+
+async function getGstr1B2CSmall(zodu_id, branch_id, from_date, to_date, maxInvoiceValue, search, limit, offset) {
+  const params = [zodu_id, branch_id, from_date, to_date, maxInvoiceValue, search];
+
+  const [summaryResult, rowsResult] = await Promise.all([
+    conn.query(
+      `${GSTR1_B2CS_BASE}
+       SELECT
+         COUNT(*)::int                     AS total_invoices,
+         COALESCE(SUM(i.taxable_value), 0) AS total_taxable_value,
+         COALESCE(SUM(t.cgst), 0)          AS total_cgst,
+         COALESCE(SUM(t.sgst), 0)          AS total_sgst,
+         COALESCE(SUM(i.total_value), 0)   AS total_value
+       FROM inv i
+       LEFT JOIN LATERAL (
+         SELECT SUM(si.cgst) AS cgst, SUM(si.sgst) AS sgst
+         FROM tbl_sale_items si WHERE si.sale_uuid = i.sale_uuid
+       ) t ON true`,
+      params
+    ),
+    conn.query(
+      `${GSTR1_B2CS_BASE}
+       SELECT
+         p.invoice_no,
+         TO_CHAR(p.sale_date, 'YYYY-MM-DD') AS invoice_date,
+         p.customer_name, p.place_of_supply,
+         p.taxable_value, p.total_value,
+         COALESCE(t.cgst, 0) AS cgst,
+         COALESCE(t.sgst, 0) AS sgst
+       FROM (
+         SELECT * FROM inv
+         ORDER BY sale_date, invoice_no, sale_uuid
+         LIMIT $7 OFFSET $8
+       ) p
+       LEFT JOIN LATERAL (
+         SELECT SUM(si.cgst) AS cgst, SUM(si.sgst) AS sgst
+         FROM tbl_sale_items si WHERE si.sale_uuid = p.sale_uuid
+       ) t ON true
+       ORDER BY p.sale_date, p.invoice_no, p.sale_uuid`,
+      [...params, limit, offset]
+    ),
+  ]);
+
+  return { summary: summaryResult.rows[0], rows: rowsResult.rows };
+}
+
+// Empty typed source keeps the CDNR report contract ready until note tables exist.
+const GSTR1_CDNR_SOURCE = `
+  WITH note_source (
+    note_no, note_type, note_date, original_invoice_no, original_invoice_date,
+    customer_name, gstin, taxable_value, igst, cgst, sgst, cess, total_value
+  ) AS (
+    SELECT
+      NULL::text AS note_no,
+      NULL::text AS note_type,
+      NULL::date AS note_date,
+      NULL::text AS original_invoice_no,
+      NULL::date AS original_invoice_date,
+      NULL::text AS customer_name,
+      NULL::text AS gstin,
+      NULL::numeric AS taxable_value,
+      NULL::numeric AS igst,
+      NULL::numeric AS cgst,
+      NULL::numeric AS sgst,
+      NULL::numeric AS cess,
+      NULL::numeric AS total_value
+    WHERE false
+  ),
+  filtered_notes AS (
+    SELECT *
+    FROM note_source
+    WHERE note_date BETWEEN $1::date AND $2::date
+      AND ($3::text IS NULL OR UPPER(gstin) = $3)
+      AND (
+        $4::text IS NULL
+        OR note_no ILIKE $4
+        OR original_invoice_no ILIKE $4
+        OR customer_name ILIKE $4
+        OR gstin ILIKE $4
+      )
+  )`;
+
+async function getGstr1CDNR(from_date, to_date, gstin, search, limit, offset) {
+  const params = [from_date, to_date, gstin, search];
+  const [summaryResult, rowsResult] = await Promise.all([
+    conn.query(
+      `${GSTR1_CDNR_SOURCE}
+       SELECT
+         COUNT(*)::int AS total_notes,
+         COALESCE(SUM(taxable_value), 0) AS total_credit_note_value,
+         COALESCE(SUM(taxable_value), 0) AS total_taxable_value,
+         COALESCE(SUM(igst), 0) AS total_igst,
+         COALESCE(SUM(cgst), 0) AS total_cgst,
+         COALESCE(SUM(sgst), 0) AS total_sgst,
+         COALESCE(SUM(cess), 0) AS total_cess,
+         COALESCE(SUM(total_value), 0) AS total_note_value
+       FROM filtered_notes`,
+      params
+    ),
+    conn.query(
+      `${GSTR1_CDNR_SOURCE}
+       SELECT
+         note_no,
+         note_type,
+         TO_CHAR(note_date, 'YYYY-MM-DD') AS note_date,
+         original_invoice_no,
+         TO_CHAR(original_invoice_date, 'YYYY-MM-DD') AS original_invoice_date,
+         customer_name,
+         gstin,
+         taxable_value,
+         igst,
+         cgst,
+         sgst,
+         cess,
+         total_value
+       FROM filtered_notes
+       ORDER BY note_date, note_no
+       LIMIT $5 OFFSET $6`,
+      [...params, limit, offset]
+    ),
+  ]);
+
+  return { summary: summaryResult.rows[0], rows: rowsResult.rows };
+}
+
 module.exports = {
   getGstr1B2CLarge,
+  getGstr1B2CSmall,
+  getGstr1CDNR,
   getGstr1B2BGstins,
   getGstr1B2B,
   getSalesSummary,

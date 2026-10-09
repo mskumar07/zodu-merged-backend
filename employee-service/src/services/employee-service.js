@@ -101,7 +101,8 @@ exports.getEmployees = async ({ zodu_id, branch_id, status, page = 1, limit = 10
     ...emp,
     has_password: loginStatus[user_id]?.has_password ?? null,
     has_role:     loginStatus[user_id]?.has_role     ?? null,
-    login_user:   loginStatus[user_id]?.login_user   ?? null,
+    login_user: loginStatus[user_id]?.login_user ?? null,
+    role_name: loginStatus[user_id]?.role_name ?? null,
   }));
 
   return {

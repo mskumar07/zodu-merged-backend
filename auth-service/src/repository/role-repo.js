@@ -234,13 +234,28 @@ exports.findLoginStatus = async (user_ids, { zodu_id, branch_id }) => {
   const { rows } = await conn.query(
     `SELECT
        u.user_id,
+       r.role_name,
        (u.password_hash IS NOT NULL AND u.password_hash <> '') AS has_password,
        u.login_user,
        EXISTS (
          SELECT 1 FROM tbl_user_roles ur
-         WHERE ur.user_id = u.user_id AND ur.zodu_id = $2 AND ur.branch_id = $3
+         WHERE ur.user_id = u.user_id
+           AND ur.zodu_id = $2
+           AND (ur.branch_id = $3 OR ur.branch_id IS NULL)
        ) AS has_role
      FROM tbl_users u
+     LEFT JOIN LATERAL (
+       SELECT role.role_name
+       FROM tbl_user_roles ur
+       JOIN tbl_roles role
+         ON role.role_id = ur.role_id
+        AND role.zodu_id = ur.zodu_id
+       WHERE ur.user_id = u.user_id
+         AND ur.zodu_id = $2
+         AND (ur.branch_id = $3 OR ur.branch_id IS NULL)
+       ORDER BY CASE WHEN ur.branch_id = $3 THEN 0 ELSE 1 END
+       LIMIT 1
+     ) r ON true
      WHERE u.user_id = ANY($1::uuid[])`,
     [user_ids, zodu_id, branch_id]
   );
