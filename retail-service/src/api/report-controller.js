@@ -405,4 +405,49 @@ router.get("/gst/gstr1/b2c-large", async (req, res) => {
   }
 });
 
+// GET /api/report/gst/gstr1/b2c-small?zodu_id=&branch_id=&financial_year=2026-27&month=10&search=&page=&limit=
+// Summary cards (full filtered set) + paginated B2C Small invoice table in one response
+router.get("/gst/gstr1/b2c-small", async (req, res) => {
+  const { zodu_id, branch_id, financial_year, month, search, page = 1, limit = 50 } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"], [financial_year, "financial_year"])) return;
+
+  try {
+    const result = await service.getGstr1B2CSmall(zodu_id, branch_id, { financial_year, month, search, page, limit });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error("[report] getGstr1B2CSmall:", err.message);
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/report/gst/gstr1/nil-rated?zodu_id=&branch_id=&financial_year=2026-27&month=10&search=&page=&limit=
+// Returns an empty report until invoice supply types are available in the data model.
+router.get("/gst/gstr1/nil-rated", async (req, res) => {
+  const { zodu_id, branch_id, financial_year, month, page = 1, limit = 50 } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"], [financial_year, "financial_year"])) return;
+
+  try {
+    const result = service.getGstr1NilRated({ financial_year, month, page, limit });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error("[report] getGstr1NilRated:", err.message);
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/report/gst/gstr1/cdnr?zodu_id=&branch_id=&financial_year=2025-26&month=9&gstin=&search=&page=&limit=
+// Returns an empty CDNR report until credit/debit note storage is implemented.
+router.get("/gst/gstr1/cdnr", async (req, res) => {
+  const { zodu_id, branch_id, financial_year, month, gstin, search, page = 1, limit = 50 } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"], [financial_year, "financial_year"])) return;
+
+  try {
+    const result = await service.getGstr1CDNR({ financial_year, month, gstin, search, page, limit });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error("[report] getGstr1CDNR:", err.message);
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
 module.exports = router;
