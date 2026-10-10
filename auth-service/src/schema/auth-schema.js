@@ -328,6 +328,12 @@ const schema = {
     // Shows/hides the Hold Order/Bill feature on the POS screen.
     hold_enabled: joi.boolean(),
 
+    // Shows/hides the per-line Item Description field on the POS screen.
+    item_description_enabled: joi.boolean(),
+
+    // Shows/hides the Vehicle No field on the POS screen.
+    vehicle_no_enabled: joi.boolean(),
+
     // Billing layout the restaurant POS screen opens on.
     pos_screen_type: joi.string().valid(...POS_SCREEN_TYPES).insensitive(),
 

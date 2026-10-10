@@ -18,7 +18,11 @@ BEGIN
         ('Piece',  'PCS'),
         ('Box',    'BOX'),
         ('Litre',  'LTR'),
-        ('Number', 'NOS')
+        ('Number', 'NOS'),
+        ('Packet', 'PKT'),
+        ('Set',    'SET'),
+        ('Gram',   'GM'),
+        ('Kilogram','KGS')
     ) AS v(name, short_name)
     ON CONFLICT (zodu_id, branch_id, name) DO NOTHING;
 

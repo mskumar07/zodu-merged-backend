@@ -184,6 +184,7 @@ apply "$AUTH_DB" auth-service/migrations/pos_settings_screen_type.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_prefix_enabled_default_true.sql
 apply "$AUTH_DB" auth-service/migrations/pos_settings_kot_print.sql
 apply "$AUTH_DB" auth-service/migrations/pos_settings_show_item_image.sql
+apply "$AUTH_DB" auth-service/migrations/pos_settings_item_description_vehicle_no.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_settings_watermark_receiver_signature.sql
 apply "$AUTH_DB" auth-service/migrations/branch_subscription.sql
 apply "$AUTH_DB" auth-service/migrations/invoice_settings_quotation_proforma_terms.sql
@@ -324,6 +325,16 @@ apply "$RESTAURANT_DB" restaurant-service/migrations/orders_kot_order_status.sql
 # orders (Takeaway/Delivery) have no table and createKOT inserts NULL for them.
 apply "$RESTAURANT_DB" restaurant-service/migrations/kot_list_table_no_nullable_1809202607.sql
 apply "$RESTAURANT_DB" restaurant-service/migrations/kot_list_public_order_no_2209202607.sql
+
+# retail + restaurant — default units + GST rates for a new branch, seeded
+# DB-side via seed_branch_defaults(). Unique indexes make it idempotent.
+apply "$RETAIL_DB"     retail-service/migrations/branch_default_units_gst_new.sql
+apply "$RESTAURANT_DB" restaurant-service/migrations/branch_default_units_gst_new.sql
+
+# retail + restaurant — tbl_gst_state_code, global GST state code master
+# (GSTIN prefix -> state), seeded with the official list. Upsert, re-runnable.
+apply "$RETAIL_DB"     retail-service/migrations/gst_state_code.sql
+apply "$RESTAURANT_DB" restaurant-service/migrations/gst_state_code.sql
 # restaurant-service — drops tbl_kot_list's FK to tbl_tmp_orders. createKOT
 # now also runs for Takeaway/Delivery orders, which never get a tbl_tmp_orders
 # row (they write straight to tbl_orders), so the FK 500s on every such insert.
@@ -363,12 +374,13 @@ WHERE table_name = 'tbl_invoice_settings' AND column_name = 'invoice_digit_count
 SELECT 'tbl_business.company_logo_url present: ' || count(*) || '/1'
 FROM information_schema.columns
 WHERE table_name = 'tbl_business' AND column_name = 'company_logo_url';
-SELECT 'tbl_pos_settings columns present: ' || count(*) || '/16'
+SELECT 'tbl_pos_settings columns present: ' || count(*) || '/18'
 FROM information_schema.columns
 WHERE table_name = 'tbl_pos_settings' AND column_name IN ('pos_types','default_pos_type','invoice_suffix','invoice_suffix_enabled',
                       'quotation_prefix','proforma_prefix','quotation_prefix_enabled','proforma_prefix_enabled',
                       'quotation_suffix','quotation_suffix_enabled','proforma_suffix','proforma_suffix_enabled',
-                      'purchase_order_enabled','hold_enabled','pos_screen_type','kot_print_enabled');
+                      'purchase_order_enabled','hold_enabled','pos_screen_type','kot_print_enabled',
+                      'item_description_enabled','vehicle_no_enabled');
 SQL
 
 for db in "$RETAIL_DB" "$RESTAURANT_DB"; do
@@ -396,6 +408,8 @@ for db in "$RETAIL_DB" "$RESTAURANT_DB"; do
 SELECT '$db tbl_doc_id_seq present: ' || count(*) || '/1'
 FROM information_schema.tables
 WHERE table_name = 'tbl_doc_id_seq';
+SELECT '$db tbl_gst_state_code rows: ' || count(*) || '/38'
+FROM tbl_gst_state_code;
 SQL
 done
 

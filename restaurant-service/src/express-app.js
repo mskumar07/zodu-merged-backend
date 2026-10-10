@@ -23,6 +23,7 @@ app.use('/api/vendor', require('./api/vendor-controller'));
 app.use('/api/sale-returns', require('./api/saleReturn-controller'));
 app.use('/api/report',      require('./api/report-controller'));
 app.use('/api/expense',     require('./api/expense-controller'));
+app.use('/api/gst-state-code', require('./api/gstStateCode-controller'));
 app.use('/api/hold',        require('./api/hold_item_controller'));
 app.use('/api/inventory',   require('./api/inventory-controller'));
 app.use('/api/orders',      require('./api/orders-controller'));
