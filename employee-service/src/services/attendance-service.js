@@ -62,15 +62,14 @@ exports.getTeamAttendance = async ({ zodu_id, branch_id, employee_id, month, yea
 
   // rows are already one-per-employee with `days` pre-aggregated by Postgres
   // (see findTeamAttendance) — no grouping/pivoting needed here.
-  const summary = rows[0] || { avg_present_days: 0, avg_attendance_pct: 0, avg_absent_pct: 0 };
+  const summary = rows[0] || { total_present_days: 0, total_absent_days: 0 };
 
   return {
     success: true,
     data: {
       summary: {
-        avg_present_days:   Number(summary.avg_present_days) || 0,
-        avg_attendance_pct: Number(summary.avg_attendance_pct) || 0,
-        avg_absent_pct:     Number(summary.avg_absent_pct) || 0,
+        total_present_days: Number(summary.total_present_days) || 0,
+        total_absent_days:  Number(summary.total_absent_days) || 0,
       },
       employees: rows.map(r => ({
         employee_id:   r.employee_id,
