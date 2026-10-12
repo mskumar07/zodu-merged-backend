@@ -94,9 +94,8 @@ exports.findTeamAttendance = async ({ zodu_id, branch_id, employee_id, month, ye
      SELECT
        employee_id, employee_code, employee_name, designation, days,
        present_days::int AS present_days, absent_days::int AS absent_days,
-       ROUND(AVG(present_days)    OVER ())::numeric(10,1) AS avg_present_days,
-       ROUND(AVG(attendance_pct)  OVER (), 1) AS avg_attendance_pct,
-       ROUND(AVG(absent_pct)      OVER (), 1) AS avg_absent_pct
+       SUM(present_days) OVER ()::int AS total_present_days,
+       SUM(absent_days)  OVER ()::int AS total_absent_days
      FROM per_employee
      ORDER BY employee_name`,
     [zodu_id, branch_id, employee_id, year, month]

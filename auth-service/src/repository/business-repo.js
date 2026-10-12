@@ -801,7 +801,7 @@ exports.listSubscriptionsPaged = async ({ page = 1, limit = 20, status = '' }) =
      JOIN tbl_business b ON b.zodu_id = s.zodu_id
      LEFT JOIN tbl_branch br ON br.zodu_id = s.zodu_id AND br.branch_id = s.branch_id
      ${where}
-     ORDER BY s.created_at DESC
+     ORDER BY COALESCE(br.created_at, s.created_at) DESC, s.created_at DESC
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params
   );
