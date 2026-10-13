@@ -198,6 +198,10 @@ apply "$AUTH_DB" auth-service/migrations/business_company_logo_url.sql
 # auth-service — tbl_users.login_user, written by the employee "Set User" API.
 apply "$AUTH_DB" auth-service/migrations/tbl_users_login_user.sql
 
+# auth-service — branch bank details can be saved with a blank account number
+# (stored as NULL), so tbl_bank_details.account_number must be nullable.
+apply "$AUTH_DB" auth-service/migrations/bank_details_account_number_nullable.sql
+
 # retail-service / restaurant-service — item description
 apply "$RETAIL_DB"     retail-service/migrations/item_description.sql
 apply "$RESTAURANT_DB" restaurant-service/migrations/item_description.sql

@@ -29,6 +29,7 @@ function attachCompanyNames(companyStats, companies) {
       zodu_id: stat.zodu_id,
       business_name: company?.business_name || stat.zodu_id,
       invoiceCount: stat.invoice_count,
+      quotationCount: stat.quotation_count ?? 0,
       purchaseCount: stat.purchase_count,
       expenseCount: stat.expense_count,
     };
@@ -36,10 +37,11 @@ function attachCompanyNames(companyStats, companies) {
 }
 
 exports.getSummary = async () => {
-  const [companies, invoiceStats, purchaseStats, expenseStats, subscriptions, companyStats] =
+  const [companies, invoiceStats, quotationStats, purchaseStats, expenseStats, subscriptions, companyStats] =
     await Promise.allSettled([
       authService.listCompanies({ limit: 50, sort: 'created_at:desc' }),
       retailService.getInvoiceStats({}),
+      retailService.getQuotationStats({}),
       retailService.getPurchaseStats({}),
       retailService.getExpenseStats({}),
       authService.getSubscriptions({ limit: 10, sort: 'created_at:desc' }),
@@ -52,6 +54,7 @@ exports.getSummary = async () => {
     totals: {
       totalUsers: companiesResult.total ?? 0,
       totalInvoices: settle(invoiceStats, { total: 0, changePct: 0 }),
+      totalQuotations: settle(quotationStats, { total: 0, changePct: 0 }),
       purchaseCount: settle(purchaseStats, { total: 0, changePct: 0 }),
       expenseCount: settle(expenseStats, { total: 0, changePct: 0 }),
     },

@@ -63,6 +63,17 @@ router.get('/admin/invoices/stats', async (req, res) => {
   }
 });
 
+// GET /internal/admin/quotations/stats -> { total, changePct }
+router.get('/admin/quotations/stats', async (req, res) => {
+  try {
+    const stats = await adminRepo.getQuotationStats();
+    return res.status(200).json({ success: true, data: stats });
+  } catch (err) {
+    console.error('[internal] getQuotationStats:', err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 // GET /internal/admin/purchases/stats -> { total, changePct }
 router.get('/admin/purchases/stats', async (req, res) => {
   try {

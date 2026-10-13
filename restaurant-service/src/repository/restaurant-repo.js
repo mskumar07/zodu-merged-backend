@@ -2405,7 +2405,8 @@ exports.getCustomers = async (filters) => {
 };
  
 // ── 2. GET SINGLE CUSTOMER BY UUID ───────────────────────────
-exports.getCustomerById = async (cust_uuid) => {
+// Scoped by zodu_id/branch_id so one tenant can't read another's customer.
+exports.getCustomerById = async ({ cust_uuid, zodu_id, branch_id }) => {
   const result = await conn.query(
     `SELECT
         cust_uuid, cust_id,
@@ -2415,11 +2416,15 @@ exports.getCustomerById = async (cust_uuid) => {
         gst,
         address_line1, address_line2,
         city, state, pincode,
+        shipping_address, same_as_billing_address,
+        opening_balance,
         is_active,
-        created_at
+        created_at, updated_at
      FROM tbl_customer
-     WHERE cust_uuid = $1`,
-    [cust_uuid]
+     WHERE cust_uuid = $1
+       AND zodu_id   = $2
+       AND branch_id = $3`,
+    [cust_uuid, zodu_id, branch_id]
   );
   return result.rows[0] ?? null;
 };

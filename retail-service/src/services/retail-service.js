@@ -2143,6 +2143,17 @@ async function createCustomer(data) {
   }
 }
  
+async function getCustomerById(params) {
+  try {
+    const customer = await repository.getCustomerById(params);
+    if (!customer) return { success: false, notFound: true, message: "Customer not found" };
+    return { success: true, customer };
+  } catch (err) {
+    console.error("getCustomerById error:", err);
+    return { success: false, message: err.message };
+  }
+}
+
 async function updateCustomer(data) {
   try {
     const customer = await repository.updateCustomer(data);
@@ -2985,6 +2996,7 @@ module.exports = {
   markSalePayment,
   getCustomers,
   getCustomerLedger,
+  getCustomerById,
   getCustomerOutstandingBills,
   markCustomerPayment,
   createCustomer,

@@ -551,7 +551,36 @@ router.get("/api/customers", async (req, res) => {
   }
 });
  
-// ── GET /api/customers/:cust_uuid
+// GET /api/customers/:cust_uuid?zodu_id=&branch_id=
+// Single customer record (tbl_customer only).
+router.get("/api/customers/:cust_uuid", async (req, res) => {
+  try {
+    const { error, value } = schema.get_customer_by_id.validate(
+      {
+        cust_uuid: req.params.cust_uuid,
+        zodu_id:   req.user?.zodu_id   ?? req.query.zodu_id,
+        branch_id: req.user?.branch_id ?? req.query.branch_id,
+      },
+      { abortEarly: false }
+    );
+
+    if (error) {
+      return res.status(400).json({ errors: error.details.map((d) => d.message) });
+    }
+
+    const data = await service.getCustomerById(value);
+    if (!data.success) {
+      return res.status(data.notFound ? 404 : 400).json({ message: data.message });
+    }
+
+    return res.status(200).json(data);
+  } catch (err) {
+    console.error("[GET /api/customers/:cust_uuid]", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/customers/:custUuid/ledger
 router.get('/api/customers/:custUuid/ledger', async (req, res, next) => {
   try {
     // ✅ FIX: was only validating req.params, missing all query params

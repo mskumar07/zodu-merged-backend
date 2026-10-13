@@ -38,6 +38,11 @@ exports.getInvoiceStats = async () => {
   return toStatShape(row);
 };
 
+exports.getQuotationStats = async () => {
+  const row = await countStat('tbl_sales', 'sale_date', `WHERE sale_type = 'Q' AND cancelled_inv = false`);
+  return toStatShape(row);
+};
+
 exports.getPurchaseStats = async () => {
   const row = await countStat('tbl_purchase', 'purchase_date', `WHERE cancelled_purchase = false`);
   return toStatShape(row);
@@ -71,15 +76,30 @@ exports.getCompanyWiseStats = async (limit = 10) => {
        SELECT zodu_id, COUNT(*)::int AS expense_count
        FROM tbl_expense
        GROUP BY zodu_id
+     ),
+     quotation_counts AS (
+       SELECT zodu_id, COUNT(*)::int AS quotation_count
+       FROM tbl_sales
+       WHERE sale_type = 'Q' AND cancelled_inv = false
+       GROUP BY zodu_id
+     ),
+     all_ids AS (
+       SELECT zodu_id FROM invoice_counts
+       UNION SELECT zodu_id FROM purchase_counts
+       UNION SELECT zodu_id FROM expense_counts
+       UNION SELECT zodu_id FROM quotation_counts
      )
      SELECT
-       COALESCE(i.zodu_id, p.zodu_id, e.zodu_id)   AS zodu_id,
-       COALESCE(i.invoice_count, 0)                AS invoice_count,
-       COALESCE(p.purchase_count, 0)                AS purchase_count,
-       COALESCE(e.expense_count, 0)                 AS expense_count
-     FROM invoice_counts i
-     FULL OUTER JOIN purchase_counts p ON p.zodu_id = i.zodu_id
-     FULL OUTER JOIN expense_counts  e ON e.zodu_id = COALESCE(i.zodu_id, p.zodu_id)
+       a.zodu_id,
+       COALESCE(i.invoice_count, 0)     AS invoice_count,
+       COALESCE(p.purchase_count, 0)    AS purchase_count,
+       COALESCE(e.expense_count, 0)     AS expense_count,
+       COALESCE(q.quotation_count, 0)   AS quotation_count
+     FROM all_ids a
+     LEFT JOIN invoice_counts   i ON i.zodu_id = a.zodu_id
+     LEFT JOIN purchase_counts  p ON p.zodu_id = a.zodu_id
+     LEFT JOIN expense_counts   e ON e.zodu_id = a.zodu_id
+     LEFT JOIN quotation_counts q ON q.zodu_id = a.zodu_id
      ORDER BY invoice_count DESC
      LIMIT $1`,
     [limit]
@@ -118,16 +138,24 @@ exports.getStatsForCompanies = async (zoduIds) => {
        FROM tbl_expense
        WHERE zodu_id = ANY($1)
        GROUP BY zodu_id
+     ),
+     quotation_counts AS (
+       SELECT zodu_id, COUNT(*)::int AS quotation_count
+       FROM tbl_sales
+       WHERE sale_type = 'Q' AND cancelled_inv = false AND zodu_id = ANY($1)
+       GROUP BY zodu_id
      )
      SELECT
        ids.zodu_id,
-       COALESCE(i.invoice_count, 0)  AS invoice_count,
-       COALESCE(p.purchase_count, 0) AS purchase_count,
-       COALESCE(e.expense_count, 0)  AS expense_count
+       COALESCE(i.invoice_count, 0)   AS invoice_count,
+       COALESCE(p.purchase_count, 0)  AS purchase_count,
+       COALESCE(e.expense_count, 0)   AS expense_count,
+       COALESCE(q.quotation_count, 0) AS quotation_count
      FROM ids
-     LEFT JOIN invoice_counts  i ON i.zodu_id = ids.zodu_id
-     LEFT JOIN purchase_counts p ON p.zodu_id = ids.zodu_id
-     LEFT JOIN expense_counts  e ON e.zodu_id = ids.zodu_id`,
+     LEFT JOIN invoice_counts   i ON i.zodu_id = ids.zodu_id
+     LEFT JOIN purchase_counts  p ON p.zodu_id = ids.zodu_id
+     LEFT JOIN expense_counts   e ON e.zodu_id = ids.zodu_id
+     LEFT JOIN quotation_counts q ON q.zodu_id = ids.zodu_id`,
     [zoduIds]
   );
   return rows;
