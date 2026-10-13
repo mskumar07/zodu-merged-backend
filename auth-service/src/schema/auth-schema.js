@@ -121,6 +121,9 @@ const schema = {
     // an already-uploaded image, or clear it with null.
     company_logo_url: joi.string().uri().allow(null, ''),
     can_use_for_branch: joi.boolean(),
+    // true = delete the company's address / bank row and detach every branch using it
+    clear_address: joi.boolean(),
+    clear_bank_details: joi.boolean(),
   }).min(2).custom(requireOneContact('phone_number', 'email', { partial: true })),
 
   add_branch: joi.object({
@@ -172,6 +175,9 @@ const schema = {
     ifsc_code: joi.string().max(20).allow(null, ''),
     same_as_address: joi.boolean(),
     same_as_bank_details: joi.boolean(),
+    // true = detach the branch from its address / bank row and delete that row
+    clear_address: joi.boolean(),
+    clear_bank_details: joi.boolean(),
   }).min(3).custom(requireOneContact('branch_mobile_no', 'branch_mail_id', { partial: true })),
 
   edit_invoice_settings: joi.object({

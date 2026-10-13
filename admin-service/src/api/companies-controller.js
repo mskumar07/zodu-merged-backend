@@ -42,6 +42,7 @@ router.get('/companies/stats', requireAdminAuth, asyncHandler(async (req, res) =
       mail_id: company.mail_id,
       mobile_no: company.mobile_no,
       invoiceCount: stats?.invoice_count ?? 0,
+      quotationCount: stats?.quotation_count ?? 0,
       purchaseCount: stats?.purchase_count ?? 0,
       expenseCount: stats?.expense_count ?? 0,
     };

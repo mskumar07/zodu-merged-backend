@@ -10,6 +10,9 @@ module.exports = {
   getInvoiceStats: (params) =>
     http.get('/internal/admin/invoices/stats', { params }).then((r) => r.data.data),
 
+  getQuotationStats: (params) =>
+    http.get('/internal/admin/quotations/stats', { params }).then((r) => r.data.data),
+
   getPurchaseStats: (params) =>
     http.get('/internal/admin/purchases/stats', { params }).then((r) => r.data.data),
 

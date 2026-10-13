@@ -628,6 +628,7 @@ exports.getStockHistoryRepo = async ({ item_uuid, zodu_id, branch_id }) => {
     SELECT 
       inv.item_uuid,
       inv.item_id,
+      m.item_img,
       COALESCE(m.item_name, 'Unknown Item') AS item_name,
       inv.available_qty,
       inv.reorder_level
@@ -727,7 +728,8 @@ exports.getStockHistoryRepo = async ({ item_uuid, zodu_id, branch_id }) => {
     item: {
       item_uuid: itemData.item_uuid,
       item_id: itemData.item_id,
-      item_name: itemData.item_name
+      item_name: itemData.item_name,
+      item_img: itemData.item_img,
     },
 
     // ✅ History (empty if no ledger)

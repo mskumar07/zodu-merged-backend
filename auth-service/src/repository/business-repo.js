@@ -103,8 +103,10 @@ exports.updateCompany = async (zodu_id, fields) => {
     const addressCols = ['address_line_1', 'address_line_2', 'city', 'district', 'state', 'pincode'];
     const bankCols    = ['bank_name', 'bank_branch', 'holder_name', 'account_number', 'account_type', 'ifsc_code'];
 
+    const { clear_address: clearAddress, clear_bank_details: clearBank, ...rest } = fields;
+
     const addrFields = {}, bankFields = {}, compFields = {};
-    for (const [k, v] of Object.entries(fields)) {
+    for (const [k, v] of Object.entries(rest)) {
       if (addressCols.includes(k))   addrFields[k] = v;
       else if (bankCols.includes(k)) bankFields[k] = v;
       else                           compFields[k]   = v;
@@ -115,8 +117,32 @@ exports.updateCompany = async (zodu_id, fields) => {
       delete compFields.restaurant_name;
     }
 
+    // "Clear" nulls the company's FK, detaches every branch sharing that row, then
+    // deletes the row — after the tbl_business UPDATE below, since both tbl_business
+    // and tbl_branch reference it.
+    let addressRowToDelete = null, bankRowToDelete = null;
+
+    if (clearAddress === true && curAddrId) {
+      await client.query(
+        `UPDATE tbl_branch SET address_id = NULL, same_as_address = false, updated_at = now()
+          WHERE zodu_id = $1 AND address_id = $2`,
+        [zodu_id, curAddrId]
+      );
+      compFields.address_id = null;
+      addressRowToDelete = curAddrId;
+    }
+    if (clearBank === true && curBankId) {
+      await client.query(
+        `UPDATE tbl_branch SET bank_details_id = NULL, same_as_bank_details = false, updated_at = now()
+          WHERE zodu_id = $1 AND bank_details_id = $2`,
+        [zodu_id, curBankId]
+      );
+      compFields.bank_details_id = null;
+      bankRowToDelete = curBankId;
+    }
+
     // address update/insert
-    if (Object.keys(addrFields).length > 0) {
+    if (clearAddress !== true && Object.keys(addrFields).length > 0) {
       if (curAddrId) {
         const keys = Object.keys(addrFields), vals = Object.values(addrFields);
         await client.query(
@@ -134,7 +160,7 @@ exports.updateCompany = async (zodu_id, fields) => {
       }
     }
     // bank update/insert
-    if (Object.keys(bankFields).length > 0 && bankFields.account_number) {
+    if (clearBank !== true && Object.keys(bankFields).length > 0 && bankFields.account_number) {
       if (curBankId) {
         const keys = Object.keys(bankFields), vals = Object.values(bankFields);
         await client.query(
@@ -167,6 +193,12 @@ exports.updateCompany = async (zodu_id, fields) => {
       const r = await client.query(`SELECT * FROM tbl_business WHERE zodu_id=$1`, [zodu_id]);
       updated = r.rows[0];
     }
+
+    // Safe now that neither tbl_business nor any branch references these rows.
+    await Promise.all([
+      addressRowToDelete && client.query(`DELETE FROM tbl_address WHERE id=$1`, [addressRowToDelete]),
+      bankRowToDelete    && client.query(`DELETE FROM tbl_bank_details WHERE id=$1`, [bankRowToDelete]),
+    ]);
 
     await client.query('COMMIT');
     return updated;
@@ -422,9 +454,12 @@ exports.updateBranch = async (zodu_id, branch_id, fields) => {
 
     const use_same_address_as_company = fields.same_as_address;
     const use_same_bank_as_company    = fields.same_as_bank_details;
-    console.log("Updating branch with fields:--------", fields, use_same_address_as_company, use_same_bank_as_company);
+    const clearAddress = fields.clear_address === true;
+    const clearBank    = fields.clear_bank_details === true;
     delete fields.same_as_address;
     delete fields.same_as_bank_details;
+    delete fields.clear_address;
+    delete fields.clear_bank_details;
 
     // Fetch branch's current address_id/bank_details_id AND company's to detect sharing
     const cur = await client.query(
@@ -461,8 +496,16 @@ exports.updateBranch = async (zodu_id, branch_id, fields) => {
     if (use_same_address_as_company  !== undefined) branchFields.same_as_address      = use_same_address_as_company  ?? false;
     if (use_same_bank_as_company     !== undefined) branchFields.same_as_bank_details = use_same_bank_as_company     ?? false;
 
+    // "Clear" (only sent when "same as company" is off) nulls the branch's FK and
+    // deletes its own row — after the tbl_branch UPDATE below, since tbl_branch
+    // references it.
+    let addressRowToDelete = null, bankRowToDelete = null;
+
     let address_id = current?.address_id ?? null;
-    if (use_same_address_as_company) {
+    if (clearAddress) {
+      branchFields.address_id = null;
+      addressRowToDelete = address_id;
+    } else if (use_same_address_as_company) {
       // Point branch to company's address row
       if (current?.company_address_id) { address_id = current.company_address_id; branchFields.address_id = address_id; }
     } else if (Object.keys(addrFields).length > 0) {
@@ -486,25 +529,32 @@ exports.updateBranch = async (zodu_id, branch_id, fields) => {
     }
 
     let bank_details_id = current?.bank_details_id ?? null;
-    if (use_same_bank_as_company) {
+    if (clearBank) {
+      branchFields.bank_details_id = null;
+      bankRowToDelete = bank_details_id;
+    } else if (use_same_bank_as_company) {
       // Point branch to company's bank row
       if (current?.company_bank_details_id) { bank_details_id = current.company_bank_details_id; branchFields.bank_details_id = bank_details_id; }
-    } else if (Object.keys(bankFields).length > 0 && bankFields.account_number) {
+    } else if (Object.keys(bankFields).length > 0) {
       if (bank_details_id && !isBankShared) {
-        // Branch owns its own bank row — safe to update in place
-        const keys = Object.keys(bankFields), vals = Object.values(bankFields);
+        // Branch owns its own bank row — safe to update in place. Runs even when
+        // account_number is empty so the user can clear the bank details; empty
+        // strings are stored as NULL.
+        const keys = Object.keys(bankFields), vals = Object.values(bankFields).map(v => (v === '' ? null : v));
         await client.query(
           `UPDATE tbl_bank_details SET ${keys.map((k,i)=>`${k}=$${i+1}`).join(',')}, updated_at=now() WHERE id=$${keys.length+1}`,
           [...vals, bank_details_id]
         );
-      } else {
-        // No bank yet, OR currently sharing company's row — always INSERT a new row for the branch
+      } else if (Object.values(bankFields).some(Boolean)) {
+        // No bank yet, OR currently sharing company's row — INSERT a new row for the
+        // branch (skipped when every field is blank, so no empty rows are created).
+        // Empty strings are stored as NULL, same as the update path above.
         const r = await client.query(
           `INSERT INTO tbl_bank_details (zodu_id,bank_name,bank_branch,holder_name,account_number,account_type,ifsc_code)
            VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-          [zodu_id, bankFields.bank_name??null, bankFields.bank_branch??null,
-           bankFields.holder_name??null, bankFields.account_number,
-           bankFields.account_type??null, bankFields.ifsc_code??null]
+          [zodu_id, bankFields.bank_name||null, bankFields.bank_branch||null,
+           bankFields.holder_name||null, bankFields.account_number||null,
+           bankFields.account_type||null, bankFields.ifsc_code||null]
         );
         bank_details_id = r.rows[0].id; branchFields.bank_details_id = bank_details_id;
       }
@@ -525,6 +575,12 @@ exports.updateBranch = async (zodu_id, branch_id, fields) => {
       );
       updated = r.rows[0] || null;
     }
+
+    // Safe now that tbl_branch no longer references these rows.
+    await Promise.all([
+      addressRowToDelete && client.query(`DELETE FROM tbl_address WHERE id=$1`, [addressRowToDelete]),
+      bankRowToDelete    && client.query(`DELETE FROM tbl_bank_details WHERE id=$1`, [bankRowToDelete]),
+    ]);
 
     await client.query('COMMIT');
     return updated;

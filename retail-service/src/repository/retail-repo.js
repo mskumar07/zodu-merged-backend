@@ -2363,7 +2363,9 @@ exports.getCustomers = async (filters) => {
 };
  
 // ── 2. GET SINGLE CUSTOMER BY UUID ───────────────────────────
-exports.getCustomerById = async (cust_uuid) => {
+// Customer table only, scoped by zodu_id/branch_id so one tenant can't read
+// another's customer.
+exports.getCustomerById = async ({ cust_uuid, zodu_id, branch_id }) => {
   const result = await conn.query(
     `SELECT
         cust_uuid, cust_id,
@@ -2373,11 +2375,15 @@ exports.getCustomerById = async (cust_uuid) => {
         gst,
         address_line1, address_line2,
         city, state, pincode,
+        shipping_address, same_as_billing_address,
+        opening_balance,
         is_active,
-        created_at
+        created_at, updated_at
      FROM tbl_customer
-     WHERE cust_uuid = $1`,
-    [cust_uuid]
+     WHERE cust_uuid = $1
+       AND zodu_id   = $2
+       AND branch_id = $3`,
+    [cust_uuid, zodu_id, branch_id]
   );
   return result.rows[0] ?? null;
 };
@@ -3810,14 +3816,17 @@ exports.getSalesHistory = async (filters) => {
         s.total_amount,
         TO_CHAR(s.due_date,  'DD Mon YYYY') AS due_date,
         s.paid_amount,
-        s.balance_amount,
+        -- Returns reduce what is still owed: due = stored balance - returned amount,
+        -- never below 0 (a return bigger than the balance becomes a refund, not a
+        -- negative due). With no returns, total_returned is 0 and this is unchanged.
+        GREATEST(s.balance_amount - ret.total_returned, 0) AS balance_amount,
+        s.balance_amount                                   AS original_balance_amount,
         s.payment_status,
         s.notes,
         s.round_off,
         s.discount_gst_mode,
-         TO_CHAR(s.sale_time,  'HH12:MI AM')              AS sale_time_fmt,
         TO_CHAR(s.created_at, 'DD Mon YYYY, HH12:MI AM') AS created_at_fmt,
-        TO_CHAR(s.sale_date + s.created_at::time, 'DD Mon YYYY, HH12:MI AM') AS sale_date_fmt,
+        TO_CHAR(COALESCE(s.converted_at, s.sale_date + s.sale_time), 'DD Mon YYYY, HH12:MI AM') AS sale_date_fmt,
 
         -- customer
         c.cust_uuid,
@@ -4406,25 +4415,26 @@ exports.deleteSale = async (sale_uuid, zodu_id, branch_id) => {
       }
     }
 
-    // Proforma is a non-binding draft — "delete" means gone for good, not a
-    // cancelled-but-visible row like a real sale or quotation. tbl_sale_items
+    // Proforma and quotation are non-binding drafts — "delete" means gone for
+    // good, not a cancelled-but-visible row like a real sale. tbl_sale_items
     // cascades on the FK; tbl_sale_payment has no FK so it needs an explicit
-    // delete first.
-    if (sale.sale_type === 'P') {
-      const returnsResult = await client.query(
-        `SELECT 1 FROM tbl_sale_returns WHERE original_sale_uuid = $1 LIMIT 1`,
-        [sale.sale_uuid]
-      );
-      if (returnsResult.rows.length > 0) {
-        await client.query("ROLLBACK");
-        throw new Error('Cannot permanently delete a proforma that already has sale returns against it');
-      }
-
-      await client.query(`DELETE FROM tbl_sale_payment WHERE sale_id = $1`, [sale.sale_id]);
-
+    // delete first. (A converted quotation is already sale_type 'S', so it
+    // takes the normal cancel path below.)
+    if (['P', 'Q', 'quotation'].includes(sale.sale_type)) {
+      // One round trip: payments + items + the sale row go in a single
+      // statement (data-modifying CTEs all run in the same snapshot).
+      // Payments are matched on zodu_id/branch_id too, since sale_id alone
+      // (e.g. QUO-B1-0001) can repeat across tenants.
       const deletedResult = await client.query(
-        `DELETE FROM tbl_sales WHERE sale_uuid = $1 RETURNING *`,
-        [sale.sale_uuid]
+        `WITH del_payments AS (
+           DELETE FROM tbl_sale_payment
+            WHERE sale_id = $2 AND zodu_id = $3 AND branch_id = $4
+         ),
+         del_items AS (
+           DELETE FROM tbl_sale_items WHERE sale_uuid = $1
+         )
+         DELETE FROM tbl_sales WHERE sale_uuid = $1 RETURNING *`,
+        [sale.sale_uuid, sale.sale_id, zodu_id, branch_id]
       );
 
       await client.query("COMMIT");
