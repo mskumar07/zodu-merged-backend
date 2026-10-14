@@ -3826,7 +3826,10 @@ exports.getSalesHistory = async (filters) => {
         s.round_off,
         s.discount_gst_mode,
         TO_CHAR(s.created_at, 'DD Mon YYYY, HH12:MI AM') AS created_at_fmt,
-        TO_CHAR(COALESCE(s.converted_at, s.sale_date + s.sale_time), 'DD Mon YYYY, HH12:MI AM') AS sale_date_fmt,
+        -- The document's own date + time, as the POS saved them (a converted quotation gets the
+        -- date picked at conversion and the cashier's local time then). Not converted_at: that is
+        -- stamped from the server clock (UTC), so it showed converted invoices 5:30 h behind.
+        TO_CHAR(s.sale_date + s.sale_time, 'DD Mon YYYY, HH12:MI AM') AS sale_date_fmt,
 
         -- customer
         c.cust_uuid,

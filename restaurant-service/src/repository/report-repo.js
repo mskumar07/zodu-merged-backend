@@ -179,7 +179,7 @@ async function getCategoryItemSalesSummary(zodu_id, branch_id, from_date, to_dat
       LIMIT 1
     ),
     best_item AS (
-      SELECT si.item_name, SUM(si.quantity)::int AS units_sold
+      SELECT si.item_name, SUM(si.quantity)::float8 AS units_sold
       FROM tbl_sale_items si
       JOIN tbl_sales s ON s.sale_uuid = si.sale_uuid
       WHERE s.zodu_id = $1 AND s.branch_id = $2
@@ -235,7 +235,7 @@ async function getCategoryWiseSales(zodu_id, branch_id, from_date, to_date, prev
       SELECT
         COALESCE(m.category_id::text, 'uncategorized') AS cat_key,
         COALESCE(c.name, 'Uncategorized')              AS category_name,
-        SUM(si.quantity)::int                          AS total_units,
+        SUM(si.quantity)::float8                          AS total_units,
         SUM(si.total_amount)                           AS total_sales
       FROM tbl_sale_items si
       JOIN tbl_sales s ON s.sale_uuid = si.sale_uuid
@@ -305,7 +305,7 @@ async function getItemWiseSales(zodu_id, branch_id, from_date, to_date, limit, o
        si.item_id,
        si.item_name,
        COALESCE(c.name, 'Uncategorized')                               AS category_name,
-       SUM(si.quantity)::int                                           AS qty,
+       SUM(si.quantity)::float8                                           AS qty,
        ROUND(SUM(si.total_amount) / NULLIF(SUM(si.quantity), 0), 2)   AS price,
        SUM(si.total_amount)                                            AS total
      FROM tbl_sale_items si

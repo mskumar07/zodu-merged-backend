@@ -1861,7 +1861,9 @@ async function updateOrder(orderData) {
          discount_gst_mode     = $21,
          vehicle_no            = $22,
          purchase_order_no     = $23,
-         purchase_order_date   = $24
+         purchase_order_date   = $24,
+         -- A converted quotation takes the time it was invoiced at; any other edit keeps its time.
+         sale_time             = COALESCE($25, sale_time)
        WHERE sale_uuid = $20
        RETURNING *`,
       [
@@ -1892,6 +1894,7 @@ async function updateOrder(orderData) {
         orderData.vehicle_no ?? null,
         orderData.purchase_order_no ?? null,
         orderData.purchase_order_date ? new Date(orderData.purchase_order_date).toISOString().slice(0, 10) : null,
+        isConvertingToSale ? (orderData.sale_time || null) : null,
       ]
     );
  

@@ -363,9 +363,9 @@ sale_time: Joi.string()
 
         unit: Joi.string().default("NOS"),
 
+        // Decimal quantities (2.5 kg, 1.5 m) are valid, same as create order.
         quantity: Joi.number()
-          .integer()
-          .min(1)
+          .positive()
           .required(),
 
         price: Joi.number()
