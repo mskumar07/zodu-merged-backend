@@ -621,9 +621,11 @@ exports.checkItemIdsExistBulk = async (item_ids, zodu_id, branch_id, client) => 
   return { found: rows, missing };
 };
 
-exports.getStockHistoryRepo = async ({ item_uuid, zodu_id, branch_id }) => {
+exports.getStockHistoryRepo = async ({
+  item_uuid, zodu_id, branch_id,
+  page = 1, limit = 30, from_date, to_date,
+}) => {
   // ✅ 1. Get Item + Inventory Details (Always)
-  console.log(item_uuid)
   const itemQuery = `
     SELECT 
       inv.item_uuid,
@@ -652,7 +654,15 @@ exports.getStockHistoryRepo = async ({ item_uuid, zodu_id, branch_id }) => {
 
   const itemData = itemResult.rows[0];
 
-  // ✅ 2. Get Ledger History (ONLY if exists)
+  // ✅ 2. Get Ledger History (ONLY if exists) — filtered by the optional date
+  // window (to_date is inclusive of its whole day) and paginated.
+  const filters = ['l.item_uuid = $1', 'l.zodu_id = $2', 'l.branch_id = $3'];
+  const params  = [item_uuid, zodu_id, branch_id];
+  if (from_date) { params.push(from_date); filters.push(`l.created_at >= $${params.length}::date`); }
+  if (to_date)   { params.push(to_date);   filters.push(`l.created_at <  ($${params.length}::date + 1)`); }
+  const where  = filters.join(' AND ');
+  const offset = (page - 1) * limit;
+
   const historyQuery = `
     SELECT
       l.ledger_id,
@@ -714,16 +724,26 @@ exports.getStockHistoryRepo = async ({ item_uuid, zodu_id, branch_id }) => {
     LEFT JOIN tbl_sale_returns sr
       ON sr.return_uuid = l.reference_id
 
-    WHERE l.item_uuid = $1
-      AND l.zodu_id = $2
-      AND l.branch_id = $3
+    WHERE ${where}
 
-    ORDER BY l.created_at DESC;
+    ORDER BY l.created_at DESC, l.ledger_id DESC
+    LIMIT $${params.length + 1} OFFSET $${params.length + 2};
   `;
 
-  const historyResult = await conn.query(historyQuery, [item_uuid, zodu_id, branch_id]);
+  const [historyResult, countResult] = await Promise.all([
+    conn.query(historyQuery, [...params, limit, offset]),
+    conn.query(`SELECT COUNT(*)::int AS total FROM tbl_stock_ledger l WHERE ${where}`, params),
+  ]);
+  const total = countResult.rows[0].total;
 
   return {
+    pagination: {
+      page:        Number(page),
+      limit:       Number(limit),
+      total,
+      total_pages: Math.ceil(total / limit),
+    },
+
     // ✅ Common item info (ALWAYS)
     item: {
       item_uuid: itemData.item_uuid,

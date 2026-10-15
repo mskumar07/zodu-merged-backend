@@ -379,26 +379,10 @@ async function adjustStock({
   }
 }
 
-async function getStockHistoryService({ item_uuid, zodu_id, branch_id }) {
-  const rows = await repository.getStockHistoryRepo({
-    item_uuid,
-    zodu_id,
-    branch_id,
-  });
-
-  console.log(rows)
-
-  const currentStock = rows[0]?.available_qty || 0;
-  const reorderLevel = rows[0]?.reorder_level || 0;
-
-  return {
-    data: rows,
-    summary: {
-      current_stock: currentStock,
-      low_stock_alert: reorderLevel,
-      is_low: currentStock <= reorderLevel,
-    },
-  };
+// The repository already returns { pagination, item, data, summary } — hand it
+// back as is (same shape as restaurant-service) instead of re-wrapping it.
+async function getStockHistoryService(params) {
+  return repository.getStockHistoryRepo(params);
 }
 
 async function checkItemIdExists({ item_id, zodu_id, branch_id }) {

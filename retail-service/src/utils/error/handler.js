@@ -1,4 +1,3 @@
-const { AuthorizeError, NotFoundError, ValidationError } = require('./errors');
 const { logger } = require('../logger');
 
 const HandleErrorWithLogger = (error, req, res, next) => {
@@ -6,14 +5,14 @@ const HandleErrorWithLogger = (error, req, res, next) => {
   let status = 500;
   let data = error.message;
 
-  // skip common / known errors
-  [NotFoundError, ValidationError, AuthorizeError].forEach((typeOfError) => {
-    if (error instanceof typeOfError) {
-      reportError = false;
-      status = error.status;
-      data = error.message;
-    }
-  });
+  // skip common / known errors. NotFoundError / ValidationError / AuthorizeError
+  // are factories returning plain Errors with a 4xx `status`, so `instanceof`
+  // never matched them; check the status instead.
+  if (Number.isInteger(error.status) && error.status >= 400 && error.status < 500) {
+    reportError = false;
+    status = error.status;
+    data = error.message;
+  }
 
   if (reportError) {
     // send to monitoring tool (e.g., Cloudwatch, Sentry)
