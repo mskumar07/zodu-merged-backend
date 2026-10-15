@@ -140,9 +140,8 @@ async function adjustStock({
   }
 }
 
-async function getStockHistoryService({ item_uuid, zodu_id, branch_id }) {
-  const result = await repository.getStockHistoryRepo({ item_uuid, zodu_id, branch_id });
-  return result;
+async function getStockHistoryService(params) {
+  return repository.getStockHistoryRepo(params);
 }
 
 async function update_Inventory(data) {

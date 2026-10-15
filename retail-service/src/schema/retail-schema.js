@@ -767,6 +767,24 @@ const get_customers = Joi.object({
   is_active: Joi.boolean().optional(),
 });
  
+// GET /api/menu/stock/history/:item_uuid — ledger history, paginated (30/page
+// by default) with an optional inclusive from/to date window.
+const stock_history_query = Joi.object({
+  item_uuid: Joi.string().guid().required(),
+  zodu_id:   Joi.string().required(),
+  branch_id: Joi.string().required(),
+  page:      Joi.number().integer().min(1).default(1),
+  limit:     Joi.number().integer().min(1).max(100).default(30),
+  from_date: Joi.string().isoDate().optional(),
+  to_date:   Joi.string().isoDate().optional(),
+})
+  .custom((value, helpers) =>
+    value.from_date && value.to_date && new Date(value.from_date) > new Date(value.to_date)
+      ? helpers.message('from_date must not be after to_date')
+      : value
+  )
+  .options({ stripUnknown: true });
+
 // GET /api/customers/:cust_uuid — path param plus tenant scope (zodu_id /
 // branch_id come from the JWT, with query params as the fallback).
 const get_customer_by_id = Joi.object({
@@ -898,6 +916,7 @@ module.exports = {
   doc_sequence_update,
   get_customers,
   get_customer_by_id,
+  stock_history_query,
   add_customer,
   update_customer,
   mark_payment,

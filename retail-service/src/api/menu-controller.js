@@ -405,21 +405,16 @@ router.get('/check/item_id', async (req, res) => {
 
 router.get('/stock/history/:item_uuid', async (req, res) => {
   try {
-    const { item_uuid } = req.params;
-    const { zodu_id, branch_id } = req.query;
+    const { errors, input } = await RequestValidator(schema.stock_history_query, {
+      ...req.query,
+      item_uuid: req.params.item_uuid,
+    });
 
-    if (!item_uuid || !zodu_id || !branch_id) {
-      return res.status(400).json({
-        success: false,
-        message: "Missing required parameters",
-      });
+    if (errors) {
+      return res.status(400).json({ success: false, errors });
     }
 
-    const result = await service.getStockHistoryService({
-      item_uuid,
-      zodu_id,
-      branch_id,
-    });
+    const result = await service.getStockHistoryService(input);
 
     return res.json({
       success: true,

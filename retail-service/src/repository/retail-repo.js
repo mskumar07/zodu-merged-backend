@@ -3846,8 +3846,9 @@ exports.getSalesHistory = async (filters) => {
         -- ✅ return summary (null columns = no returns yet)
         ret.return_count,
         ret.total_returned,
-        ret.last_return_date
- 
+        ret.last_return_date,
+        ret.returns
+
      FROM tbl_sales s
      LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid
  
@@ -3856,7 +3857,28 @@ exports.getSalesHistory = async (filters) => {
        SELECT
          COUNT(*)                        AS return_count,
          COALESCE(SUM(r.return_amount), 0) AS total_returned,
-         MAX(r.return_date)              AS last_return_date
+         MAX(r.return_date)              AS last_return_date,
+         -- child rows shown under the invoice, newest first
+         COALESCE(
+           json_agg(
+             json_build_object(
+               'return_uuid',     r.return_uuid,
+               'return_id',       r.return_id,
+               'return_type',     r.return_type,
+               'return_amount',   r.return_amount,
+               'total_items',     r.total_items,
+               'refund_type',     r.refund_type,
+               'refund_status',   r.refund_status,
+               'adjusted_amount', r.adjusted_amount,
+               'refund_due',      r.refund_due,
+               'refunded_amount', r.refunded_amount,
+               'pending_refund',  GREATEST(r.refund_due - r.refunded_amount, 0),
+               'excess_refund',   GREATEST(r.refunded_amount - r.refund_due, 0),
+               'return_reason',   r.return_reason,
+               'return_date_fmt', TO_CHAR(r.return_date + r.return_time, 'DD Mon YYYY, HH12:MI AM')
+             ) ORDER BY r.created_at DESC
+           ), '[]'::json
+         )                               AS returns
        FROM tbl_sale_returns r
        WHERE r.original_sale_uuid = s.sale_uuid
      ) ret ON true
@@ -4163,6 +4185,13 @@ exports.getSaleById = async (sale_uuid, zodu_id, branch_id) => {
       r.total_tax,
       r.return_amount,
       r.refund_type,
+      r.return_type,
+      r.adjusted_amount,
+      r.refund_due,
+      r.refunded_amount,
+      GREATEST(r.refund_due - r.refunded_amount, 0)      AS pending_refund,
+      GREATEST(r.refunded_amount - r.refund_due, 0)      AS excess_refund,
+      r.refund_status,
       r.return_reason,
       r.notes,
       TO_CHAR(r.return_date,  'DD Mon YYYY')             AS return_date_fmt,
@@ -4186,7 +4215,17 @@ exports.getSaleById = async (sale_uuid, zodu_id, branch_id) => {
             'total_amount', i.total_amount
           )
         ) FILTER (WHERE i.id IS NOT NULL), '[]'
-      ) AS items
+      ) AS items,
+
+      (SELECT COALESCE(json_agg(json_build_object(
+                'id', rp.id,
+                'refund_amount', rp.refund_amount,
+                'payment_mode', rp.payment_mode,
+                'reference_no', rp.reference_no,
+                'refund_date_fmt', TO_CHAR(rp.refund_date, 'DD Mon YYYY')
+              ) ORDER BY rp.created_at, rp.id), '[]')
+         FROM tbl_sale_return_payment rp
+        WHERE rp.return_uuid = r.return_uuid) AS refunds
 
    FROM tbl_sale_returns r
    LEFT JOIN tbl_sale_return_items i 
