@@ -57,6 +57,36 @@ exports.createPurchaseItems = async (client, items, purchase_id, zodu_id) => {
   }
 };
 
+// Aggregates every return of a purchase in one pass (child rows shown under it).
+const RETURNS_JOIN = `
+     LEFT JOIN LATERAL (
+       SELECT
+         COUNT(*)                          AS return_count,
+         COALESCE(SUM(r.return_amount), 0) AS total_returned,
+         COALESCE(
+           json_agg(
+             json_build_object(
+               'return_uuid',     r.return_uuid,
+               'return_id',       r.return_id,
+               'return_type',     r.return_type,
+               'return_amount',   r.return_amount,
+               'refund_type',     r.refund_type,
+               'refund_status',   r.refund_status,
+               'adjusted_amount', r.adjusted_amount,
+               'refund_due',      r.refund_due,
+               'refunded_amount', r.refunded_amount,
+               'pending_refund',  GREATEST(r.refund_due - r.refunded_amount, 0),
+               'excess_refund',   GREATEST(r.refunded_amount - r.refund_due, 0),
+               'return_reason',   r.return_reason,
+               'return_date_fmt', TO_CHAR(r.created_at, 'DD Mon YYYY, HH12:MI AM')
+             ) ORDER BY r.created_at DESC
+           ), '[]'::json
+         )                                 AS returns
+       FROM tbl_purchase_returns r
+       WHERE r.zodu_id = p.zodu_id
+         AND r.original_purchase_id = p.purchase_id
+     ) ret ON TRUE`;
+
 exports.getPurchases = async ({
   zodu_id,
   branch_id,
@@ -102,9 +132,17 @@ exports.getPurchases = async ({
        TO_CHAR(p.due_date, 'DD Mon YYYY') AS due_date_formatted,
        v.vendor_name,
        v.company_name,
-       v.vendor_phone
+       v.vendor_phone,
+       -- Returns reduce what is still owed: due = stored balance - returned amount,
+       -- never below 0. With no returns this is unchanged.
+       GREATEST(p.balance_amount - ret.total_returned, 0) AS balance_amount,
+       p.balance_amount                                   AS original_balance_amount,
+       ret.return_count,
+       ret.total_returned,
+       ret.returns
      FROM tbl_purchase p
      LEFT JOIN tbl_vendor v ON v.vendor_id = p.vendor_id AND p.zodu_id = v.zodu_id AND p.branch_id = v.branch_id
+     ${RETURNS_JOIN}
      ${where}
      ORDER BY p.purchase_date DESC, p.created_at DESC NULLS LAST`,
     values
@@ -168,10 +206,22 @@ const { rows: items } = await conn.query(
      pi.subtotal,
      pi.total_price,
      pi.category_id,
+     -- how much of this line has already been returned (the purchase line itself is
+     -- never changed by a return), and what can still be returned
+     COALESCE(rt.returned_qty, 0)                          AS returned_qty,
+     GREATEST(pi.qty - COALESCE(rt.returned_qty, 0), 0)    AS returnable_qty,
      mi.hsn_code                -- 🔥 ADDED
    FROM tbl_purchase_items pi
    LEFT JOIN tbl_menu_items mi 
      ON mi.item_id = pi.item_id AND mi.branch_id = $3 AND mi.zodu_id = $2  -- 🔥 JOIN WITH MENU ITEMS TO GET HSN CODE
+   LEFT JOIN LATERAL (
+     SELECT SUM(ri.return_qty) AS returned_qty
+     FROM tbl_purchase_return_items ri
+     JOIN tbl_purchase_returns r ON r.return_uuid = ri.return_uuid
+     WHERE r.zodu_id = $2
+       AND r.original_purchase_id = pi.purchase_id
+       AND ri.original_item_id = pi.purchase_item_id
+   ) rt ON TRUE
    WHERE pi.purchase_id = $1
    ORDER BY pi.purchase_item_id ASC`,
   [purchase.purchase_id, purchase.zodu_id, purchase.branch_id]
@@ -195,11 +245,45 @@ console.log(items)
     [purchase.purchase_id]
   );
 
+  // ── 4. Returns / debit notes against this purchase ───────────
+  const { rows: returns } = await conn.query(
+    `SELECT
+       r.return_uuid, r.return_id, r.return_type, r.return_amount,
+       r.refund_type, r.refund_status, r.adjusted_amount, r.refund_due,
+       r.refunded_amount,
+       GREATEST(r.refund_due - r.refunded_amount, 0) AS pending_refund,
+       GREATEST(r.refunded_amount - r.refund_due, 0) AS excess_refund,
+       r.return_reason,
+       TO_CHAR(r.created_at, 'DD Mon YYYY, HH12:MI AM') AS return_date_fmt
+     FROM tbl_purchase_returns r
+     WHERE r.zodu_id = $1 AND r.original_purchase_id = $2
+     ORDER BY r.created_at DESC`,
+    [purchase.zodu_id, purchase.purchase_id]
+  );
+  const totalReturned = returns.reduce((sum, r) => sum + Number(r.return_amount), 0);
+
   return {
     ...purchase,
     items,
     payments,
+    returns,
+    total_returned: totalReturned,
+    // Stored balance is total - paid; the net due also takes returns off.
+    net_balance_amount: Math.max(Number(purchase.balance_amount) - totalReturned, 0),
   };
+};
+
+// A purchase with returns cannot be edited or cancelled: editing re-creates its item
+// rows (new ids) and cancelling reverses its stock, either of which would leave the
+// returns pointing at lines that no longer match.
+exports.hasReturns = async (client, purchase_id, zodu_id) => {
+  const { rowCount } = await client.query(
+    `SELECT 1 FROM tbl_purchase_returns
+     WHERE original_purchase_id = $1 AND zodu_id = $2
+     LIMIT 1`,
+    [purchase_id, zodu_id]
+  );
+  return rowCount > 0;
 };
 
 // Used inside transactions — must use the client

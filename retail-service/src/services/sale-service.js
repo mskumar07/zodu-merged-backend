@@ -17,11 +17,60 @@ const refundStatusFor = (refundDue, refunded) => {
   return refunded <= 0 ? "PENDING" : "PARTIAL";
 };
 
-// Validates the requested lines against the original sale and prices them.
+// Value of a sale line before tax: a tax-inclusive price has the tax taken out.
+const baseOf = (orig, qty) => {
+  const value = qty * Number(orig.price);
+  const gstPct = Number(orig.gst_percentage) || 0;
+  return orig.tax_inclusive && gstPct > 0 ? value / (1 + gstPct / 100) : value;
+};
+
+// Validates the requested lines against the original sale and prices them so the
+// credit matches what the customer actually paid on this invoice:
+//   - tax is the invoice's own stored line tax, pro-rated by quantity (so a
+//     "discount before GST" invoice, whose stored tax is already reduced, is
+//     reversed the same way);
+//   - the line's own discount is pro-rated by quantity;
+//   - the invoice-level discount is shared across lines the way the invoice
+//     applied it: by pre-tax value for "before GST", by value incl. tax for
+//     "after GST" (the default).
 // `returnedQtyMap` must already exclude the return being edited, if any.
-function buildReturnLines(items, originalById, returnedQtyMap) {
+function buildReturnLines(items, originalItems, returnedQtyMap, sale) {
+  const originalById = new Map(originalItems.map((item) => [item.id, item]));
+
+  const beforeGst = sale.discount_gst_mode === "before";
+  const orderDiscount = Number(sale.discount_amount) || 0;
+  const weightOf = (orig) =>
+    baseOf(orig, Number(orig.quantity)) + (beforeGst ? 0 : Number(orig.tax_amount) || 0);
+  const totalWeight = orderDiscount > 0
+    ? originalItems.reduce((sum, orig) => sum + weightOf(orig), 0)
+    : 0;
+
+  // Line discounts: some older invoices recorded a line discount that was never
+  // deducted from their billed total. Credit what was actually billed, so apply
+  // line discounts only when the billed total reconciles with them (or when
+  // neither way reconciles, which is the normal case for a current invoice).
+  const grossValue = originalItems.reduce(
+    (sum, orig) => sum + baseOf(orig, Number(orig.quantity)) + (Number(orig.tax_amount) || 0),
+    0
+  );
+  const lineDiscountTotal = originalItems.reduce((sum, orig) => sum + (Number(orig.discount) || 0), 0);
+  const billed = Number(sale.total_amount);
+  const lineDiscountApplied =
+    Math.abs(billed - (grossValue - lineDiscountTotal - orderDiscount)) < 1 ||
+    Math.abs(billed - (grossValue - orderDiscount)) >= 1;
+  const lineDiscountFactor = lineDiscountApplied ? 1 : 0;
+
+  // What the invoice's lines add up to before whole-rupee rounding. The gap to the
+  // billed total is the invoice's round-off, and each return takes its share so
+  // that returning everything credits exactly what was billed. A gap of a rupee
+  // or more is not rounding, so it is ignored.
+  const invoiceValue = grossValue - lineDiscountFactor * lineDiscountTotal - orderDiscount;
+  const billedGap = round2(billed - invoiceValue);
+  const invoiceRoundOff = Math.abs(billedGap) < 1 ? billedGap : 0;
+
   let subtotal = 0;
   let totalTax = 0;
+  let totalDiscount = 0;
   const lines = [];
 
   for (const reqItem of items) {
@@ -47,14 +96,25 @@ function buildReturnLines(items, originalById, returnedQtyMap) {
       );
     }
 
-    const lineSubtotal = reqItem.return_qty * Number(orig.price);
+    // Everything is rounded per line so the document totals are exactly the sum
+    // of its lines.
+    const share = reqItem.return_qty / Number(orig.quantity);
     const gstPct = Number(orig.gst_percentage) || 0;
-    const lineTax = orig.tax_inclusive
-      ? lineSubtotal - lineSubtotal / (1 + gstPct / 100)
-      : (lineSubtotal * gstPct) / 100;
+    const lineTaxable = round2(baseOf(orig, reqItem.return_qty));
+    const lineTax = round2(
+      orig.tax_amount != null
+        ? Number(orig.tax_amount) * share
+        : (lineTaxable * gstPct) / 100
+    );
+    const lineDiscount = round2(
+      (Number(orig.discount) || 0) * lineDiscountFactor * share +
+        (totalWeight > 0 ? (orderDiscount * weightOf(orig) * share) / totalWeight : 0)
+    );
+    const cgst = round2(lineTax / 2);
 
-    subtotal += lineSubtotal;
+    subtotal += lineTaxable;
     totalTax += lineTax;
+    totalDiscount += lineDiscount;
 
     lines.push({
       original_item_id: orig.id,
@@ -66,12 +126,30 @@ function buildReturnLines(items, originalById, returnedQtyMap) {
       original_qty: Number(orig.quantity),
       price: Number(orig.price),
       tax_amount: lineTax,
+      taxable_amount: lineTaxable,
+      discount_amount: lineDiscount,
+      cgst,
+      sgst: round2(lineTax - cgst),
       gst_percentage: orig.gst_percentage,
       hsn_code: orig.hsn_code,
     });
   }
 
-  return { lines, subtotal, totalTax };
+  // subtotal = value before tax and discount; total = what the customer is credited.
+  subtotal = round2(subtotal);
+  totalTax = round2(totalTax);
+  totalDiscount = round2(totalDiscount);
+  const credit = round2(subtotal - totalDiscount + totalTax);
+  const roundOff = invoiceValue > 0 ? round2((invoiceRoundOff * credit) / invoiceValue) : 0;
+
+  return {
+    lines,
+    subtotal,
+    totalTax,
+    discount: totalDiscount,
+    roundOff,
+    total: round2(credit + roundOff),
+  };
 }
 
 // Splits a return into "reduces what the customer still owes" and "cash we owe
@@ -165,14 +243,13 @@ async function createSaleReturn(dto) {
       throw NotFoundError("No items found for this sale");
     }
 
-    const originalById = new Map(originalItems.map((item) => [item.id, item]));
     const returnedQtyMap = new Map(
       alreadyReturnedRows.map((row) => [Number(row.original_item_id), Number(row.returned_qty)])
     );
 
-    const { lines, subtotal, totalTax } = buildReturnLines(items, originalById, returnedQtyMap);
+    const { lines, subtotal, totalTax, discount, roundOff, total } = buildReturnLines(items, originalItems, returnedQtyMap, sale);
 
-    const returnAmount = round2(subtotal);
+    const returnAmount = total;
     const otherReturned = Number(sale.returned_total);
     const { adjustedAmount, refundDue } = splitReturnAmount(sale, returnAmount, otherReturned);
 
@@ -194,6 +271,8 @@ async function createSaleReturn(dto) {
       total_items: lines.length,
       subtotal,
       total_tax: totalTax,
+      discount_amount: discount,
+      round_off: roundOff,
       return_amount: returnAmount,
       refund_type: refund_type || null,
       notes,
@@ -301,14 +380,13 @@ async function updateSaleReturn(dto) {
       repo.findReturnItemQtys(client, return_uuid),
     ]);
 
-    const originalById = new Map(originalItems.map((item) => [item.id, item]));
     const returnedQtyMap = new Map(
       otherReturnedRows.map((row) => [Number(row.original_item_id), Number(row.returned_qty)])
     );
 
-    const { lines, subtotal, totalTax } = buildReturnLines(items, originalById, returnedQtyMap);
+    const { lines, subtotal, totalTax, discount, roundOff, total } = buildReturnLines(items, originalItems, returnedQtyMap, sale);
 
-    const returnAmount = round2(subtotal);
+    const returnAmount = total;
     const otherReturned = Math.max(round2(Number(sale.returned_total) - Number(ret.return_amount)), 0);
     const { adjustedAmount, refundDue } = splitReturnAmount(sale, returnAmount, otherReturned);
 
@@ -324,6 +402,8 @@ async function updateSaleReturn(dto) {
       total_items: lines.length,
       subtotal,
       total_tax: totalTax,
+      discount_amount: discount,
+      round_off: roundOff,
       return_amount: returnAmount,
       adjusted_amount: adjustedAmount,
       refund_due: refundDue,
@@ -488,7 +568,65 @@ async function deleteSaleReturn(dto) {
   }
 }
 
+// One return for the details dialog. Totals come from the item rows (done in SQL),
+// so subtotal (before tax) + tax always equals the return total, for old returns too.
+async function getSaleReturnDetail({ return_uuid, zodu_id, branch_id }) {
+  const row = await repo.getSaleReturnDetail(return_uuid, zodu_id, branch_id);
+  if (!row) {
+    throw NotFoundError("Sale return not found");
+  }
+
+  return {
+    return: {
+      return_uuid: row.return_uuid,
+      return_id: row.return_id,
+      return_type: row.return_type,
+      original_sale_uuid: row.original_sale_uuid,
+      original_sale_id: row.original_sale_id,
+      return_reason: row.return_reason,
+      notes: row.notes,
+      refund_type: row.refund_type,
+      refund_status: row.refund_status,
+      return_date_fmt: row.return_date_fmt,
+      return_time_fmt: row.return_time_fmt,
+      created_at_fmt: row.created_at_fmt,
+    },
+    customer: row.cust_uuid
+      ? {
+          cust_uuid: row.cust_uuid,
+          cust_id: row.cust_id,
+          cust_name: row.cust_name,
+          cpy_name: row.cpy_name,
+          mobile: row.customer_mobile,
+          gst: row.customer_gst,
+          address_line1: row.address_line1,
+          address_line2: row.address_line2,
+          city: row.city,
+          state: row.state,
+          pincode: row.pincode,
+        }
+      : null,
+    items: row.items,
+    summary: {
+      subtotal: Number(row.subtotal),
+      discount_amount: Number(row.discount_amount),
+      round_off: Number(row.round_off),
+      cgst: Number(row.cgst),
+      sgst: Number(row.sgst),
+      total_tax: Number(row.total_tax),
+      return_total: Number(row.return_total),
+      adjusted_amount: Number(row.adjusted_amount),
+      refund_due: Number(row.refund_due),
+      refunded_amount: Number(row.refunded_amount),
+      pending_refund: Number(row.pending_refund),
+      excess_refund: Number(row.excess_refund),
+    },
+    refunds: row.refunds,
+  };
+}
+
 module.exports = {
+  getSaleReturnDetail,
   createSaleReturn,
   updateSaleReturn,
   recordRefund,

@@ -343,6 +343,19 @@ apply "$RESTAURANT_DB" restaurant-service/migrations/gst_state_code.sql
 # retail — sale return / credit note: return_type + adjusted/refund_due/refunded
 # split on tbl_sale_returns, and tbl_sale_return_payment for refund instalments.
 apply "$RETAIL_DB"     retail-service/migrations/sale_return_refund.sql
+
+# retail — taxable_amount / cgst / sgst on tbl_sale_return_items (backfilled
+# from the original sale lines) so returns show the same tax split as invoices.
+apply "$RETAIL_DB"     retail-service/migrations/sale_return_item_tax_split.sql
+
+# retail — discount_amount on tbl_sale_returns / tbl_sale_return_items so a return
+# credits only what the customer paid after line and order-level discounts.
+apply "$RETAIL_DB"     retail-service/migrations/sale_return_discount.sql
+
+# retail + restaurant — purchase returns / debit notes: tbl_purchase_returns, its items and the
+# refunds received from the vendor.
+apply "$RETAIL_DB"     retail-service/migrations/purchase_return.sql
+apply "$RESTAURANT_DB" restaurant-service/migrations/purchase_return.sql
 # restaurant-service — drops tbl_kot_list's FK to tbl_tmp_orders. createKOT
 # now also runs for Takeaway/Delivery orders, which never get a tbl_tmp_orders
 # row (they write straight to tbl_orders), so the FK 500s on every such insert.

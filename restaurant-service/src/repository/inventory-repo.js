@@ -175,10 +175,17 @@ exports.getStockHistoryRepo = async ({
         CASE
           WHEN l.transaction_type IN ('purchase', 'purchase_item_added', 'purchase_item_qty_updated', 'purchase_item_removed', 'purchase_cancel')
             THEN p.purchase_id::TEXT
+          -- A deleted return's row is gone, but its id is in the ledger note, so the
+          -- history still shows PRT-... after the return is deleted.
+          WHEN l.transaction_type IN ('PURCHASE_RETURN', 'PURCHASE_RETURN_EDITED', 'PURCHASE_RETURN_DELETED')
+            THEN COALESCE(pr.return_id::TEXT, substring(l.notes from 'PRT-[A-Z0-9]+-[A-Z0-9]+'))
           WHEN l.transaction_type IN ('sale', 'sale_cancel', 'quotation_converted_to_sale')
             THEN o.public_order_no
         END,
-        l.reference_id::TEXT
+        CASE
+          WHEN l.reference_id::TEXT ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN NULL
+          ELSE l.reference_id::TEXT
+        END
       ) AS reference_id,
 
       l.qty_change,
@@ -209,6 +216,9 @@ exports.getStockHistoryRepo = async ({
     LEFT JOIN tbl_purchase p
       ON p.id = l.reference_id
       AND l.transaction_type IN ('purchase', 'purchase_item_added', 'purchase_item_qty_updated', 'purchase_item_removed', 'purchase_cancel')
+    LEFT JOIN tbl_purchase_returns pr
+      ON pr.return_uuid = l.reference_id
+      AND l.transaction_type IN ('PURCHASE_RETURN', 'PURCHASE_RETURN_EDITED', 'PURCHASE_RETURN_DELETED')
     LEFT JOIN tbl_orders o
       ON o.api_order_id = l.reference_id
       AND o.zodu_id = l.zodu_id

@@ -21,6 +21,7 @@ app.use('/api/menu', require('./api/menu-controller'));
 app.use('/api/purchase', require('./api/purchase-controller'));
 app.use('/api/vendor', require('./api/vendor-controller'));
 app.use('/api/sale-returns', require('./api/saleReturn-controller'));
+app.use('/api/purchase-returns', require('./api/purchaseReturn-controller'));
 app.use('/api/report',      require('./api/report-controller'));
 app.use('/api/expense',     require('./api/expense-controller'));
 app.use('/api/gst-state-code', require('./api/gstStateCode-controller'));

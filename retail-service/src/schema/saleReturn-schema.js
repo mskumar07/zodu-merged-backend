@@ -48,6 +48,9 @@ export const deleteSaleReturnSchema = Joi.object({
   branch_id: Joi.string().trim().max(50).required(),
 });
 
+// Reads and deletes address a return the same way: id in the path, tenant in the query.
+export const getSaleReturnSchema = deleteSaleReturnSchema;
+
 export const refundSaleReturnSchema = Joi.object({
   zodu_id:       Joi.string().trim().max(50).required(),
   branch_id:     Joi.string().trim().max(50).required(),
