@@ -9,6 +9,7 @@ class SaleReturnRepository {
       `SELECT
           sale_uuid, sale_id, branch_id, zodu_id,
           customer_uuid, total_amount, paid_amount, balance_amount, payment_status,
+          discount_amount, discount_gst_mode,
           (SELECT COALESCE(SUM(r.return_amount), 0)
              FROM tbl_sale_returns r
             WHERE r.original_sale_uuid = tbl_sales.sale_uuid) AS returned_total
@@ -84,6 +85,7 @@ class SaleReturnRepository {
       total_tax, return_amount, refund_type,
       notes, created_by,
       return_type, adjusted_amount, refund_due, refund_status,
+      discount_amount, round_off,
     } = payload;
 
     const { rows } = await client.query(
@@ -93,9 +95,10 @@ class SaleReturnRepository {
           return_reason, total_items, subtotal,
           total_tax, return_amount, refund_type,
           notes, created_by,
-          return_type, adjusted_amount, refund_due, refund_status
+          return_type, adjusted_amount, refund_due, refund_status,
+          discount_amount, round_off
        )
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
        RETURNING
           return_uuid, return_id, return_amount,
           refund_type, return_type, adjusted_amount,
@@ -110,6 +113,7 @@ class SaleReturnRepository {
         notes, created_by,
         return_type, adjusted_amount.toFixed(2),
         refund_due.toFixed(2), refund_status,
+        discount_amount.toFixed(2), round_off.toFixed(2),
       ]
     );
     return rows[0];
@@ -122,22 +126,26 @@ class SaleReturnRepository {
       `INSERT INTO tbl_sale_return_items (
           return_uuid, original_item_id, item_id,
           item_name, unit, return_qty, original_qty,
-          price, tax_amount, gst_percentage, hsn_code,
+          price, tax_amount, taxable_amount, discount_amount, cgst, sgst,
+          gst_percentage, hsn_code,
           description
        )
        SELECT
           $1::uuid, t.original_item_id, t.item_id,
           t.item_name, t.unit, t.return_qty, t.original_qty,
-          t.price, t.tax_amount, t.gst_percentage, t.hsn_code,
+          t.price, t.tax_amount, t.taxable_amount, t.discount_amount, t.cgst, t.sgst,
+          t.gst_percentage, t.hsn_code,
           t.description
        FROM UNNEST(
           $2::int[], $3::text[], $4::text[], $5::text[],
           $6::numeric[], $7::numeric[], $8::numeric[], $9::numeric[],
-          $10::numeric[], $11::text[], $12::text[]
+          $10::numeric[], $11::numeric[], $12::numeric[],
+          $13::numeric[], $14::text[], $15::text[], $16::numeric[]
        ) AS t(
           original_item_id, item_id, item_name, unit,
           return_qty, original_qty, price, tax_amount,
-          gst_percentage, hsn_code, description
+          taxable_amount, cgst, sgst,
+          gst_percentage, hsn_code, description, discount_amount
        )`,
       [
         returnUuid,
@@ -149,9 +157,13 @@ class SaleReturnRepository {
         lines.map((l) => l.original_qty),
         lines.map((l) => l.price),
         lines.map((l) => l.tax_amount.toFixed(2)),
+        lines.map((l) => l.taxable_amount.toFixed(2)),
+        lines.map((l) => l.cgst.toFixed(2)),
+        lines.map((l) => l.sgst.toFixed(2)),
         lines.map((l) => l.gst_percentage),
         lines.map((l) => l.hsn_code),
         lines.map((l) => l.description ?? null),
+        lines.map((l) => l.discount_amount.toFixed(2)),
       ]
     );
   }
@@ -265,7 +277,7 @@ class SaleReturnRepository {
     const {
       return_uuid, return_type, return_reason, refund_type, notes,
       total_items, subtotal, total_tax, return_amount,
-      adjusted_amount, refund_due, refund_status,
+      adjusted_amount, refund_due, refund_status, discount_amount, round_off,
     } = payload;
 
     await client.query(
@@ -280,12 +292,15 @@ class SaleReturnRepository {
            return_amount   = $9,
            adjusted_amount = $10,
            refund_due      = $11,
-           refund_status   = $12
+           refund_status   = $12,
+           discount_amount = $13,
+           round_off       = $14
        WHERE return_uuid   = $1`,
       [
         return_uuid, return_type ?? null, return_reason ?? null, refund_type ?? null, notes ?? null,
         total_items, subtotal.toFixed(2), total_tax.toFixed(2), return_amount.toFixed(2),
         adjusted_amount.toFixed(2), refund_due.toFixed(2), refund_status,
+        discount_amount.toFixed(2), round_off.toFixed(2),
       ]
     );
   }
@@ -336,6 +351,93 @@ class SaleReturnRepository {
        WHERE return_uuid   = $1`,
       [returnUuid, refundedAmount.toFixed(2), refundStatus]
     );
+  }
+
+  // ── Detail (read-only, runs on the pool) ──────────────────
+
+  // Everything the Sales Return Details dialog needs, in ONE round trip: header,
+  // customer, items (as a JSON array in line order), refund payments and the
+  // totals. The lateral joins aggregate each child table once per return, so the
+  // result is a single row and the app does no further queries or summing.
+  async getSaleReturnDetail(returnUuid, zoduId, branchId) {
+    const { rows } = await pool.query(
+      `SELECT
+          r.return_uuid, r.return_id, r.return_type,
+          r.original_sale_uuid, r.original_sale_id,
+          r.return_reason, r.notes, r.refund_type, r.refund_status,
+          r.adjusted_amount, r.refund_due, r.refunded_amount,
+          GREATEST(r.refund_due - r.refunded_amount, 0) AS pending_refund,
+          GREATEST(r.refunded_amount - r.refund_due, 0) AS excess_refund,
+          TO_CHAR(r.return_date, 'DD Mon YYYY')             AS return_date_fmt,
+          TO_CHAR(r.return_time, 'HH12:MI AM')              AS return_time_fmt,
+          TO_CHAR(r.created_at,  'DD Mon YYYY, HH12:MI AM') AS created_at_fmt,
+
+          c.cust_uuid, c.cust_id, c.cust_name, c.cpy_name,
+          c.mobile_no->>0 AS customer_mobile,
+          c.gst           AS customer_gst,
+          c.address_line1, c.address_line2, c.city, c.state, c.pincode,
+
+          COALESCE(it.items, '[]'::json)   AS items,
+          COALESCE(it.subtotal, 0)         AS subtotal,
+          COALESCE(it.discount, 0)         AS discount_amount,
+          COALESCE(it.cgst, 0)             AS cgst,
+          COALESCE(it.sgst, 0)             AS sgst,
+          COALESCE(it.total_tax, 0)        AS total_tax,
+          r.round_off,
+          COALESCE(it.subtotal - it.discount + it.total_tax, 0) + r.round_off AS return_total,
+          COALESCE(rf.refunds, '[]'::json) AS refunds
+       FROM tbl_sale_returns r
+       LEFT JOIN tbl_sales s
+              ON s.sale_uuid = r.original_sale_uuid
+       LEFT JOIN tbl_customer c
+              ON c.cust_uuid = s.customer_uuid AND c.branch_id = s.branch_id
+       LEFT JOIN LATERAL (
+          SELECT
+             json_agg(json_build_object(
+                'id',               i.id,
+                'original_item_id', i.original_item_id,
+                'item_id',          i.item_id,
+                'item_name',        i.item_name,
+                'description',      i.description,
+                'unit',             i.unit,
+                'hsn_code',         i.hsn_code,
+                'return_qty',       i.return_qty,
+                'original_qty',     i.original_qty,
+                'price',            i.price,
+                'gst_percentage',   i.gst_percentage,
+                'taxable_amount',   i.taxable_amount,
+                'discount_amount',  i.discount_amount,
+                'cgst',             i.cgst,
+                'sgst',             i.sgst,
+                'tax_amount',       i.tax_amount,
+                'total_amount',     i.taxable_amount - i.discount_amount + i.tax_amount
+             ) ORDER BY i.id)       AS items,
+             SUM(i.taxable_amount)  AS subtotal,
+             SUM(i.discount_amount) AS discount,
+             SUM(i.cgst)            AS cgst,
+             SUM(i.sgst)            AS sgst,
+             SUM(i.tax_amount)      AS total_tax
+          FROM tbl_sale_return_items i
+          WHERE i.return_uuid = r.return_uuid
+       ) it ON TRUE
+       LEFT JOIN LATERAL (
+          SELECT json_agg(json_build_object(
+                'id',              p.id,
+                'refund_amount',   p.refund_amount,
+                'payment_mode',    p.payment_mode,
+                'reference_no',    p.reference_no,
+                'refund_date',     p.refund_date,
+                'refund_date_fmt', TO_CHAR(p.refund_date, 'DD Mon YYYY')
+             ) ORDER BY p.created_at, p.id) AS refunds
+          FROM tbl_sale_return_payment p
+          WHERE p.return_uuid = r.return_uuid
+       ) rf ON TRUE
+       WHERE r.return_uuid = $1
+         AND r.zodu_id     = $2
+         AND r.branch_id   = $3`,
+      [returnUuid, zoduId, branchId]
+    );
+    return rows[0] ?? null;
   }
 
   // ── Transaction helpers ───────────────────────────────────

@@ -214,7 +214,7 @@ exports.getPurchaseSummary = async ({ zodu_id, branch_id }) => {
            END
          ), 0)::text                                            AS last_month_spent
        FROM tbl_purchase
-       WHERE zodu_id = $1 AND branch_id = $2`,
+       WHERE zodu_id = $1 AND branch_id = $2 AND cancelled_purchase = false`,
       [zodu_id, branch_id]
     );
     return { success: true, data: rows[0] };
@@ -235,6 +235,14 @@ exports.updatePurchase = async (purchase_id, data) => {
     if (!oldPurchase) {
       await client.query("ROLLBACK");
       return { success: false, message: "Purchase not found" };
+    }
+
+    if (await repo.hasReturns(client, purchase_id, oldPurchase.zodu_id)) {
+      await client.query("ROLLBACK");
+      return {
+        success: false,
+        message: "This purchase has returns / debit notes. Delete them before editing the purchase.",
+      };
     }
 
     const oldItems = await repo.getPurchaseItems(client, purchase_id);
@@ -408,6 +416,13 @@ exports.deletePurchase = async (purchase_id) => {
       await client.query("ROLLBACK");
       return { success: false, message: "Purchase already cancelled" };
     }
+    if (await repo.hasReturns(client, purchase_id, purchase.zodu_id)) {
+      await client.query("ROLLBACK");
+      return {
+        success: false,
+        message: "This purchase has returns / debit notes. Delete them before cancelling the purchase.",
+      };
+    }
 
     const items = purchase.items || [];
 
@@ -529,7 +544,13 @@ exports.markPayment = async (purchase_id, data) => {
        SET paid_amount = paid_amount + $1,
            payment_status =
              CASE
-               WHEN (paid_amount + $1) >= total_amount THEN 'paid'
+               -- what is owed is the total less any returns against the purchase
+               WHEN (paid_amount + $1) >= total_amount - (
+                      SELECT COALESCE(SUM(r.return_amount), 0)
+                      FROM tbl_purchase_returns r
+                      WHERE r.zodu_id = tbl_purchase.zodu_id
+                        AND r.original_purchase_id = tbl_purchase.purchase_id
+                    ) THEN 'paid'
                WHEN (paid_amount + $1) = 0             THEN 'pending'
                ELSE 'partial'
              END,

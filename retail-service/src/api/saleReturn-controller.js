@@ -1,5 +1,5 @@
 const express = require("express");
-const { createSaleReturnSchema, updateSaleReturnSchema, refundSaleReturnSchema, deleteSaleReturnSchema } = require("../schema/saleReturn-schema");
+const { createSaleReturnSchema, getSaleReturnSchema, updateSaleReturnSchema, refundSaleReturnSchema, deleteSaleReturnSchema } = require("../schema/saleReturn-schema");
 const router = express.Router();
 const sale = require("../services/sale-service");
 const { successResponse } = require("../utils/responseFormatter/successResponse");
@@ -20,6 +20,30 @@ router.post("/", async (req, res, next) => {
     return res
       .status(201)
       .json(successResponse("Sale return created successfully", result));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// One return with its items (tax split), customer, summary and refund payments.
+router.get("/:return_uuid", async (req, res, next) => {
+  try {
+    const { error, value } = getSaleReturnSchema.validate(req.query, {
+      abortEarly: false,
+    });
+
+    if (error) {
+      return res.status(400).json({ errors: error.details.map((d) => d.message) });
+    }
+
+    const result = await sale.getSaleReturnDetail({
+      ...value,
+      return_uuid: req.params.return_uuid,
+    });
+
+    return res
+      .status(200)
+      .json(successResponse("Sale return fetched successfully", result));
   } catch (err) {
     next(err);
   }
