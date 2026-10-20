@@ -162,37 +162,81 @@ exports.getPurchases = async ({
     conditions.push(`p.payment_status = $${idx++}`);
     values.push(payment_status);
   }
+  // A return is listed when its purchase matches every filter (its own id also counts for search).
+  const returnConditions = [...conditions];
   if (search) {
-    conditions.push(
-      `(p.purchase_id ILIKE $${idx} OR p.vendor_id ILIKE $${idx} OR v.vendor_name ILIKE $${idx})`
-    );
+    const byPurchase = `p.purchase_id ILIKE $${idx} OR p.vendor_id ILIKE $${idx} OR v.vendor_name ILIKE $${idx}`;
+    conditions.push(`(${byPurchase})`);
+    returnConditions.push(`(${byPurchase} OR r.return_id ILIKE $${idx})`);
     values.push(`%${search}%`);
     idx++;
   }
 
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
-  const { rows } = await conn.query(
-    `SELECT
-       p.*,
-       TO_CHAR(p.purchase_date, 'DD Mon YYYY') AS purchase_date_formatted,
-       TO_CHAR(p.due_date, 'DD Mon YYYY') AS due_date_formatted,
-       v.vendor_name,
-       v.company_name,
-       v.vendor_phone,
-       -- Returns reduce what is still owed: due = stored balance - returned amount,
-       -- never below 0. With no returns this is unchanged.
-       GREATEST(p.balance_amount - ret.total_returned, 0) AS balance_amount,
-       p.balance_amount                                   AS original_balance_amount,
-       ret.return_count,
-       ret.total_returned,
-       ret.returns
-     FROM tbl_purchase p
-     LEFT JOIN tbl_vendor v ON v.vendor_id = p.vendor_id AND p.zodu_id = v.zodu_id AND p.branch_id = v.branch_id
-     ${RETURNS_JOIN}
-     ${where}
-     ORDER BY p.purchase_date DESC, p.created_at DESC NULLS LAST`,
-    values
+  const [purchaseResult, returnResult] = await Promise.all([
+    conn.query(
+      `SELECT
+         'purchase'::text AS row_type,
+         TO_CHAR(p.purchase_date, 'YYYY-MM-DD') AS sort_date,
+         EXTRACT(EPOCH FROM p.created_at)       AS sort_ts,
+         p.*,
+         TO_CHAR(p.purchase_date, 'DD Mon YYYY') AS purchase_date_formatted,
+         TO_CHAR(p.due_date, 'DD Mon YYYY') AS due_date_formatted,
+         v.vendor_name,
+         v.company_name,
+         v.vendor_phone,
+         -- Returns reduce what is still owed: due = stored balance - returned amount,
+         -- never below 0. With no returns this is unchanged.
+         GREATEST(p.balance_amount - ret.total_returned, 0) AS balance_amount,
+         p.balance_amount                                   AS original_balance_amount,
+         ret.return_count,
+         ret.total_returned,
+         ret.returns
+       FROM tbl_purchase p
+       LEFT JOIN tbl_vendor v ON v.vendor_id = p.vendor_id AND p.zodu_id = v.zodu_id AND p.branch_id = v.branch_id
+       ${RETURNS_JOIN}
+       ${where}`,
+      values
+    ),
+    // The returns / debit notes themselves, as list entries of their own: they are placed by
+    // their own date, so a return made today sits among today's rows while its purchase stays put.
+    conn.query(
+      `SELECT
+         'return'::text AS row_type,
+         TO_CHAR(r.return_date, 'YYYY-MM-DD') AS sort_date,
+         EXTRACT(EPOCH FROM r.created_at)     AS sort_ts,
+         r.return_uuid,
+         r.return_id,
+         r.return_type,
+         r.return_amount,
+         r.refund_type,
+         r.refund_status,
+         r.adjusted_amount,
+         r.refund_due,
+         r.refunded_amount,
+         GREATEST(r.refund_due - r.refunded_amount, 0) AS pending_refund,
+         GREATEST(r.refunded_amount - r.refund_due, 0) AS excess_refund,
+         r.return_reason,
+         TO_CHAR(r.created_at, 'DD Mon YYYY, HH12:MI AM') AS return_date_fmt,
+         r.original_purchase_id,
+         p.vendor_id,
+         v.vendor_name,
+         v.company_name,
+         v.vendor_phone
+       FROM tbl_purchase_returns r
+       JOIN tbl_purchase p ON p.zodu_id = r.zodu_id AND p.branch_id = r.branch_id AND p.purchase_id = r.original_purchase_id
+       LEFT JOIN tbl_vendor v ON v.vendor_id = p.vendor_id AND p.zodu_id = v.zodu_id AND p.branch_id = v.branch_id
+       WHERE ${returnConditions.join(" AND ")}`,
+      values
+    ),
+  ]);
+
+  // Newest first, purchases and returns together: by date, then by when the row was created.
+  const rows = [...purchaseResult.rows, ...returnResult.rows].sort(
+    (a, b) =>
+      (a.sort_date < b.sort_date ? 1 : a.sort_date > b.sort_date ? -1 : 0) ||
+      (Number(b.sort_ts) || 0) - (Number(a.sort_ts) || 0)
   );
 
   return rows;

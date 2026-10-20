@@ -755,7 +755,7 @@ function getGstr1NilRated({ financial_year, month, page, limit }) {
   };
 }
 
-async function getGstr1CDNR({ financial_year, month, gstin, search, page, limit }) {
+async function getGstr1CDNR(zodu_id, branch_id, { financial_year, month, gstin, search, page, limit }) {
   const { from_date, to_date } = resolveGstPeriod(financial_year, month);
   const pg = Math.max(parseInt(page) || 1, 1);
   const lmt = Math.min(Math.max(parseInt(limit) || 50, 1), 200);
@@ -763,7 +763,7 @@ async function getGstr1CDNR({ financial_year, month, gstin, search, page, limit 
   const searchFilter = search && search.trim() ? `%${search.trim()}%` : null;
   const offset = (pg - 1) * lmt;
   const { summary, rows } = await repo.getGstr1CDNR(
-    from_date, to_date, gstinFilter, searchFilter, lmt, offset
+    zodu_id, branch_id, from_date, to_date, gstinFilter, searchFilter, lmt, offset
   );
   const n = (value) => parseFloat(value) || 0;
   const total = summary.total_notes;
@@ -780,7 +780,68 @@ async function getGstr1CDNR({ financial_year, month, gstin, search, page, limit 
       total_cess: n(summary.total_cess),
       total_note_value: n(summary.total_note_value),
     },
-    data: rows.map((note, index) => ({ s_no: offset + index + 1, ...note })),
+    data: rows.map((note, index) => ({
+      s_no:                  offset + index + 1,
+      note_no:               note.note_no,
+      note_type:             note.note_type,
+      note_date:             note.note_date,
+      original_invoice_no:   note.original_invoice_no,
+      original_invoice_date: note.original_invoice_date,
+      customer_name:         note.customer_name,
+      gstin:                 note.gstin,
+      taxable_value:         n(note.taxable_value),
+      igst:                  n(note.igst),
+      cgst:                  n(note.cgst),
+      sgst:                  n(note.sgst),
+      cess:                  n(note.cess),
+      total_value:           n(note.total_value),
+    })),
+    meta: getMeta({ page: pg, limit: lmt, total }),
+  };
+}
+
+// CDNUR: the same credit notes, for customers without a GSTIN (incl. walk-in sales).
+async function getGstr1CDNUR(zodu_id, branch_id, { financial_year, month, search, page, limit }) {
+  const { from_date, to_date } = resolveGstPeriod(financial_year, month);
+  const { page: pg, limit: lmt, offset } = getPagination({ page, limit });
+  const searchFilter = search && search.trim() ? `%${search.trim()}%` : null;
+
+  const { summary, rows } = await repo.getGstr1CDNUR(
+    zodu_id, branch_id, from_date, to_date, searchFilter, lmt, offset
+  );
+
+  const n = (value) => parseFloat(value) || 0;
+  const total = summary.total_notes;
+
+  return {
+    period: { financial_year, month: month ? parseInt(month) : null, from_date, to_date },
+    summary: {
+      total_notes:             total,
+      total_credit_note_value: n(summary.total_credit_note_value),
+      total_taxable_value:     n(summary.total_taxable_value),
+      total_igst:              n(summary.total_igst),
+      total_cgst:              n(summary.total_cgst),
+      total_sgst:              n(summary.total_sgst),
+      total_cess:              n(summary.total_cess),
+      total_note_value:        n(summary.total_note_value),
+    },
+    data: rows.map((note, index) => ({
+      s_no:                  offset + index + 1,
+      note_no:               note.note_no,
+      note_type:             note.note_type,
+      note_date:             note.note_date,
+      customer_name:         note.customer_name || "Walk-in Customer",
+      place_of_supply:       note.place_of_supply,
+      original_invoice_no:   note.original_invoice_no,
+      original_invoice_date: note.original_invoice_date,
+      note_value:            n(note.total_value),
+      taxable_value:         n(note.taxable_value),
+      igst:                  n(note.igst),
+      cgst:                  n(note.cgst),
+      sgst:                  n(note.sgst),
+      cess:                  n(note.cess),
+      total_value:           n(note.total_value),
+    })),
     meta: getMeta({ page: pg, limit: lmt, total }),
   };
 }
@@ -790,6 +851,7 @@ module.exports = {
   getGstr1B2CSmall,
   getGstr1NilRated,
   getGstr1CDNR,
+  getGstr1CDNUR,
   getGstr1B2BGstins,
   getGstr1B2B,
   getSalesSummary,
