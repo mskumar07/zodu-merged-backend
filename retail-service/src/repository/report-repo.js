@@ -1008,50 +1008,67 @@ async function getGstr1B2CSmall(zodu_id, branch_id, from_date, to_date, maxInvoi
   return { summary: summaryResult.rows[0], rows: rowsResult.rows };
 }
 
-// Empty typed source keeps the CDNR report contract ready until note tables exist.
-const GSTR1_CDNR_SOURCE = `
-  WITH note_source (
-    note_no, note_type, note_date, original_invoice_no, original_invoice_date,
-    customer_name, gstin, taxable_value, igst, cgst, sgst, cess, total_value
-  ) AS (
+// ── GSTR-1 CDNR / CDNUR (section 9B) ──────────────────────────
+// Credit notes = sale returns / credit notes (tbl_sale_returns) raised against non-cancelled
+// invoices, placed in the period by the return's own date. CDNR is the ones whose customer has a
+// GSTIN; CDNUR the rest (incl. walk-in sales with no customer) — one query shape, one flag.
+// note_no is the return id. Taxable value, CGST and SGST are summed from the returned lines
+// (older returns stored r.subtotal tax-inclusive, the line amounts are right for every row;
+// r.subtotal is only the fallback). IGST / CESS are not supported yet, so 0, same as B2B.
+// total_value is the return amount. Place of supply is the state in the customer's shipping
+// address ("…, Tamil Nadu, 625874"), else the customer's state; null for a walk-in.
+const gstr1NotesSource = (registered) => `
+  WITH filtered_notes AS (
     SELECT
-      NULL::text AS note_no,
-      NULL::text AS note_type,
-      NULL::date AS note_date,
-      NULL::text AS original_invoice_no,
-      NULL::date AS original_invoice_date,
-      NULL::text AS customer_name,
-      NULL::text AS gstin,
-      NULL::numeric AS taxable_value,
-      NULL::numeric AS igst,
-      NULL::numeric AS cgst,
-      NULL::numeric AS sgst,
-      NULL::numeric AS cess,
-      NULL::numeric AS total_value
-    WHERE false
-  ),
-  filtered_notes AS (
-    SELECT *
-    FROM note_source
-    WHERE note_date BETWEEN $1::date AND $2::date
-      AND ($3::text IS NULL OR UPPER(gstin) = $3)
+      r.return_id                        AS note_no,
+      'Credit Note'::text                AS note_type,
+      r.return_date                      AS note_date,
+      s.sale_id                          AS original_invoice_no,
+      s.sale_date                        AS original_invoice_date,
+      COALESCE(NULLIF(TRIM(c.cust_name), ''), c.cpy_name) AS customer_name,
+      UPPER(TRIM(c.gst))                 AS gstin,
+      COALESCE(
+        NULLIF(TRIM((regexp_match(c.shipping_address, ',\\s*([^,]+?)\\s*,\\s*\\d{6}\\s*$'))[1]), ''),
+        NULLIF(TRIM(c.state), '')
+      )                                  AS place_of_supply,
+      COALESCE(t.taxable, r.subtotal)    AS taxable_value,
+      0::numeric                         AS igst,
+      COALESCE(t.cgst, 0)                AS cgst,
+      COALESCE(t.sgst, 0)                AS sgst,
+      0::numeric                         AS cess,
+      r.return_amount                    AS total_value
+    FROM tbl_sale_returns r
+    JOIN tbl_sales s ON s.sale_uuid = r.original_sale_uuid
+    LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid
+    LEFT JOIN LATERAL (
+      SELECT SUM(ri.taxable_amount) AS taxable, SUM(ri.cgst) AS cgst, SUM(ri.sgst) AS sgst
+      FROM tbl_sale_return_items ri
+      WHERE ri.return_uuid = r.return_uuid
+    ) t ON true
+    WHERE r.zodu_id = $1 AND r.branch_id = $2
+      AND r.return_date BETWEEN $3::date AND $4::date
+      AND s.cancelled_inv = false
+      AND COALESCE(TRIM(c.gst), '') ${registered ? "<>" : "="} ''
+      AND ($5::text IS NULL OR UPPER(TRIM(c.gst)) = $5)
       AND (
-        $4::text IS NULL
-        OR note_no ILIKE $4
-        OR original_invoice_no ILIKE $4
-        OR customer_name ILIKE $4
-        OR gstin ILIKE $4
+        $6::text IS NULL
+        OR r.return_id ILIKE $6
+        OR s.sale_id ILIKE $6
+        OR c.cust_name ILIKE $6
+        OR c.cpy_name ILIKE $6
+        OR c.gst ILIKE $6
       )
   )`;
 
-async function getGstr1CDNR(from_date, to_date, gstin, search, limit, offset) {
-  const params = [from_date, to_date, gstin, search];
+async function queryGstr1Notes(registered, zodu_id, branch_id, from_date, to_date, gstin, search, limit, offset) {
+  const source = gstr1NotesSource(registered);
+  const params = [zodu_id, branch_id, from_date, to_date, gstin, search];
   const [summaryResult, rowsResult] = await Promise.all([
     conn.query(
-      `${GSTR1_CDNR_SOURCE}
+      `${source}
        SELECT
          COUNT(*)::int AS total_notes,
-         COALESCE(SUM(taxable_value), 0) AS total_credit_note_value,
+         COALESCE(SUM(total_value), 0)   AS total_credit_note_value,
          COALESCE(SUM(taxable_value), 0) AS total_taxable_value,
          COALESCE(SUM(igst), 0) AS total_igst,
          COALESCE(SUM(cgst), 0) AS total_cgst,
@@ -1062,7 +1079,7 @@ async function getGstr1CDNR(from_date, to_date, gstin, search, limit, offset) {
       params
     ),
     conn.query(
-      `${GSTR1_CDNR_SOURCE}
+      `${source}
        SELECT
          note_no,
          note_type,
@@ -1071,6 +1088,7 @@ async function getGstr1CDNR(from_date, to_date, gstin, search, limit, offset) {
          TO_CHAR(original_invoice_date, 'YYYY-MM-DD') AS original_invoice_date,
          customer_name,
          gstin,
+         place_of_supply,
          taxable_value,
          igst,
          cgst,
@@ -1078,8 +1096,8 @@ async function getGstr1CDNR(from_date, to_date, gstin, search, limit, offset) {
          cess,
          total_value
        FROM filtered_notes
-       ORDER BY note_date, note_no
-       LIMIT $5 OFFSET $6`,
+       ORDER BY filtered_notes.note_date, note_no
+       LIMIT $7 OFFSET $8`,
       [...params, limit, offset]
     ),
   ]);
@@ -1087,10 +1105,16 @@ async function getGstr1CDNR(from_date, to_date, gstin, search, limit, offset) {
   return { summary: summaryResult.rows[0], rows: rowsResult.rows };
 }
 
+const getGstr1CDNR = (...args) => queryGstr1Notes(true, ...args);
+// Unregistered customers have no GSTIN to filter on, so none is passed.
+const getGstr1CDNUR = (zodu_id, branch_id, from_date, to_date, search, limit, offset) =>
+  queryGstr1Notes(false, zodu_id, branch_id, from_date, to_date, null, search, limit, offset);
+
 module.exports = {
   getGstr1B2CLarge,
   getGstr1B2CSmall,
   getGstr1CDNR,
+  getGstr1CDNUR,
   getGstr1B2BGstins,
   getGstr1B2B,
   getSalesSummary,

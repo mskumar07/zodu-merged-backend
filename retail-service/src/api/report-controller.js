@@ -436,16 +436,33 @@ router.get("/gst/gstr1/nil-rated", async (req, res) => {
 });
 
 // GET /api/report/gst/gstr1/cdnr?zodu_id=&branch_id=&financial_year=2025-26&month=9&gstin=&search=&page=&limit=
-// Returns an empty CDNR report until credit/debit note storage is implemented.
+// Credit notes to registered customers: sale returns / credit notes with a GSTIN, by return date.
+// Summary cards (full filtered set) + paginated note table in one response.
 router.get("/gst/gstr1/cdnr", async (req, res) => {
   const { zodu_id, branch_id, financial_year, month, gstin, search, page = 1, limit = 50 } = req.query;
   if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"], [financial_year, "financial_year"])) return;
 
   try {
-    const result = await service.getGstr1CDNR({ financial_year, month, gstin, search, page, limit });
+    const result = await service.getGstr1CDNR(zodu_id, branch_id, { financial_year, month, gstin, search, page, limit });
     res.json({ success: true, ...result });
   } catch (err) {
     console.error("[report] getGstr1CDNR:", err.message);
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/report/gst/gstr1/cdnur?zodu_id=&branch_id=&financial_year=2026-27&month=10&search=&page=&limit=
+// Credit notes to customers without a GSTIN (incl. walk-in): sale returns / credit notes, by return date.
+// Summary cards (full filtered set) + paginated note table in one response.
+router.get("/gst/gstr1/cdnur", async (req, res) => {
+  const { zodu_id, branch_id, financial_year, month, search, page = 1, limit = 50 } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"], [financial_year, "financial_year"])) return;
+
+  try {
+    const result = await service.getGstr1CDNUR(zodu_id, branch_id, { financial_year, month, search, page, limit });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error("[report] getGstr1CDNUR:", err.message);
     res.status(err.status || 500).json({ success: false, error: err.message });
   }
 });

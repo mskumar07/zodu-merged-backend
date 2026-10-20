@@ -3750,6 +3750,15 @@ exports.setDocSequence = async (zodu_id, branch_id, doc_type, last_seq) => {
   return r.rows[0];
 };
 
+// The history list is ONE paginated list of two kinds of entries — invoices and the sales
+// returns / credit notes raised against them — ordered together by the moment each one
+// happened (sale_date + sale_time for an invoice, return_date + return_time for a return).
+// A return dated today therefore sits among today's rows while its invoice stays in the
+// past. Invoice entries keep their nested `returns` array (id cross-reference, chip, totals).
+//
+// Two steps keep it fast under load: (1) a light UNION ALL of (kind, id, sort_at) picks just
+// the page's keys — each branch can use its own (zodu_id, branch_id, date) index; (2) the
+// heavy detail queries run only for those <= `limit` ids, then get stitched back in order.
 exports.getSalesHistory = async (filters) => {
   const {
     zodu_id,
@@ -3764,137 +3773,220 @@ exports.getSalesHistory = async (filters) => {
     page  = 1,
     limit = 20,
   } = filters;
- 
+
   const searchTerm = search || customer_search;
- 
-  const conditions = ["s.zodu_id = $1", "s.branch_id = $2", "s.cancelled_inv = $3"];
-  const values     = [zodu_id, branch_id, cancelled_order];
-  let   idx        = 4;
- 
-  if (from_date)      { conditions.push(`s.sale_date >= $${idx++}`); values.push(from_date); }
-  if (to_date)        { conditions.push(`s.sale_date <= $${idx++}`); values.push(to_date); }
-  if (payment_status) { conditions.push(`s.payment_status = $${idx++}`); values.push(payment_status); }
-  if (sale_type)      { conditions.push(`s.sale_type = $${idx++}`); values.push(sale_type); }
- 
-  if (searchTerm) {
-    conditions.push(`(
-      s.sale_id            ILIKE $${idx}
-      OR c.cust_name       ILIKE $${idx}
-      OR c.cpy_name        ILIKE $${idx}
-      OR c.mobile_no::text ILIKE $${idx}
-    )`);
-    values.push(`%${searchTerm}%`);
-    idx++;
+
+  // Shared bind values; both halves of the UNION reference the same $n placeholders.
+  const values = [zodu_id, branch_id, cancelled_order];
+  let   idx    = 4;
+  const bind   = (v) => { values.push(v); return `$${idx++}`; };
+
+  // Parent-invoice filters, common to an invoice entry and to a return entry (via its invoice).
+  const common = ["s.zodu_id = $1", "s.branch_id = $2", "s.cancelled_inv = $3"];
+  const invoiceOnly = [];
+  const returnOnly  = [];
+
+  if (from_date) {
+    const p = bind(from_date);
+    invoiceOnly.push(`s.sale_date >= ${p}`);
+    returnOnly.push(`r.return_date >= ${p}`);   // a return is placed by its own date
   }
- 
-  const where  = conditions.join(" AND ");
+  if (to_date) {
+    const p = bind(to_date);
+    invoiceOnly.push(`s.sale_date <= ${p}`);
+    returnOnly.push(`r.return_date <= ${p}`);
+  }
+  if (payment_status) common.push(`s.payment_status = ${bind(payment_status)}`);
+  if (sale_type)      common.push(`s.sale_type = ${bind(sale_type)}`);
+
+  if (searchTerm) {
+    const p = bind(`%${searchTerm}%`);
+    // A return is found by its own id or by anything that finds its invoice.
+    const byInvoice = `s.sale_id ILIKE ${p} OR c.cust_name ILIKE ${p} OR c.cpy_name ILIKE ${p} OR c.mobile_no::text ILIKE ${p}`;
+    invoiceOnly.push(`(${byInvoice})`);
+    returnOnly.push(`(${byInvoice} OR r.return_id ILIKE ${p})`);
+  }
+
+  const invoiceWhere = [...common, ...invoiceOnly].join(" AND ");
+  const returnWhere  = [...common, ...returnOnly].join(" AND ");
+
+  const keysSql = `
+    SELECT 'invoice'::text AS kind, s.sale_uuid::text AS id,
+           (s.sale_date + s.sale_time) AS sort_at, s.created_at AS created_at
+      FROM tbl_sales s
+      LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid
+     WHERE ${invoiceWhere}
+    UNION ALL
+    SELECT 'return'::text, r.return_uuid::text,
+           (r.return_date + r.return_time), r.created_at
+      FROM tbl_sale_returns r
+      JOIN tbl_sales s ON s.sale_uuid = r.original_sale_uuid
+      LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid
+     WHERE ${returnWhere}`;
+
   const offset = (page - 1) * limit;
- 
-  const countResult = await conn.query(
-    `SELECT COUNT(*) AS total
-     FROM tbl_sales s
-     LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid
-     WHERE ${where}`,
-    values
-  );
+
+  const [countResult, keysResult] = await Promise.all([
+    conn.query(`SELECT COUNT(*) AS total FROM (${keysSql}) k`, values),
+    conn.query(
+      `SELECT kind, id FROM (${keysSql}) k
+        ORDER BY sort_at DESC, created_at DESC, id DESC
+        LIMIT $${idx} OFFSET $${idx + 1}`,
+      [...values, limit, offset]
+    ),
+  ]);
   const total = parseInt(countResult.rows[0].total, 10);
- 
-  const salesResult = await conn.query(
-    `SELECT
-        s.sale_uuid,
-        s.sale_id,
-        s.zodu_id,
-        s.branch_id,
-        s.sale_type,
-        s.customer_uuid,
-        s.total_items,
-        s.subtotal,
-        s.total_tax,
-        s.discount_type,
-        s.discount_value,
-        s.discount_amount,
-        s.total_amount,
-        TO_CHAR(s.due_date,  'DD Mon YYYY') AS due_date,
-        s.paid_amount,
-        -- Returns reduce what is still owed: due = stored balance - returned amount,
-        -- never below 0 (a return bigger than the balance becomes a refund, not a
-        -- negative due). With no returns, total_returned is 0 and this is unchanged.
-        GREATEST(s.balance_amount - ret.total_returned, 0) AS balance_amount,
-        s.balance_amount                                   AS original_balance_amount,
-        s.payment_status,
-        s.notes,
-        s.round_off,
-        s.discount_gst_mode,
-        TO_CHAR(s.created_at, 'DD Mon YYYY, HH12:MI AM') AS created_at_fmt,
-        -- The document's own date + time, as the POS saved them (a converted quotation gets the
-        -- date picked at conversion and the cashier's local time then). Not converted_at: that is
-        -- stamped from the server clock (UTC), so it showed converted invoices 5:30 h behind.
-        TO_CHAR(s.sale_date + s.sale_time, 'DD Mon YYYY, HH12:MI AM') AS sale_date_fmt,
 
-        -- customer
-        c.cust_uuid,
-        c.cust_id,
-        c.cust_name,
-        c.cpy_name,
-        c.mobile_no->>0    AS customer_mobile,
-        c.mobile_no        AS customer_all_mobiles,
-        c.email_id->>0     AS customer_email,
-        c.gst              AS customer_gst,
-        c.city             AS customer_city,
-        c.state            AS customer_state,
- 
-        -- ✅ return summary (null columns = no returns yet)
-        ret.return_count,
-        ret.total_returned,
-        ret.last_return_date,
-        ret.returns
+  const invoiceIds = keysResult.rows.filter((k) => k.kind === "invoice").map((k) => k.id);
+  const returnIds  = keysResult.rows.filter((k) => k.kind === "return").map((k) => k.id);
 
-     FROM tbl_sales s
-     LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid
- 
-     -- ✅ aggregate all returns for each sale in one lateral join
-     LEFT JOIN LATERAL (
-       SELECT
-         COUNT(*)                        AS return_count,
-         COALESCE(SUM(r.return_amount), 0) AS total_returned,
-         MAX(r.return_date)              AS last_return_date,
-         -- child rows shown under the invoice, newest first
-         COALESCE(
-           json_agg(
-             json_build_object(
-               'return_uuid',     r.return_uuid,
-               'return_id',       r.return_id,
-               'return_type',     r.return_type,
-               'return_amount',   r.return_amount,
-               'total_items',     r.total_items,
-               'refund_type',     r.refund_type,
-               'refund_status',   r.refund_status,
-               'adjusted_amount', r.adjusted_amount,
-               'refund_due',      r.refund_due,
-               'refunded_amount', r.refunded_amount,
-               'pending_refund',  GREATEST(r.refund_due - r.refunded_amount, 0),
-               'excess_refund',   GREATEST(r.refunded_amount - r.refund_due, 0),
-               'return_reason',   r.return_reason,
-               'return_date_fmt', TO_CHAR(r.return_date + r.return_time, 'DD Mon YYYY, HH12:MI AM')
-             ) ORDER BY r.created_at DESC
-           ), '[]'::json
-         )                               AS returns
-       FROM tbl_sale_returns r
-       WHERE r.original_sale_uuid = s.sale_uuid
-     ) ret ON true
- 
-     WHERE ${where}
-     ORDER BY s.sale_date DESC, s.created_at DESC
-     LIMIT $${idx++} OFFSET $${idx++}`,
-    [...values, limit, offset]
-  );
- 
+  const [invoiceRows, returnRows] = await Promise.all([
+    invoiceIds.length
+      ? conn.query(
+          `SELECT
+              'invoice'::text AS row_type,
+              (s.sale_date + s.sale_time) AS sort_at,
+              s.sale_uuid,
+              s.sale_id,
+              s.zodu_id,
+              s.branch_id,
+              s.sale_type,
+              s.customer_uuid,
+              s.total_items,
+              s.subtotal,
+              s.total_tax,
+              s.discount_type,
+              s.discount_value,
+              s.discount_amount,
+              s.total_amount,
+              TO_CHAR(s.due_date,  'DD Mon YYYY') AS due_date,
+              s.paid_amount,
+              -- Returns reduce what is still owed: due = stored balance - returned amount,
+              -- never below 0 (a return bigger than the balance becomes a refund, not a
+              -- negative due). With no returns, total_returned is 0 and this is unchanged.
+              GREATEST(s.balance_amount - ret.total_returned, 0) AS balance_amount,
+              s.balance_amount                                   AS original_balance_amount,
+              s.payment_status,
+              s.notes,
+              s.round_off,
+              s.discount_gst_mode,
+              TO_CHAR(s.created_at, 'DD Mon YYYY, HH12:MI AM') AS created_at_fmt,
+              -- The document's own date + time, as the POS saved them (a converted quotation gets the
+              -- date picked at conversion and the cashier's local time then). Not converted_at: that is
+              -- stamped from the server clock (UTC), so it showed converted invoices 5:30 h behind.
+              TO_CHAR(s.sale_date + s.sale_time, 'DD Mon YYYY, HH12:MI AM') AS sale_date_fmt,
+
+              -- customer
+              c.cust_uuid,
+              c.cust_id,
+              c.cust_name,
+              c.cpy_name,
+              c.mobile_no->>0    AS customer_mobile,
+              c.mobile_no        AS customer_all_mobiles,
+              c.email_id->>0     AS customer_email,
+              c.gst              AS customer_gst,
+              c.city             AS customer_city,
+              c.state            AS customer_state,
+
+              -- return summary (null columns = no returns yet)
+              ret.return_count,
+              ret.total_returned,
+              ret.last_return_date,
+              ret.returns
+
+           FROM tbl_sales s
+           LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid
+
+           -- aggregate all returns for each sale in one lateral join
+           LEFT JOIN LATERAL (
+             SELECT
+               COUNT(*)                        AS return_count,
+               COALESCE(SUM(r.return_amount), 0) AS total_returned,
+               MAX(r.return_date)              AS last_return_date,
+               -- ids / amounts listed under the invoice (cross-reference), newest first
+               COALESCE(
+                 json_agg(
+                   json_build_object(
+                     'return_uuid',     r.return_uuid,
+                     'return_id',       r.return_id,
+                     'return_type',     r.return_type,
+                     'return_amount',   r.return_amount,
+                     'total_items',     r.total_items,
+                     'refund_type',     r.refund_type,
+                     'refund_status',   r.refund_status,
+                     'adjusted_amount', r.adjusted_amount,
+                     'refund_due',      r.refund_due,
+                     'refunded_amount', r.refunded_amount,
+                     'pending_refund',  GREATEST(r.refund_due - r.refunded_amount, 0),
+                     'excess_refund',   GREATEST(r.refunded_amount - r.refund_due, 0),
+                     'return_reason',   r.return_reason,
+                     'return_date',     r.return_date,
+                     'return_time',     r.return_time,
+                     'return_date_fmt', TO_CHAR(r.return_date + r.return_time, 'DD Mon YYYY, HH12:MI AM')
+                   ) ORDER BY r.created_at DESC
+                 ), '[]'::json
+               )                               AS returns
+             FROM tbl_sale_returns r
+             WHERE r.original_sale_uuid = s.sale_uuid
+           ) ret ON true
+
+           WHERE s.sale_uuid = ANY($1)`,
+          [invoiceIds]
+        )
+      : { rows: [] },
+
+    returnIds.length
+      ? conn.query(
+          `SELECT
+              'return'::text AS row_type,
+              (r.return_date + r.return_time) AS sort_at,
+              r.return_uuid,
+              r.return_id,
+              r.return_type,
+              r.return_amount,
+              r.total_items,
+              r.refund_type,
+              r.refund_status,
+              r.adjusted_amount,
+              r.refund_due,
+              r.refunded_amount,
+              GREATEST(r.refund_due - r.refunded_amount, 0) AS pending_refund,
+              GREATEST(r.refunded_amount - r.refund_due, 0) AS excess_refund,
+              r.return_reason,
+              r.return_date,
+              r.return_time,
+              TO_CHAR(r.return_date + r.return_time, 'DD Mon YYYY, HH12:MI AM') AS return_date_fmt,
+
+              -- the invoice it was raised against, for the "Against INVxxxx" label
+              r.original_sale_uuid,
+              s.sale_id AS original_sale_id,
+
+              -- the invoice's customer, so the return row reads like its invoice row
+              c.cust_uuid,
+              c.cust_name,
+              c.cpy_name,
+              c.mobile_no->>0 AS customer_mobile
+           FROM tbl_sale_returns r
+           JOIN tbl_sales s ON s.sale_uuid = r.original_sale_uuid
+           LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid
+           WHERE r.return_uuid = ANY($1)`,
+          [returnIds]
+        )
+      : { rows: [] },
+  ]);
+
+  // Stitch the two detail sets back into the order the key query picked.
+  const byKey = new Map();
+  for (const row of invoiceRows.rows) byKey.set(`invoice:${row.sale_uuid}`, row);
+  for (const row of returnRows.rows)  byKey.set(`return:${row.return_uuid}`, row);
+  const data = keysResult.rows.map((k) => byKey.get(`${k.kind}:${k.id}`)).filter(Boolean);
+
   return {
     total,
     page:        Number(page),
     limit:       Number(limit),
     total_pages: Math.ceil(total / limit),
-    data:        salesResult.rows,
+    data,
   };
 };
  
@@ -6519,7 +6611,8 @@ exports.getSaleReturnRows = async ({ custUuid, branchId, zoduId, fromDate, toDat
        0::numeric                     AS paid_amount,
        -(r.return_amount)             AS balance_amount,
        r.refund_type,
-       r.original_sale_id
+       r.original_sale_id,
+       r.return_type
      FROM tbl_sale_returns r
      WHERE r.customer_id = $1
        AND r.zodu_id      = $2
