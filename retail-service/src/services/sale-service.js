@@ -40,7 +40,7 @@ function buildReturnLines(items, originalItems, returnedQtyMap, sale) {
   const beforeGst = sale.discount_gst_mode === "before";
   const orderDiscount = Number(sale.discount_amount) || 0;
   const weightOf = (orig) =>
-    baseOf(orig, Number(orig.quantity)) + (beforeGst ? 0 : Number(orig.tax_amount) || 0);
+    round2(baseOf(orig, Number(orig.quantity))) + (beforeGst ? 0 : Number(orig.tax_amount) || 0);
   const totalWeight = orderDiscount > 0
     ? originalItems.reduce((sum, orig) => sum + weightOf(orig), 0)
     : 0;
@@ -50,7 +50,7 @@ function buildReturnLines(items, originalItems, returnedQtyMap, sale) {
   // line discounts only when the billed total reconciles with them (or when
   // neither way reconciles, which is the normal case for a current invoice).
   const grossValue = originalItems.reduce(
-    (sum, orig) => sum + baseOf(orig, Number(orig.quantity)) + (Number(orig.tax_amount) || 0),
+    (sum, orig) => sum + round2(baseOf(orig, Number(orig.quantity))) + (Number(orig.tax_amount) || 0),
     0
   );
   const lineDiscountTotal = originalItems.reduce((sum, orig) => sum + (Number(orig.discount) || 0), 0);
