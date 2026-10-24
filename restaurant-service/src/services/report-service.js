@@ -545,7 +545,82 @@ async function getProfitActiveYears(zodu_id, branch_id) {
   return { active_years: years };
 }
 
+// ── GSTR-1 HSN-wise summary ──────────────────────────────────
+// Indian FY: "2026-27" = 01-Apr-2026 .. 31-Mar-2027. month (1-12) optional → whole FY.
+function resolveGstPeriod(financial_year, month) {
+  const m = /^(\d{4})-(\d{2})$/.exec(financial_year || "");
+  if (!m) {
+    const err = new Error("financial_year must be like 2026-27");
+    err.status = 400;
+    throw err;
+  }
+  const startYear = parseInt(m[1]);
+  const mon = month ? parseInt(month) : null;
+  if (mon !== null && !(mon >= 1 && mon <= 12)) {
+    const err = new Error("month must be between 1 and 12");
+    err.status = 400;
+    throw err;
+  }
+
+  const pad = (n) => String(n).padStart(2, "0");
+  if (mon === null) {
+    return { from_date: `${startYear}-04-01`, to_date: `${startYear + 1}-03-31` };
+  }
+  const year = mon >= 4 ? startYear : startYear + 1;
+  const lastDay = new Date(year, mon, 0).getDate();
+  return { from_date: `${year}-${pad(mon)}-01`, to_date: `${year}-${pad(mon)}-${lastDay}` };
+}
+
+async function getGstr1Hsn(zodu_id, branch_id, { financial_year, month, search, page, limit }) {
+  const { from_date, to_date } = resolveGstPeriod(financial_year, month);
+  const pg = Math.max(parseInt(page) || 1, 1);
+  const lmt = Math.min(Math.max(parseInt(limit) || 50, 1), 200);
+  const offset = (pg - 1) * lmt;
+  const searchFilter = search && search.trim() ? `%${search.trim()}%` : null;
+
+  const { summary, rows } = await repo.getGstr1Hsn(
+    zodu_id, branch_id, from_date, to_date, searchFilter, lmt, offset
+  );
+
+  const n = (v) => parseFloat(v) || 0;
+  const r2 = (v) => Math.round((v + Number.EPSILON) * 100) / 100;
+  const total = summary.total_hsn_items;
+  const taxable = n(summary.total_taxable_value);
+  const cgst = n(summary.total_cgst);
+  const sgst = n(summary.total_sgst);
+
+  return {
+    period: { financial_year, month: month ? parseInt(month) : null, from_date, to_date },
+    summary: {
+      total_hsn_items:     total,
+      total_taxable_value: taxable,
+      total_igst:          0,
+      total_cgst:          cgst,
+      total_sgst:          sgst,
+      total_cess:          0,
+      total_tax:           r2(cgst + sgst),
+      total_value:         r2(taxable + cgst + sgst),
+    },
+    data: rows.map((r, i) => ({
+      s_no:          offset + i + 1,
+      hsn_code:      r.hsn_code,
+      description:   r.description ?? "",
+      uqc:           r.uqc,
+      gst_rate:      n(r.gst_rate),
+      quantity:      n(r.quantity),
+      taxable_value: n(r.taxable_value),
+      igst:          0,
+      cgst:          n(r.cgst),
+      sgst:          n(r.sgst),
+      cess:          0,
+      total_value:   r2(n(r.taxable_value) + n(r.cgst) + n(r.sgst)),
+    })),
+    meta: getMeta({ page: pg, limit: lmt, total }),
+  };
+}
+
 module.exports = {
+  getGstr1Hsn,
   getSalesSummary,
   getMonthlyBreakdown,
   getHistoricalPerformance,

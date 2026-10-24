@@ -56,9 +56,10 @@ router.post('/', async (req, res) => {
 router.get('/assigned-employees-summary', requireParams('zodu_id', 'branch_id'), async (req, res) => {
   try {
     const { zodu_id, branch_id, created_by, search, status } = req.query;
+    const is_admin = req.query.is_admin === 'true';
     if (!created_by) return res.status(400).json({ success: false, error: 'created_by is required' });
 
-    const result = await service.getAssignedEmployeesSummary({ zodu_id, branch_id, created_by, search, status });
+    const result = await service.getAssignedEmployeesSummary({ zodu_id, branch_id, created_by, is_admin, search, status });
     return res.status(200).json(result);
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
@@ -117,7 +118,9 @@ router.get('/my-tasks/:id', requireParams('zodu_id', 'branch_id', 'employee_id')
 router.get('/assigned-employees', requireParams('zodu_id', 'branch_id', 'created_by'), async (req, res) => {
   try {
     const { zodu_id, branch_id, created_by, search, status, page, limit } = req.query;
-    const result = await service.getAssignedEmployees({ zodu_id, branch_id, created_by, search, status, page, limit });
+    // is_admin=true → return every task in the branch (no created_by filter)
+    const is_admin = req.query.is_admin === 'true';
+    const result = await service.getAssignedEmployees({ zodu_id, branch_id, created_by, is_admin, search, status, page, limit });
     return res.status(200).json(result);
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
@@ -162,9 +165,9 @@ router.put('/:id', async (req, res) => {
 });
 
 // ── UPDATE TASK STATUS  PUT /api/checklists/:id/task-status ──────────────────
-// Admin "Update Task Status" modal — bulk update item status + remarks,
-// checklist's own status is auto-derived from the resulting item statuses.
-// Body: { zodu_id, branch_id, items: [{ item_id, status, remarks }] }
+// Admin "Update Task Status" modal — task-wise: sets the checklist's own status.
+// Body: { zodu_id, branch_id, status }
+// (ITEM-WISE, disabled: items: [{ item_id, status, remarks }])
 router.put('/:id/task-status', async (req, res) => {
   try {
     const { errors, input } = await validate(schema.task_status_update, req.body);
@@ -226,49 +229,50 @@ router.delete('/:id/attachments/:file_id', async (req, res) => {
   }
 });
 
-// ── UPLOAD FILE(S) TO ITEM  POST /api/checklists/items/:item_id/files ────────
-// Admin on create OR employee when completing the item
-// multipart/form-data: files[] (up to 5) + { employee_id, employee_name }
-router.post('/items/:item_id/files', upload.array('files', 5), async (req, res) => {
-  try {
-    const { employee_id, employee_name, employee_checklist_upload } = req.body;
-    if (!employee_id || !employee_name || !req.files?.length)
-      return res.status(400).json({ success: false, error: 'employee_id, employee_name, files are required' });
-
-    const isEmployeeUpload = employee_checklist_upload === 'true' || employee_checklist_upload === true;
-    const result = await service.uploadItemFile(req.params.item_id, req.files, employee_id, employee_name, isEmployeeUpload);
-    return res.status(201).json(result);
-  } catch (err) {
-    const status = err.message.includes('not found') ? 404 : 500;
-    return res.status(status).json({ success: false, error: err.message });
-  }
-});
-
-// ── DELETE ITEM  DELETE /api/checklists/items/:item_id ───────────────────────
-router.delete('/items/:item_id', async (req, res) => {
-  try {
-    const result = await service.deleteItem(req.params.item_id);
-    return res.status(200).json(result);
-  } catch (err) {
-    const status = err.message.includes('not found') ? 404 : 500;
-    return res.status(status).json({ success: false, error: err.message });
-  }
-});
-
-// ── DELETE FILE FROM ITEM  DELETE /api/checklists/items/:item_id/files/:file_id
-// Body: { employee_checklist_upload: true } → removes from employee_checklist_upload column
-// Body: {} or omitted                       → removes from file_url column (normal flow)
-router.delete('/items/:item_id/files/:file_id', async (req, res) => {
-  try {
-    const { employee_checklist_upload } = req.body;
-    const isEmployeeUpload = employee_checklist_upload === true || employee_checklist_upload === 'true';
-    const result = await service.deleteItemFile(req.params.item_id, req.params.file_id, isEmployeeUpload);
-    return res.status(200).json(result);
-  } catch (err) {
-    const status = err.message.includes('not found') ? 404 : 500;
-    return res.status(status).json({ success: false, error: err.message });
-  }
-});
+// ITEM-WISE (disabled) — upload/delete item file and delete item routes
+// // ── UPLOAD FILE(S) TO ITEM  POST /api/checklists/items/:item_id/files ────────
+// // Admin on create OR employee when completing the item
+// // multipart/form-data: files[] (up to 5) + { employee_id, employee_name }
+// router.post('/items/:item_id/files', upload.array('files', 5), async (req, res) => {
+//   try {
+//     const { employee_id, employee_name, employee_checklist_upload } = req.body;
+//     if (!employee_id || !employee_name || !req.files?.length)
+//       return res.status(400).json({ success: false, error: 'employee_id, employee_name, files are required' });
+//
+//     const isEmployeeUpload = employee_checklist_upload === 'true' || employee_checklist_upload === true;
+//     const result = await service.uploadItemFile(req.params.item_id, req.files, employee_id, employee_name, isEmployeeUpload);
+//     return res.status(201).json(result);
+//   } catch (err) {
+//     const status = err.message.includes('not found') ? 404 : 500;
+//     return res.status(status).json({ success: false, error: err.message });
+//   }
+// });
+//
+// // ── DELETE ITEM  DELETE /api/checklists/items/:item_id ───────────────────────
+// router.delete('/items/:item_id', async (req, res) => {
+//   try {
+//     const result = await service.deleteItem(req.params.item_id);
+//     return res.status(200).json(result);
+//   } catch (err) {
+//     const status = err.message.includes('not found') ? 404 : 500;
+//     return res.status(status).json({ success: false, error: err.message });
+//   }
+// });
+//
+// // ── DELETE FILE FROM ITEM  DELETE /api/checklists/items/:item_id/files/:file_id
+// // Body: { employee_checklist_upload: true } → removes from employee_checklist_upload column
+// // Body: {} or omitted                       → removes from file_url column (normal flow)
+// router.delete('/items/:item_id/files/:file_id', async (req, res) => {
+//   try {
+//     const { employee_checklist_upload } = req.body;
+//     const isEmployeeUpload = employee_checklist_upload === true || employee_checklist_upload === 'true';
+//     const result = await service.deleteItemFile(req.params.item_id, req.params.file_id, isEmployeeUpload);
+//     return res.status(200).json(result);
+//   } catch (err) {
+//     const status = err.message.includes('not found') ? 404 : 500;
+//     return res.status(status).json({ success: false, error: err.message });
+//   }
+// });
 
 // ── LIST INSTANCES  GET /api/checklists/instances?zodu_id=&branch_id=&checklist_id=&status= ─
 router.get('/instances/list', requireParams('zodu_id', 'branch_id'), async (req, res) => {

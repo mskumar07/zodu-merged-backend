@@ -28,11 +28,14 @@ exports.createChecklist = async (data) => {
     // 1. Insert master checklist
     const checklist = await repo.insertChecklist(client, data);
 
-    // 2. Insert assignees + items concurrently inside the same transaction
-    const [assignees, items] = await Promise.all([
-      repo.insertAssignees(client, checklist.id, data.assignees),
-      repo.insertItems(client, checklist.id, data.items),
-    ]);
+    // 2. Insert assignees inside the same transaction
+    // ITEM-WISE (disabled) — tasks are single-task now, no checklist items are created.
+    // const [assignees, items] = await Promise.all([
+    //   repo.insertAssignees(client, checklist.id, data.assignees),
+    //   repo.insertItems(client, checklist.id, data.items),
+    // ]);
+    const assignees = await repo.insertAssignees(client, checklist.id, data.assignees);
+    const items = [];
 
     // 3. Always create the first instance
     //    Non-recurring: use due_date (or today)
@@ -112,17 +115,17 @@ exports.getMyAssignedTasks = async ({ zodu_id, branch_id, employee_id, status, s
 
 // ── ASSIGNED TO EMPLOYEES (admin view — every employee with tasks I assigned) ──
 
-exports.getAssignedEmployeesSummary = async ({ zodu_id, branch_id, created_by, search, status }) => {
-  const summary = await repo.getAssignedEmployeesSummary({ zodu_id, branch_id, created_by, search, status });
+exports.getAssignedEmployeesSummary = async ({ zodu_id, branch_id, created_by, is_admin, search, status }) => {
+  const summary = await repo.getAssignedEmployeesSummary({ zodu_id, branch_id, created_by, is_admin, search, status });
   return { success: true, data: summary };
 };
 
-exports.getAssignedEmployees = async ({ zodu_id, branch_id, created_by, search, status, page = 1, limit = 10 }) => {
+exports.getAssignedEmployees = async ({ zodu_id, branch_id, created_by, is_admin, search, status, page = 1, limit = 10 }) => {
   const { limit: lim, offset } = parsePage(page, limit);
 
   const [rows, total] = await Promise.all([
-    repo.findAssignedEmployees({ zodu_id, branch_id, created_by, search, status, limit: lim, offset }),
-    repo.countAssignedEmployees({ zodu_id, branch_id, created_by, search, status }),
+    repo.findAssignedEmployees({ zodu_id, branch_id, created_by, is_admin, search, status, limit: lim, offset }),
+    repo.countAssignedEmployees({ zodu_id, branch_id, created_by, is_admin, search, status }),
   ]);
 
   return {
@@ -148,10 +151,12 @@ exports.getChecklistById = async (id, { zodu_id, branch_id }) => {
   const checklist = await repo.findById(id, { zodu_id, branch_id });
   if (!checklist) return null;
 
-  // Fetch assignees, items, attachments concurrently
-  const [assignees, items, attachments] = await Promise.all([
+  // Fetch assignees, attachments concurrently
+  // ITEM-WISE (disabled) — items are no longer fetched.
+  const items = [];
+  const [assignees, attachments] = await Promise.all([
     repo.findAssignees(id),
-    repo.findItems(id),
+    // repo.findItems(id),
     repo.findAttachments(id),
   ]);
 
@@ -164,7 +169,8 @@ exports.getChecklistById = async (id, { zodu_id, branch_id }) => {
 // ── UPDATE TASK STATUS (admin "Update Task Status" modal — bulk item update) ───
 // items: [{ item_id, status, remarks }]. Updates each item, then derives the
 // checklist's own status from the resulting item statuses.
-exports.updateTaskStatus = async (checklist_id, { zodu_id, branch_id, items }) => {
+// Task-wise: the status is set directly on the checklist (no per-item statuses).
+exports.updateTaskStatus = async (checklist_id, { zodu_id, branch_id, status }) => {
   const client = await db.connect();
   try {
     await client.query('BEGIN');
@@ -172,22 +178,23 @@ exports.updateTaskStatus = async (checklist_id, { zodu_id, branch_id, items }) =
     const checklist = await repo.findById(checklist_id, { zodu_id, branch_id });
     if (!checklist) throw new Error('Checklist not found');
 
-    await Promise.all(
-      items.map(it => repo.updateItemStatus(it.item_id, { status: it.status, remarks: it.remarks, employee_id: it.employee_id }))
-    );
-
-    const allItems = await repo.findItems(checklist_id);
-    const derivedStatus = deriveChecklistStatus(allItems);
+    // ITEM-WISE (disabled)
+    // await Promise.all(
+    //   items.map(it => repo.updateItemStatus(it.item_id, { status: it.status, remarks: it.remarks, employee_id: it.employee_id }))
+    // );
+    //
+    // const allItems = await repo.findItems(checklist_id);
+    // const derivedStatus = deriveChecklistStatus(allItems);
 
     const updatedChecklist = await repo.updateChecklist(
-      client, checklist_id, { status: derivedStatus }, { zodu_id, branch_id }
+      client, checklist_id, { status }, { zodu_id, branch_id }
     );
 
     await client.query('COMMIT');
 
     return {
       success: true,
-      data: { ...(updatedChecklist || checklist), items: allItems },
+      data: { ...(updatedChecklist || checklist), items: [] },
     };
   } catch (err) {
     await client.query('ROLLBACK');
@@ -215,13 +222,15 @@ exports.updateChecklist = async (id, data) => {
 
     // If assignees or items sent — replace entirely
     // If attachments sent — update matching file entries within the array
-    const [assignees, items, attachments] = await Promise.all([
+    // ITEM-WISE (disabled) — items are no longer upserted/returned.
+    const items = [];
+    const [assignees, attachments] = await Promise.all([
       data.assignees
         ? repo.upsertAssignees(client, id, data.assignees)
         : repo.findAssignees(id),
-      data.items
-        ? repo.upsertItems(client, id, data.items)
-        : repo.findItems(id),
+      // data.items
+      //   ? repo.upsertItems(client, id, data.items)
+      //   : repo.findItems(id),
       data.attachments
         ? repo.updateAttachments(client, id, data.attachments)
         : repo.findAttachments(id),
@@ -284,32 +293,33 @@ exports.uploadAttachments = async (checklist_id, files, { zodu_id, branch_id, em
   }
 };
 
-// Upload one or more files into a checklist item's JSONB array
-// Used by admin on create OR employee when completing the item
-// files = array of multer file objects
-exports.uploadItemFile = async (item_id, files, employee_id, employee_name, isEmployeeUpload = false) => {
-  const { v4: uuidv4 } = require('uuid');
-
-  const uploadedFiles = await Promise.all(
-    files.map(file => minio.uploadFile(file, `checklist-item-files/${item_id}`))
-  );
-
-  const fileObjs = uploadedFiles.map(uploaded => ({
-    id:               uuidv4(),
-    file_name:        uploaded.fileName,
-    file_url:         uploaded.fileUrl,
-    uploaded_by:      employee_id,
-    uploaded_by_name: employee_name,
-  }));
-
-  const result = isEmployeeUpload
-    ? await repo.appendEmployeeFileToItem(item_id, fileObjs)
-    : await repo.appendFileToItem(item_id, fileObjs);
-
-  if (!result) throw new Error('Checklist item not found');
-
-  return { success: true, data: result };
-};
+// ITEM-WISE (disabled)
+// // Upload one or more files into a checklist item's JSONB array
+// // Used by admin on create OR employee when completing the item
+// // files = array of multer file objects
+// exports.uploadItemFile = async (item_id, files, employee_id, employee_name, isEmployeeUpload = false) => {
+//   const { v4: uuidv4 } = require('uuid');
+//
+//   const uploadedFiles = await Promise.all(
+//     files.map(file => minio.uploadFile(file, `checklist-item-files/${item_id}`))
+//   );
+//
+//   const fileObjs = uploadedFiles.map(uploaded => ({
+//     id:               uuidv4(),
+//     file_name:        uploaded.fileName,
+//     file_url:         uploaded.fileUrl,
+//     uploaded_by:      employee_id,
+//     uploaded_by_name: employee_name,
+//   }));
+//
+//   const result = isEmployeeUpload
+//     ? await repo.appendEmployeeFileToItem(item_id, fileObjs)
+//     : await repo.appendFileToItem(item_id, fileObjs);
+//
+//   if (!result) throw new Error('Checklist item not found');
+//
+//   return { success: true, data: result };
+// };
 
 // Remove one file from the checklist attachments JSONB array by file id
 exports.deleteAttachment = async (checklist_id, file_id) => {
@@ -318,26 +328,27 @@ exports.deleteAttachment = async (checklist_id, file_id) => {
   return { success: true, data: result.file_url || [] };
 };
 
-// Delete a single checklist item by id, then re-derive and sync checklist status
-exports.deleteItem = async (item_id) => {
-  const checklist_id = await repo.deleteItem(item_id);
-  if (!checklist_id) throw new Error('Checklist item not found');
-
-  const remainingItems = await repo.findItems(checklist_id);
-  const derivedStatus  = deriveChecklistStatus(remainingItems);
-  await repo.updateChecklistStatus(checklist_id, derivedStatus);
-
-  return { success: true };
-};
-
+// ITEM-WISE (disabled)
+// // Delete a single checklist item by id, then re-derive and sync checklist status
+// exports.deleteItem = async (item_id) => {
+//   const checklist_id = await repo.deleteItem(item_id);
+//   if (!checklist_id) throw new Error('Checklist item not found');
+//
+//   const remainingItems = await repo.findItems(checklist_id);
+//   const derivedStatus  = deriveChecklistStatus(remainingItems);
+//   await repo.updateChecklistStatus(checklist_id, derivedStatus);
+//
+//   return { success: true };
+// };
+//
 // Remove one file from a checklist item JSONB array by file id
-exports.deleteItemFile = async (item_id, file_id, isEmployeeUpload = false) => {
-  const result = isEmployeeUpload
-    ? await repo.removeEmployeeFileFromItem(item_id, file_id)
-    : await repo.removeFileFromItem(item_id, file_id);
-  if (!result) throw new Error('Checklist item not found');
-  return { success: true, data: result };
-};
+// exports.deleteItemFile = async (item_id, file_id, isEmployeeUpload = false) => {
+//   const result = isEmployeeUpload
+//     ? await repo.removeEmployeeFileFromItem(item_id, file_id)
+//     : await repo.removeFileFromItem(item_id, file_id);
+//   if (!result) throw new Error('Checklist item not found');
+//   return { success: true, data: result };
+// };
 
 // ── INSTANCES ─────────────────────────────────────────────────────────────────
 
