@@ -321,11 +321,11 @@ exports.findAll = async ({ zodu_id, branch_id, status, search, limit, offset }) 
        TO_CHAR(c.recur_end_date,   'YYYY-MM-DD') AS recur_end_date,
        TO_CHAR(c.recur_start_date, 'YYYY-MM-DD') AS recur_start_date,
        c.created_by_name, c.created_at,
-       COUNT(DISTINCT ca.employee_id)::int  AS total_assignees,
-       COUNT(DISTINCT ci.id)::int           AS total_items
+       COUNT(DISTINCT ca.employee_id)::int  AS total_assignees
+       -- ITEM-WISE (disabled): COUNT(DISTINCT ci.id)::int AS total_items
      FROM tbl_checklists c
      LEFT JOIN tbl_checklist_assignees ca ON ca.checklist_id = c.id
-     LEFT JOIN tbl_checklist_items     ci ON ci.checklist_id = c.id
+     -- LEFT JOIN tbl_checklist_items     ci ON ci.checklist_id = c.id
      WHERE ${conds.join(' AND ')}
      GROUP BY c.id
      ORDER BY c.created_at DESC
@@ -593,10 +593,12 @@ exports.getMyTaskSummary = async ({ zodu_id, branch_id, employee_id, search, sta
 };
 
 // ── ASSIGNED TO EMPLOYEES SUMMARY (admin card — tasks I created) ──────────────
-exports.getAssignedEmployeesSummary = async ({ zodu_id, branch_id, created_by, search, status }) => {
-  const conds = ['c.zodu_id = $1', 'c.branch_id = $2', 'c.created_by = $3'];
-  const vals  = [zodu_id, branch_id, created_by];
-  let   idx   = 4;
+exports.getAssignedEmployeesSummary = async ({ zodu_id, branch_id, created_by, is_admin, search, status }) => {
+  // Admin sees every task in the branch — created_by filter is applied for non-admins only
+  const conds = ['c.zodu_id = $1', 'c.branch_id = $2'];
+  const vals  = [zodu_id, branch_id];
+  let   idx   = 3;
+  if (!is_admin) { conds.push(`c.created_by = $${idx++}`); vals.push(created_by); }
 
   if (status) {
     const checklistStatus = status === 'Pending' ? 'Not Started' : status;
@@ -667,18 +669,20 @@ exports.findMyTaskDetail = async (checklist_id, { zodu_id, branch_id, employee_i
   if (!row) return null;
   if (!row.assignment_id) return { notAssigned: true };
 
-  const { rows: items } = await db.query(
-    `SELECT
-       i.*,
-       COALESCE(p.is_completed, false) AS is_completed,
-       p.completed_at
-     FROM tbl_checklist_items i
-     LEFT JOIN tbl_checklist_item_progress p
-       ON p.item_id = i.id AND p.instance_id = $2 AND p.employee_id = $3
-     WHERE i.checklist_id = $1
-     ORDER BY i.item_order`,
-    [checklist_id, row.instance_id, employee_id]
-  );
+  // ITEM-WISE (disabled)
+  // const { rows: items } = await db.query(
+  //   `SELECT
+  //      i.*,
+  //      COALESCE(p.is_completed, false) AS is_completed,
+  //      p.completed_at
+  //    FROM tbl_checklist_items i
+  //    LEFT JOIN tbl_checklist_item_progress p
+  //      ON p.item_id = i.id AND p.instance_id = $2 AND p.employee_id = $3
+  //    WHERE i.checklist_id = $1
+  //    ORDER BY i.item_order`,
+  //   [checklist_id, row.instance_id, employee_id]
+  // );
+  const items = [];
 
   return {
     ...row,
@@ -729,18 +733,14 @@ exports.findMyAssignedTasks = async ({ zodu_id, branch_id, employee_id, status, 
        c.is_recurring,
        c.created_by_name,
        c.updated_at AS last_update,
-       COALESCE(items.total_items, 0)     AS total_items,
+       -- Task-wise: the task itself is the single unit (1 total, 1 completed once Completed)
+       1                                                   AS total_items,
        c.checklist_code,
-       COALESCE(items.completed_items, 0) AS completed_items
+       (c.status = 'Completed')::int                       AS completed_items
+       -- ITEM-WISE (disabled): COALESCE(items.total_items, 0) / COALESCE(items.completed_items, 0)
+       --   from LEFT JOIN LATERAL (SELECT COUNT(*) ... FROM tbl_checklist_items WHERE checklist_id = c.id) items
      FROM tbl_checklist_assignees ca
      JOIN tbl_checklists c ON c.id = ca.checklist_id
-     LEFT JOIN LATERAL (
-       SELECT
-         COUNT(*)::int                                          AS total_items,
-         COUNT(*) FILTER (WHERE status = 'Completed')::int     AS completed_items
-       FROM tbl_checklist_items
-       WHERE checklist_id = c.id
-     ) items ON TRUE
      WHERE ${conds.join(' AND ')}
      ORDER BY c.created_at DESC
      LIMIT $${idx++} OFFSET $${idx}`,
@@ -780,18 +780,25 @@ exports.countMyAssignedTasks = async ({ zodu_id, branch_id, employee_id, status,
 // ── ASSIGNED TO EMPLOYEES (admin view — one row per CHECKLIST I assigned) ─────
 // Every checklist created by this admin (created_by), with its assignees and
 // item/status counts. search matches against assignee employee_name.
-exports.findAssignedEmployees = async ({ zodu_id, branch_id, created_by, search, status, limit, offset }) => {
-  const conds = ['c.zodu_id = $1', 'c.branch_id = $2', 'c.created_by = $3'];
-  const vals  = [zodu_id, branch_id, created_by];
-  let   idx   = 4;
+exports.findAssignedEmployees = async ({ zodu_id, branch_id, created_by, is_admin, search, status, limit, offset }) => {
+  // Admin sees every task in the branch — created_by filter is applied for non-admins only
+  const conds = ['c.zodu_id = $1', 'c.branch_id = $2'];
+  const vals  = [zodu_id, branch_id];
+  let   idx   = 3;
+  if (!is_admin) { conds.push(`c.created_by = $${idx++}`); vals.push(created_by); }
 
   if (status) {
-    const itemStatus = status === 'Pending' ? 'Not Started' : status;
-    conds.push(`EXISTS (
-      SELECT 1 FROM tbl_checklist_items i
-      WHERE i.checklist_id = c.id AND i.status = $${idx++}
-    )`);
-    vals.push(itemStatus);
+    // Task-wise: filter on the checklist's own status
+    const taskStatus = status === 'Pending' ? 'Not Started' : status;
+    conds.push(`c.status = $${idx++}`);
+    vals.push(taskStatus);
+    // ITEM-WISE (disabled)
+    // const itemStatus = status === 'Pending' ? 'Not Started' : status;
+    // conds.push(`EXISTS (
+    //   SELECT 1 FROM tbl_checklist_items i
+    //   WHERE i.checklist_id = c.id AND i.status = $${idx++}
+    // )`);
+    // vals.push(itemStatus);
   }
 
   if (search) {
@@ -818,25 +825,16 @@ exports.findAssignedEmployees = async ({ zodu_id, branch_id, created_by, search,
        c.created_by_name,
        TO_CHAR(c.due_date, 'YYYY-MM-DD')     AS due_date,
        c.updated_at                          AS last_activity,
-       COALESCE(items.total_items, 0)        AS total_items,
+       -- Task-wise: the task itself is the single unit, counted under its own status
+       1                                                    AS total_items,
        COALESCE(a.assignees, '[]'::json)     AS assignees,
-       COALESCE(items.pending, 0)            AS pending,
-       COALESCE(items.in_progress, 0)        AS in_progress,
-       COALESCE(items.completed, 0)          AS completed,
-       COALESCE(items.not_completed, 0)      AS not_completed,
-       COALESCE(items.cancelled, 0)          AS cancelled
+       (c.status = 'Not Started')::int       AS pending,
+       (c.status = 'In Progress')::int       AS in_progress,
+       (c.status = 'Completed')::int         AS completed,
+       0                                     AS not_completed,
+       (c.status = 'Cancelled')::int         AS cancelled
+       -- ITEM-WISE (disabled): per-item counts from LEFT JOIN LATERAL (... FROM tbl_checklist_items WHERE checklist_id = c.id) items
      FROM tbl_checklists c
-     LEFT JOIN LATERAL (
-       SELECT
-         COUNT(*)::int                                              AS total_items,
-         COUNT(*) FILTER (WHERE status = 'Not Started')::int       AS pending,
-         COUNT(*) FILTER (WHERE status = 'In Progress')::int       AS in_progress,
-         COUNT(*) FILTER (WHERE status = 'Completed')::int         AS completed,
-         COUNT(*) FILTER (WHERE status = 'Not Completed')::int     AS not_completed,
-         COUNT(*) FILTER (WHERE status = 'Cancelled')::int         AS cancelled
-       FROM tbl_checklist_items
-       WHERE checklist_id = c.id
-     ) items ON TRUE
      LEFT JOIN LATERAL (
        SELECT json_agg(json_build_object(
          'employee_id', ca.employee_id,
@@ -853,18 +851,25 @@ exports.findAssignedEmployees = async ({ zodu_id, branch_id, created_by, search,
   return rows;
 };
 
-exports.countAssignedEmployees = async ({ zodu_id, branch_id, created_by, search, status }) => {
-  const conds = ['c.zodu_id = $1', 'c.branch_id = $2', 'c.created_by = $3'];
-  const vals  = [zodu_id, branch_id, created_by];
-  let   idx   = 4;
+exports.countAssignedEmployees = async ({ zodu_id, branch_id, created_by, is_admin, search, status }) => {
+  // Admin sees every task in the branch — created_by filter is applied for non-admins only
+  const conds = ['c.zodu_id = $1', 'c.branch_id = $2'];
+  const vals  = [zodu_id, branch_id];
+  let   idx   = 3;
+  if (!is_admin) { conds.push(`c.created_by = $${idx++}`); vals.push(created_by); }
 
   if (status) {
-    const itemStatus = status === 'Pending' ? 'Not Started' : status;
-    conds.push(`EXISTS (
-      SELECT 1 FROM tbl_checklist_items i
-      WHERE i.checklist_id = c.id AND i.status = $${idx++}
-    )`);
-    vals.push(itemStatus);
+    // Task-wise: filter on the checklist's own status
+    const taskStatus = status === 'Pending' ? 'Not Started' : status;
+    conds.push(`c.status = $${idx++}`);
+    vals.push(taskStatus);
+    // ITEM-WISE (disabled)
+    // const itemStatus = status === 'Pending' ? 'Not Started' : status;
+    // conds.push(`EXISTS (
+    //   SELECT 1 FROM tbl_checklist_items i
+    //   WHERE i.checklist_id = c.id AND i.status = $${idx++}
+    // )`);
+    // vals.push(itemStatus);
   }
 
   if (search) {

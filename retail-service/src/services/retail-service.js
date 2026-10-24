@@ -715,12 +715,9 @@ async function deleteFileFromMinIO(fileName) {
   }
 };
 
-async function getGST(branch_id ,zodu_id  ) {
+async function getGST() {
   try {
-    if (!branch_id) throw new Error("branch_id is required");
-    if (!zodu_id) throw new Error("zodu_id is required");
-
-    const gstList = await repository.getGST(branch_id, zodu_id);
+    const gstList = await repository.getGST();
 
     return {
       success: true,
@@ -729,77 +726,6 @@ async function getGST(branch_id ,zodu_id  ) {
 
   } catch (error) {
     console.error("GST Data getting Error", error);
-    return {
-      success: false,
-      message: error.message,
-    };
-  }
-}
-
-// ADD GST
-async function addGST(zodu_id, branch_id, gst_rate) {
-  try {
-    if (!zodu_id || !branch_id || gst_rate === undefined) {
-      throw new Error("zodu_id, branch_id, and gst_rate are required");
-    }
-
-    const addedGST = await repository.addGST(
-      zodu_id,
-      branch_id,
-      gst_rate
-    );
-
-    return {
-      success: true,
-      data: addedGST,
-    };
-
-  } catch (error) {
-    console.error("GST Add Error", error);
-    return {
-      success: false,
-      message: error.message,
-    };
-  }
-}
-
-// UPDATE GST
-async function updateGST(id, gst_rate) {
-  try {
-    if (!id || gst_rate === undefined) {
-      throw new Error("id and gst_rate are required");
-    }
-
-    const updated = await repository.updateGST(id, gst_rate);
-
-    return {
-      success: true,
-      data: updated,
-    };
-
-  } catch (error) {
-    console.error("GST Update Error", error);
-    return {
-      success: false,
-      message: error.message,
-    };
-  }
-}
-
-// DELETE GST
-async function deleteGST(id) {
-  try {
-    if (!id) throw new Error("id is required");
-
-    const deleted = await repository.deleteGST(id);
-
-    return {
-      success: true,
-      data: deleted,
-    };
-
-  } catch (error) {
-    console.error("GST Delete Error", error);
     return {
       success: false,
       message: error.message,
@@ -2961,9 +2887,6 @@ module.exports = {
   deleteUnit,
   getAllCategoryData,
   getGST,
-  addGST,
-  updateGST,
-  deleteGST,
   updateMenuItem,
   deleteMenuItem,
   replaceUnit,

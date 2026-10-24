@@ -1907,13 +1907,10 @@ router.post("/replace/unit", async (req, res) => {
   }
 });
 
-router.get("/get/gst/:branch_id/:zodu_id", async (req, res) => {
+// GST rates are one common list shared by every branch, so there are no tenant params.
+router.get("/get/gst", async (req, res) => {
   try {
-    const { branch_id, zodu_id } = req.params;
-
-    console.log("me",branch_id,zodu_id)
-
-    const result = await service.getGST(branch_id, zodu_id);
+    const result = await service.getGST();
 
     if (!result.success)
       return res.status(400).json({ message: result.message });
@@ -1925,73 +1922,6 @@ router.get("/get/gst/:branch_id/:zodu_id", async (req, res) => {
 
   } catch (error) {
     console.error("GST GET Error", error);
-    return res.status(500).json({ error: error.message });
-  }
-});
-
-// ➤ ADD GST
-router.post("/add/gst", async (req, res) => {
-  try {
-    const { zodu_id, branch_id, gst_rate } = req.body;
-
-    const result = await service.addGST(
-      zodu_id,
-      branch_id,
-      gst_rate
-    );
-
-    if (!result.success)
-      return res.status(400).json({ message: result.message });
-
-    return res.status(201).json({
-      message: "GST Added Successfully",
-      data: result.data,
-    });
-
-  } catch (error) {
-    console.error("GST POST Error", error);
-    return res.status(500).json({ error: error.message });
-  }
-});
-
-// ➤ UPDATE GST
-router.put("/update/gst/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { gst_rate } = req.body;
-
-    const result = await service.updateGST(id, gst_rate);
-
-    if (!result.success)
-      return res.status(400).json({ message: result.message });
-
-    return res.status(200).json({
-      message: "GST Updated Successfully",
-      data: result.data,
-    });
-
-  } catch (error) {
-    console.error("GST UPDATE Error", error);
-    return res.status(500).json({ error: error.message });
-  }
-});
-
-// ➤ DELETE GST
-router.delete("/delete/gst/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const result = await service.deleteGST(id);
-
-    if (!result.success)
-      return res.status(400).json({ message: result.message });
-
-    return res.status(200).json({
-      message: "GST Deleted Successfully",
-    });
-
-  } catch (error) {
-    console.error("GST DELETE Error", error);
     return res.status(500).json({ error: error.message });
   }
 });

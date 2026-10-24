@@ -2134,80 +2134,25 @@ exports.replaceUnit = async (oldUnitId, newUnitId, branch_id) => {
 };
 
 
-exports.getGST = async (branch_id, zodu_id) => {
+// GST rates are one common table (no zodu_id / branch_id) - a handful of rows, so
+// no pagination or caching is needed. Ascending rate gives a natural dropdown order.
+exports.getGST = async () => {
   try {
-    const query = `
-      SELECT * FROM tbl_gst
-      WHERE branch_id = $1 AND zodu_id = $2
-      ORDER BY id DESC
-    `;
-    const { rows } = await conn.query(query, [branch_id, zodu_id]);
+    const { rows } = await conn.query(
+      `SELECT id, gst_rate FROM tbl_gst ORDER BY gst_rate::numeric`
+    );
     return rows;
   } catch (err) {
     throw new Error("Database error while fetching GST list");
   }
 };
 
-// Default units + GST rates for a new branch — both multi-row inserts run
-// inside seed_branch_defaults() on the DB side (see
-// migrations/branch_default_units_gst.sql); this is just the one call that
-// invokes it.
+// Default units for a new branch — the multi-row insert runs inside
+// seed_branch_defaults() on the DB side (see
+// migrations/branch_default_units_gst_new.sql); this is just the one call that
+// invokes it. GST rates are a common table and are not seeded per branch.
 exports.seedDefaultsForBranch = async (zodu_id, branch_id) => {
   await conn.query('SELECT seed_branch_defaults($1, $2)', [zodu_id, branch_id]);
-};
-
-// ADD GST
-exports.addGST = async (zodu_id, branch_id, gst_rate) => {
-  try {
-    const query = `
-      INSERT INTO tbl_gst (zodu_id, branch_id,  gst_rate)
-      VALUES ($1, $2, $3)
-      RETURNING *
-    `;
-    const { rows } = await conn.query(query, [
-      zodu_id,
-      branch_id,
-      gst_rate,
-    ]);
-    return rows[0];
-  } catch (err) {
-    throw new Error("Database error while adding GST");
-  }
-};
-
-// UPDATE GST
-exports.updateGST = async (id, gst_rate) => {
-  try {
-    const query = `
-      UPDATE tbl_gst
-      SET gst_rate = $1, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $2
-      RETURNING *
-    `;
-    const { rows } = await conn.query(query, [gst_rate, id]);
-
-    if (!rows[0]) throw new Error("GST record not found");
-
-    return rows[0];
-  } catch (err) {
-    if (err.message === "GST record not found") throw err;
-    throw new Error("Database error while updating GST");
-  }
-};
-
-// DELETE GST
-exports.deleteGST = async (id) => {
-  try {
-    const query = `DELETE FROM tbl_gst WHERE id = $1 RETURNING id`;
-    const { rows } = await conn.query(query, [id]);
-
-    if (!rows.length) throw new Error("GST record not found");
-
-    return true;
-  } catch (err) {
-    if (err.message === "GST record not found") throw err;
-    throw new Error("Database error while deleting GST");
-  }
 };
 
 exports.get_pos_data = async (branch_id, zodu_id) => {

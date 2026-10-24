@@ -11,13 +11,14 @@ const assignee = Joi.object({
   employee_name: Joi.string().max(100).required(),
 });
 
-const checklist_item = Joi.object({
-  id:          Joi.string().uuid(),   // present on update (existing row), absent on create (new row)
-  item_order:  Joi.number().integer().min(1).required(),
-  item_title:  Joi.string().max(500).required(),
-  description: Joi.string().allow(null, ''),
-  file_url:    Joi.array().items(Joi.object()).default([]),
-});
+// ITEM-WISE (disabled) — tasks are now single-task, not item-wise.
+// const checklist_item = Joi.object({
+//   id:          Joi.string().uuid(),   // present on update (existing row), absent on create (new row)
+//   item_order:  Joi.number().integer().min(1).required(),
+//   item_title:  Joi.string().max(500).required(),
+//   description: Joi.string().allow(null, ''),
+//   file_url:    Joi.array().items(Joi.object()).default([]),
+// });
 
 // ── CREATE ────────────────────────────────────────────────────────────────────
 
@@ -32,7 +33,7 @@ exports.checklist_create = Joi.object({
   assignees: Joi.array().items(assignee).min(1).required(),
   created_by: Joi.string().uuid().required(),
   created_by_name: Joi.string().max(100).required(),
-  items:     Joi.array().items(checklist_item).min(1).required(),
+  // items:     Joi.array().items(checklist_item).min(1).required(),   // ITEM-WISE (disabled)
 
   is_recurring:     Joi.boolean().default(false),
   recur_frequency:  Joi.when('is_recurring', {
@@ -84,7 +85,7 @@ exports.checklist_update = Joi.object({
   assignees:        Joi.array().items(assignee).min(1),
   created_by:       Joi.string().uuid(),
   created_by_name:  Joi.string().max(100),
-  items:            Joi.array().items(checklist_item).min(1),
+  // items:            Joi.array().items(checklist_item).min(1),   // ITEM-WISE (disabled)
 
   is_recurring:     Joi.boolean(),
   recur_frequency:  Joi.string().valid('Daily', 'Weekly', 'Monthly', 'Yearly').allow(null, ''),
@@ -105,12 +106,15 @@ exports.item_progress = Joi.object({
 
 // ── UPDATE TASK STATUS  (admin "Update Task Status" modal — bulk item update) ─
 
+// Task-wise: one status for the whole task.
 exports.task_status_update = Joi.object({
   ...zodu_branch,
-  items: Joi.array().items(Joi.object({
-    item_id:     Joi.string().uuid().required(),
-    status:      Joi.string().valid('Not Started', 'Completed', 'In Progress', 'Cancelled').required(),
-    remarks:     Joi.string().max(2000).allow(null, ''),
-    employee_id: Joi.string().uuid().allow(null),
-  })).min(1).required(),
+  status: Joi.string().valid('Not Started', 'Completed', 'In Progress', 'Cancelled').required(),
+  // ITEM-WISE (disabled)
+  // items: Joi.array().items(Joi.object({
+  //   item_id:     Joi.string().uuid().required(),
+  //   status:      Joi.string().valid('Not Started', 'Completed', 'In Progress', 'Cancelled').required(),
+  //   remarks:     Joi.string().max(2000).allow(null, ''),
+  //   employee_id: Joi.string().uuid().allow(null),
+  // })).min(1).required(),
 });
