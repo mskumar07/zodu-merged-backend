@@ -575,7 +575,7 @@ function resolveGstPeriod(financial_year, month) {
 async function getGstr1B2BGstins(zodu_id, branch_id, financial_year, month) {
   const { from_date, to_date } = resolveGstPeriod(financial_year, month);
   const rows = await repo.getGstr1B2BGstins(zodu_id, branch_id, from_date, to_date);
-  return rows.map((r) => ({ gstin: r.gstin, customer_name: r.customer_name }));
+  return rows.map((r) => ({ gstin: r.gstin, customer_name: r.customer_name || "-" }));
 }
 
 async function getGstr1B2B(zodu_id, branch_id, { financial_year, month, gstin, search, page, limit }) {
@@ -607,7 +607,7 @@ async function getGstr1B2B(zodu_id, branch_id, { financial_year, month, gstin, s
       s_no:          offset + i + 1,
       invoice_no:    r.invoice_no,
       invoice_date:  r.invoice_date,
-      customer_name: r.customer_name,
+      customer_name: r.customer_name || "-",
       gstin:         r.gstin,
       taxable_value: n(r.taxable_value),
       igst:          0,
@@ -680,7 +680,7 @@ async function getGstr1B2CLarge(zodu_id, branch_id, { financial_year, month, sea
       s_no:            offset + i + 1,
       invoice_no:      r.invoice_no,
       invoice_date:    r.invoice_date,
-      customer_name:   r.customer_name,
+      customer_name:   r.customer_name || "-",
       place_of_supply: r.place_of_supply,
       invoice_value:   n(r.total_value),
       taxable_value:   n(r.taxable_value),
@@ -725,7 +725,7 @@ async function getGstr1B2CSmall(zodu_id, branch_id, { financial_year, month, sea
       s_no:            offset + i + 1,
       invoice_no:      r.invoice_no,
       invoice_date:    r.invoice_date,
-      customer_name:   r.customer_name,
+      customer_name:   r.customer_name || "-",
       place_of_supply: r.place_of_supply,
       invoice_value:   n(r.total_value),
       taxable_value:   n(r.taxable_value),
@@ -734,6 +734,55 @@ async function getGstr1B2CSmall(zodu_id, branch_id, { financial_year, month, sea
       sgst:            n(r.sgst),
       cess:            0,
       total_value:     n(r.total_value),
+    })),
+    meta: getMeta({ page: pg, limit: lmt, total }),
+  };
+}
+
+// ── GSTR-1 HSN-wise summary ──────────────────────────────────
+async function getGstr1Hsn(zodu_id, branch_id, { financial_year, month, search, page, limit }) {
+  const { from_date, to_date } = resolveGstPeriod(financial_year, month);
+  const pg = Math.max(parseInt(page) || 1, 1);
+  const lmt = Math.min(Math.max(parseInt(limit) || 50, 1), 200);
+  const offset = (pg - 1) * lmt;
+  const searchFilter = search && search.trim() ? `%${search.trim()}%` : null;
+
+  const { summary, rows } = await repo.getGstr1Hsn(
+    zodu_id, branch_id, from_date, to_date, searchFilter, lmt, offset
+  );
+
+  const n = (v) => parseFloat(v) || 0;
+  const r2 = (v) => Math.round((v + Number.EPSILON) * 100) / 100;
+  const total = summary.total_hsn_items;
+  const taxable = n(summary.total_taxable_value);
+  const cgst = n(summary.total_cgst);
+  const sgst = n(summary.total_sgst);
+
+  return {
+    period: { financial_year, month: month ? parseInt(month) : null, from_date, to_date },
+    summary: {
+      total_hsn_items:     total,
+      total_taxable_value: taxable,
+      total_igst:          0,
+      total_cgst:          cgst,
+      total_sgst:          sgst,
+      total_cess:          0,
+      total_tax:           r2(cgst + sgst),
+      total_value:         r2(taxable + cgst + sgst),
+    },
+    data: rows.map((r, i) => ({
+      s_no:          offset + i + 1,
+      hsn_code:      r.hsn_code,
+      description:   r.description ?? "",
+      uqc:           r.uqc,
+      gst_rate:      n(r.gst_rate),
+      quantity:      n(r.quantity),
+      taxable_value: n(r.taxable_value),
+      igst:          0,
+      cgst:          n(r.cgst),
+      sgst:          n(r.sgst),
+      cess:          0,
+      total_value:   r2(n(r.taxable_value) + n(r.cgst) + n(r.sgst)),
     })),
     meta: getMeta({ page: pg, limit: lmt, total }),
   };
@@ -787,7 +836,7 @@ async function getGstr1CDNR(zodu_id, branch_id, { financial_year, month, gstin, 
       note_date:             note.note_date,
       original_invoice_no:   note.original_invoice_no,
       original_invoice_date: note.original_invoice_date,
-      customer_name:         note.customer_name,
+      customer_name:         note.customer_name || "-",
       gstin:                 note.gstin,
       taxable_value:         n(note.taxable_value),
       igst:                  n(note.igst),
@@ -830,7 +879,7 @@ async function getGstr1CDNUR(zodu_id, branch_id, { financial_year, month, search
       note_no:               note.note_no,
       note_type:             note.note_type,
       note_date:             note.note_date,
-      customer_name:         note.customer_name || "Walk-in Customer",
+      customer_name:         note.customer_name || "-",
       place_of_supply:       note.place_of_supply,
       original_invoice_no:   note.original_invoice_no,
       original_invoice_date: note.original_invoice_date,
@@ -849,6 +898,7 @@ async function getGstr1CDNUR(zodu_id, branch_id, { financial_year, month, search
 module.exports = {
   getGstr1B2CLarge,
   getGstr1B2CSmall,
+  getGstr1Hsn,
   getGstr1NilRated,
   getGstr1CDNR,
   getGstr1CDNUR,

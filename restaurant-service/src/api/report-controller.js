@@ -360,4 +360,19 @@ router.get("/profit", async (req, res) => {
   }
 });
 
+// GET /api/report/gst/gstr1/hsn?zodu_id=&branch_id=&financial_year=2026-27&month=10&search=&page=&limit=
+// HSN-wise summary of outward supplies (Table 12): summary cards (full filtered set) + paginated rows.
+router.get("/gst/gstr1/hsn", async (req, res) => {
+  const { zodu_id, branch_id, financial_year, month, search, page = 1, limit = 50 } = req.query;
+  if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"], [financial_year, "financial_year"])) return;
+
+  try {
+    const result = await service.getGstr1Hsn(zodu_id, branch_id, { financial_year, month, search, page, limit });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error("[report] getGstr1Hsn:", err.message);
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+});
+
 module.exports = router;

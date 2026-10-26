@@ -341,6 +341,25 @@ apply "$RESTAURANT_DB" restaurant-service/migrations/branch_default_units_gst_ne
 apply "$RETAIL_DB"     retail-service/migrations/gst_state_code.sql
 apply "$RESTAURANT_DB" restaurant-service/migrations/gst_state_code.sql
 
+# retail + restaurant — tbl_gst becomes ONE common rate list (no zodu_id/branch_id).
+# Duplicate per-branch rows are merged and tbl_menu_items is re-pointed at the kept
+# row, so this must run together with the matching service deploy. The replacement
+# seed/purge functions follow immediately: the purge functions would error once
+# tbl_gst has no zodu_id/branch_id, so they are applied right after it.
+apply "$RETAIL_DB"     retail-service/migrations/gst_common_table.sql
+apply "$RESTAURANT_DB" restaurant-service/migrations/gst_common_table.sql
+apply "$RETAIL_DB"     retail-service/migrations/branch_default_units_24102026.sql
+apply "$RESTAURANT_DB" restaurant-service/migrations/branch_default_units_24102026.sql
+apply "$RETAIL_DB"     retail-service/migrations/branch_purge_function_24102026.sql
+apply "$RESTAURANT_DB" restaurant-service/migrations/branch_purge_function_24102026.sql
+apply "$RETAIL_DB"     retail-service/migrations/company_purge_function_24102026.sql
+apply "$RESTAURANT_DB" restaurant-service/migrations/company_purge_function_24102026.sql
+
+# retail + restaurant — tbl_hsn_master: HSN code -> description lookup (12.6k rows) for
+# the HSN-wise GST report. Static reference data, upsert, re-runnable.
+apply "$RETAIL_DB"     retail-service/migrations/hsn_master.sql
+apply "$RESTAURANT_DB" restaurant-service/migrations/hsn_master.sql
+
 # retail — sale return / credit note: return_type + adjusted/refund_due/refunded
 # split on tbl_sale_returns, and tbl_sale_return_payment for refund instalments.
 apply "$RETAIL_DB"     retail-service/migrations/sale_return_refund.sql
