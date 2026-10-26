@@ -28,4 +28,8 @@ module.exports = {
   PUBLIC_FILE_BASE_URL: process.env.PUBLIC_FILE_BASE_URL || 'https://api.myzodu.com',
   AUTH_SERVICE_URL:    process.env.AUTH_SERVICE_URL    || 'http://auth-service:4000',
   PAYROLL_SERVICE_URL: process.env.PAYROLL_SERVICE_URL || 'http://payroll-service:4004',
+  FACE_SERVICE_URL:    process.env.FACE_SERVICE_URL    || 'http://face-service:8000',
+  // Cosine similarity a capture must reach to count as the employee's face.
+  // buffalo_l puts the same person well above 0.5 and strangers near 0.
+  FACE_MIN_SIMILARITY: Number(process.env.FACE_MIN_SIMILARITY) || 0.45,
 };

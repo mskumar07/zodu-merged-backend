@@ -3,6 +3,8 @@ const router  = express.Router();
 const service  = require('../services/attendance-service');
 const RequestValidator = require('../utils/requestValidator');
 const schema  = require('../schema/attendance-schema');
+const faceService = require('../services/face-service');
+const faceUpload  = require('../utils/face-upload');
 
 const currentMonthYear = () => {
   const now = new Date();
@@ -74,6 +76,23 @@ router.get('/my', async (req, res) => {
     return res.status(200).json(result);
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── MARK BY FACE  POST /api/attendance/face ───────────────────────────────────
+// multipart: image (photo) + { zodu_id, branch_id, employee_id?, marked_by?,
+// marked_by_name? }. Without employee_id the face is identified among the
+// branch's registered staff. Checks in, or out if already in today.
+router.post('/face', faceUpload('image'), async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(schema.attendance_face, req.body);
+    if (errors) return res.status(400).json({ success: false, message: errors });
+    if (!req.file) return res.status(400).json({ success: false, message: 'image is required' });
+
+    const result = await faceService.markByFace({ ...input, file: req.file });
+    return res.status(200).json(result);
+  } catch (err) {
+    return faceUpload.sendError(res, err);
   }
 });
 

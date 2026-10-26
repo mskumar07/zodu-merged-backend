@@ -12,7 +12,9 @@
     "start:payroll": "npm start --prefix payroll-service",
     "start:checklist": "npm start --prefix checklist-service",
     "start:admin": "npm start --prefix admin-service",
-    "start": "concurrently \"npm run start:auth\" \"npm run start:restaurant\" \"npm run start:gateway\" \"npm run start:employee\" \"npm run start:retail\" \"npm run start:payroll\" \"npm run start:checklist\" \"npm run start:admin\""
+    "start:face": "node scripts/start-face-service.js",
+    "start:face:py": "cd face-service && python -m uvicorn main:app --host 0.0.0.0 --port 8000",
+    "start": "concurrently \"npm run start:auth\" \"npm run start:restaurant\" \"npm run start:gateway\" \"npm run start:employee\" \"npm run start:retail\" \"npm run start:payroll\" \"npm run start:checklist\" \"npm run start:admin\" \"npm run start:face\""
   },
   "keywords": [],
   "author": "",

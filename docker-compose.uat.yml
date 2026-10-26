@@ -49,6 +49,15 @@ services:
 
 
 
+  # Face Service — photo → face embedding for face-recognition attendance.
+  # Stateless and internal: only employee-service calls it.
+  face-service:
+    image: vicky0015/zodu-backend-face-service:uat
+    container_name: uat-face-service
+    restart: always
+    expose:
+      - "8000"
+
   # Employee Service
   employee-service:
     image: vicky0015/zodu-backend-employee-service:uat
@@ -70,6 +79,9 @@ services:
       MINIO_SECRETKEY: zodu@2025
       MINIO_BUCKET_NAME: zodu
       PUBLIC_FILE_BASE_URL: https://api.myzodu.com
+      FACE_SERVICE_URL: http://face-service:8000
+    depends_on:
+      - face-service
 
   
   restaurant-service:
