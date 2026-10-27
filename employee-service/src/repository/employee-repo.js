@@ -89,6 +89,13 @@ exports.upsertEmergencyContact = async (client, d) => {
 
 // ── LIST ──────────────────────────────────────────────────────────────────────
 
+// The employee's latest "Profile Photo" document, shown as their avatar.
+const PROFILE_PHOTO_URL = `(
+       SELECT d.file_url FROM tbl_employee_documents d
+       WHERE d.employee_id = e.employee_id AND d.document_type = 'Profile Photo'
+       ORDER BY d.created_at DESC LIMIT 1
+     ) AS profile_photo_url`;
+
 exports.findAll = async ({ zodu_id, branch_id, status, search, limit, offset }) => {
   const conds = ['e.zodu_id = $1', 'e.branch_id = $2'];
   const vals  = [zodu_id, branch_id];
@@ -108,7 +115,8 @@ exports.findAll = async ({ zodu_id, branch_id, status, search, limit, offset }) 
        e.employee_id, e.employee_code, e.name, e.phone, e.email,
        e.status, e.employment_type,
        TO_CHAR(e.date_of_joining, 'YYYY-MM-DD') AS date_of_joining,
-       e.reporting_manager_name, e.branch_id, e.created_at, e.user_id
+       e.reporting_manager_name, e.branch_id, e.created_at, e.user_id,
+       ${PROFILE_PHOTO_URL}
      FROM tbl_employees e
      WHERE ${conds.join(' AND ')}
      ORDER BY e.created_at DESC
@@ -147,7 +155,8 @@ exports.findById = async (employee_id, { zodu_id, branch_id }) => {
        TO_CHAR(e.date_of_joining, 'YYYY-MM-DD') AS date_of_joining,
        ec.contact_name  AS emergency_contact_name,
        ec.relationship  AS emergency_relationship,
-       ec.mobile_number AS emergency_mobile
+       ec.mobile_number AS emergency_mobile,
+       ${PROFILE_PHOTO_URL}
      FROM tbl_employees e
      LEFT JOIN tbl_employee_emergency_contacts ec ON ec.employee_id = e.employee_id
      WHERE e.employee_id = $1 AND e.zodu_id = $2 AND e.branch_id = $3`,

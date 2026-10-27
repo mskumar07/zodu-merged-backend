@@ -43,6 +43,15 @@ exports.attendance_team = Joi.object({
   year:  Joi.number().integer().min(2000).max(2100),
 });
 
+// ── MARK BY FACE  POST /api/attendance/face (multipart fields) ───────────────
+
+exports.attendance_face = Joi.object({
+  ...zodu_branch,
+  employee_id:    Joi.string().guid().allow(null, ''),
+  marked_by:      Joi.string().max(50).allow(null, ''),
+  marked_by_name: Joi.string().max(100).allow(null, ''),
+});
+
 // ── MY ATTENDANCE  GET /api/attendance/my ─────────────────────────────────────
 
 exports.attendance_my = Joi.object({

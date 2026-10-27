@@ -215,6 +215,7 @@ apply "$RETAIL_DB" retail-service/migrations/sales_vehicle_no.sql
 
 # retail-service — customer's purchase order no/date on tbl_sales.
 apply "$RETAIL_DB" retail-service/migrations/sales_purchase_order.sql
+apply "$RETAIL_DB" retail-service/migrations/sales_history_indexes.sql
 
 # retail-service / restaurant-service — sequential purchase/expense/customer
 # IDs (tbl_doc_id_seq). customer_id_sequence.sql reuses the counter table
@@ -391,6 +392,10 @@ apply "$RESTAURANT_DB" restaurant-service/migrations/purchase_return.sql
 # restaurant-service — drops tbl_kot_list's FK to tbl_tmp_orders. createKOT
 # now also runs for Takeaway/Delivery orders, which never get a tbl_tmp_orders
 # row (they write straight to tbl_orders), so the FK 500s on every such insert.
+
+# employee-service — registered faces for face-recognition attendance
+# (POST /api/employees/:id/face, POST /api/attendance/face).
+apply "$EMPLOYEE_DB" employee-service/migrations/employee_faces.sql
 
 # Older rows were written before PUBLIC_FILE_BASE_URL existed, so they carry
 # whatever origin the code defaulted to at the time (myzodu.com, zodu.in, ...).

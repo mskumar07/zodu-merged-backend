@@ -5,6 +5,8 @@ const service  = require('../services/employee-service');
 const RequestValidator = require('../utils/requestValidator');
 const schema   = require('../schema/employee-schema');
 const minio    = require('../utils/minio');
+const faceService = require('../services/face-service');
+const faceUpload  = require('../utils/face-upload');
 
 // multer — keep file in memory, upload to MinIO
 const upload = multer({
@@ -132,7 +134,12 @@ router.post('/:id/documents', upload.single('file'), async (req, res) => {
 
     return res.status(result.success ? 201 : 400).json(result);
   } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
+    // An unreachable MinIO throws an AggregateError whose message is empty.
+    console.error('[documents] upload failed:', err);
+    return res.status(500).json({
+      success: false,
+      error: err.message || 'File storage is unavailable. Please try again.',
+    });
   }
 });
 
@@ -149,6 +156,42 @@ router.delete('/:id/documents/:doc_id', async (req, res) => {
   } catch (err) {
     const status = err.message === 'Document not found' ? 404 : 500;
     return res.status(status).json({ success: false, error: err.message });
+  }
+});
+
+// ── FACE (attendance)  /api/employees/:id/face ───────────────────────────────
+// POST   multipart: face (photo) + { zodu_id, branch_id } — register / replace
+// GET    → { registered, updated_at }
+// DELETE → removes the registered face
+router.post('/:id/face', faceUpload('face'), async (req, res) => {
+  try {
+    const { zodu_id, branch_id } = req.body;
+    if (!zodu_id)   return res.status(400).json({ success: false, message: 'zodu_id is required' });
+    if (!branch_id) return res.status(400).json({ success: false, message: 'branch_id is required' });
+    if (!req.file)  return res.status(400).json({ success: false, message: 'face photo is required' });
+
+    const result = await faceService.registerFace({
+      employee_id: req.params.id, zodu_id, branch_id, file: req.file,
+    });
+    return res.status(201).json(result);
+  } catch (err) {
+    return faceUpload.sendError(res, err);
+  }
+});
+
+router.get('/:id/face', async (req, res) => {
+  try {
+    return res.status(200).json(await faceService.getFaceStatus(req.params.id));
+  } catch (err) {
+    return faceUpload.sendError(res, err);
+  }
+});
+
+router.delete('/:id/face', async (req, res) => {
+  try {
+    return res.status(200).json(await faceService.deleteFace(req.params.id));
+  } catch (err) {
+    return faceUpload.sendError(res, err);
   }
 });
 

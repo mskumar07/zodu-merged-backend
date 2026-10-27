@@ -33,6 +33,9 @@ exports.uploadFile = async (file) => {
   // Optimize images → convert to webp (same as restaurant-service)
   if (['jpg', 'jpeg', 'png', 'webp'].includes(ext)) {
     buffer = await sharp(file.buffer)
+      // Phone cameras store the photo sideways plus an EXIF orientation tag;
+      // the webp output drops EXIF, so turn the pixels upright first.
+      .rotate()
       .resize({ width: 1800, withoutEnlargement: true })
       .toFormat('webp', { quality: 80 })
       .toBuffer();
