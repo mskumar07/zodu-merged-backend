@@ -176,7 +176,7 @@ router.put('/:id/task-status', async (req, res) => {
     const result = await service.updateTaskStatus(req.params.id, input);
     return res.status(200).json(result);
   } catch (err) {
-    const status = err.message === 'Checklist not found' ? 404 : 500;
+    const status = err.message.includes('not found') ? 404 : 500;
     return res.status(status).json({ success: false, error: err.message });
   }
 });
@@ -279,6 +279,21 @@ router.get('/instances/list', requireParams('zodu_id', 'branch_id'), async (req,
   try {
     const { zodu_id, branch_id, checklist_id, status, page, limit } = req.query;
     const result = await service.getInstances({ checklist_id, zodu_id, branch_id, status, page, limit });
+    return res.status(200).json(result);
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── LIST OCCURRENCES  GET /api/checklists/occurrences/list ────────────────────
+// Query: zodu_id, branch_id, [from, to] (inclusive; single day = from = to),
+//        [employee_id], [checklist_id], [status], [search], [created_by, is_admin], page, limit
+router.get('/occurrences/list', async (req, res) => {
+  try {
+    const { errors, input } = await validate(schema.occurrence_query, req.query);
+    if (errors) return res.status(400).json({ success: false, errors });
+
+    const result = await service.getOccurrences(input);
     return res.status(200).json(result);
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });

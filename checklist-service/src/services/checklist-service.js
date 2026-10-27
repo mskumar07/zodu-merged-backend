@@ -2,6 +2,19 @@ const db     = require('../database/connection');
 const repo   = require('../repository/checklist-repo');
 const minio  = require('../utils/minio');
 const { parsePage, buildMeta } = require('../utils/pagination');
+const { todayInZone, daysAgoInZone } = require('../utils/dates');
+
+// Task fields that decide when its occurrences fall — editing any of them
+// re-derives the open occurrences.
+const SCHEDULE_FIELDS = [
+  'is_recurring', 'recur_frequency', 'recur_every', 'recur_ends',
+  'recur_end_date', 'recur_start_date', 'start_date', 'due_date',
+];
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+// Days from `start` to `due` ('YYYY-MM-DD'); how long each occurrence of a recurring task lasts.
+const spanDays = (start, due) =>
+  start && due ? Math.max(Math.round((Date.parse(due) - Date.parse(start)) / DAY_MS), 0) : 0;
 
 // Derive checklist status from its items.
 // Rules:
@@ -40,17 +53,27 @@ exports.createChecklist = async (data) => {
     // 3. Always create the first instance
     //    Non-recurring: use due_date (or today)
     //    Recurring: use recur_start_date (or today) as the first occurrence
+    const today = todayInZone();
     const scheduled_date = data.is_recurring
-      ? (data.recur_start_date || new Date().toISOString().slice(0, 10))
-      : (data.due_date         || new Date().toISOString().slice(0, 10));
+      ? (data.recur_start_date || data.start_date || today)
+      : (data.due_date         || today);
+    // A recurring occurrence lasts (due - start) days; a one-off is due on its scheduled date.
+    const span = data.is_recurring ? spanDays(data.start_date, data.due_date) : 0;
 
     await client.query(
       `INSERT INTO tbl_checklist_instances
-         (checklist_id, zodu_id, branch_id, scheduled_date, status)
-       VALUES ($1,$2,$3,$4,'Not Started')
+         (checklist_id, zodu_id, branch_id, scheduled_date, due_date, status)
+       VALUES ($1,$2,$3,$4::date,$4::date + $5::int,'Not Started')
        ON CONFLICT DO NOTHING`,
-      [checklist.id, data.zodu_id, data.branch_id, scheduled_date]
+      [checklist.id, data.zodu_id, data.branch_id, scheduled_date, span]
     );
+
+    // Recurring with a start date in the past: create every occurrence from
+    // then up to today so the history is complete (SQL function caps at 366 days).
+    if (data.is_recurring) {
+      const from = scheduled_date > daysAgoInZone(365) ? scheduled_date : daysAgoInZone(365);
+      if (from < today) await repo.generateInstances(client, checklist.id, from, today);
+    }
 
     await client.query('COMMIT');
 
@@ -124,7 +147,7 @@ exports.getAssignedEmployees = async ({ zodu_id, branch_id, created_by, is_admin
   const { limit: lim, offset } = parsePage(page, limit);
 
   const [rows, total] = await Promise.all([
-    repo.findAssignedEmployees({ zodu_id, branch_id, created_by, is_admin, search, status, limit: lim, offset }),
+    repo.findAssignedEmployees({ zodu_id, branch_id, created_by, is_admin, search, status, today: todayInZone(), limit: lim, offset }),
     repo.countAssignedEmployees({ zodu_id, branch_id, created_by, is_admin, search, status }),
   ]);
 
@@ -170,7 +193,10 @@ exports.getChecklistById = async (id, { zodu_id, branch_id }) => {
 // items: [{ item_id, status, remarks }]. Updates each item, then derives the
 // checklist's own status from the resulting item statuses.
 // Task-wise: the status is set directly on the checklist (no per-item statuses).
-exports.updateTaskStatus = async (checklist_id, { zodu_id, branch_id, status }) => {
+// Updates ONE occurrence (instance_id, or the latest when omitted). The task
+// row mirrors its newest occurrence, so it only changes when that one is hit —
+// fixing an old day never touches today's status.
+exports.updateTaskStatus = async (checklist_id, { zodu_id, branch_id, status, instance_id }) => {
   const client = await db.connect();
   try {
     await client.query('BEGIN');
@@ -186,9 +212,13 @@ exports.updateTaskStatus = async (checklist_id, { zodu_id, branch_id, status }) 
     // const allItems = await repo.findItems(checklist_id);
     // const derivedStatus = deriveChecklistStatus(allItems);
 
-    const updatedChecklist = await repo.updateChecklist(
-      client, checklist_id, { status }, { zodu_id, branch_id }
-    );
+    const instance = await repo.updateInstanceStatus(client, { checklist_id, instance_id, status });
+    if (instance_id && !instance) throw new Error('Occurrence not found');
+
+    // No occurrence yet (task predates instances) behaves like the old task-wise update.
+    const updatedChecklist = !instance || instance.is_latest
+      ? await repo.updateChecklist(client, checklist_id, { status }, { zodu_id, branch_id })
+      : null;
 
     await client.query('COMMIT');
 
@@ -219,6 +249,14 @@ exports.updateChecklist = async (id, data) => {
       updated_by:      data.created_by,
       updated_by_name: data.created_by_name,
     }, { zodu_id: data.zodu_id, branch_id: data.branch_id });
+
+    // The task's status mirrors its latest occurrence — keep them together.
+    if (data.status) {
+      await repo.updateInstanceStatus(client, { checklist_id: id, status: data.status });
+    }
+    if (SCHEDULE_FIELDS.some(f => data[f] !== undefined)) {
+      await repo.resyncInstances(client, id, todayInZone());
+    }
 
     // If assignees or items sent — replace entirely
     // If attachments sent — update matching file entries within the array
@@ -363,6 +401,23 @@ exports.getInstances = async ({ checklist_id, zodu_id, branch_id, status, page =
   return {
     success: true,
     data: rows,
+    pagination: buildMeta(total, page, lim),
+  };
+};
+
+// ── OCCURRENCES ───────────────────────────────────────────────────────────────
+// One row per task occurrence, filterable by date range / employee / status.
+// Backs both the landing screen's date filter and a task's history.
+
+exports.getOccurrences = async ({ page = 1, limit = 10, ...filters }) => {
+  const { limit: lim, offset } = parsePage(page, limit);
+  const { rows, total } = await repo.findOccurrences({
+    ...filters, today: todayInZone(), limit: lim, offset,
+  });
+
+  return {
+    success: true,
+    data: rows.map(({ total: _total, ...row }) => row),
     pagination: buildMeta(total, page, lim),
   };
 };

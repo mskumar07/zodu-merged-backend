@@ -24,5 +24,7 @@ module.exports = {
   // browsers as plain <img src>, so it must be the public site, not an internal
   // hostname: api.myzodu.com on UAT, api.zodu.in on prod.
   PUBLIC_FILE_BASE_URL: process.env.PUBLIC_FILE_BASE_URL || 'https://api.myzodu.com',
+  // Zone that decides "today" and when the nightly recurring-task job fires.
+  CHECKLIST_TIMEZONE:   process.env.CHECKLIST_TIMEZONE   || 'Asia/Kolkata',
   EMPLOYEE_SERVICE_URL: process.env.EMPLOYEE_SERVICE_URL || 'http://employee-service:4003',
 };

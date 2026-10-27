@@ -61,7 +61,7 @@
 CREATE TABLE tbl_checklists (
     id               UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
     checklist_code   VARCHAR(30)  NOT NULL,
-    -- per-zodu sequential code, e.g. CHECKLIST-001
+    -- per zodu + branch sequential code, e.g. CH-001 (see migrations/checklist_code_ch_prefix_26102026.sql)
     zodu_id          VARCHAR(50)  NOT NULL,
     branch_id        VARCHAR(50)  NOT NULL,
     title            VARCHAR(255) NOT NULL,
@@ -87,7 +87,7 @@ CREATE TABLE tbl_checklists (
     updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX uq_checklists_zodu_code ON tbl_checklists(zodu_id, checklist_code);
+CREATE UNIQUE INDEX uq_checklists_zodu_branch_code ON tbl_checklists(zodu_id, branch_id, checklist_code);
 CREATE INDEX idx_checklists_zodu_branch ON tbl_checklists(zodu_id, branch_id);
 CREATE INDEX idx_checklists_status      ON tbl_checklists(status);
 CREATE INDEX idx_checklists_due_date    ON tbl_checklists(due_date);

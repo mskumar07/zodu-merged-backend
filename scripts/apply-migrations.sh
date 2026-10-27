@@ -286,6 +286,16 @@ apply "$RESTAURANT_DB" restaurant-service/migrations/company_purge_function_2309
 apply "$EMPLOYEE_DB"   employee-service/migrations/company_purge_function.sql
 apply "$PAYROLL_DB"    payroll-service/migrations/company_purge_function.sql
 apply "$CHECKLIST_DB"  checklist-service/migrations/company_purge_function.sql
+# checklist-service — tbl_checklist_attachments.file_url allows NULL, so removing the
+# last file of a checklist no longer violates the not-null constraint.
+apply "$CHECKLIST_DB"  checklist-service/migrations/attachments_file_url_nullable_26102026.sql
+# checklist-service — recurring tasks: tbl_checklist_instances.due_date / completed_at,
+# date indexes, and generate_checklist_instances() (called nightly by the service's
+# scheduler). Must be applied before deploying the matching checklist-service build.
+apply "$CHECKLIST_DB"  checklist-service/migrations/recurring_instances_26102026.sql
+# checklist-service — checklist codes become CH-001 (was CHECKLIST-001), numbered per
+# zodu + branch; the unique index gains branch_id to match.
+apply "$CHECKLIST_DB"  checklist-service/migrations/checklist_code_ch_prefix_26102026.sql
 
 # employee-service — tbl_employees was unique on (user_id, zodu_id) and
 # (employee_code, zodu_id), i.e. one employee row per user per company and
@@ -330,6 +340,9 @@ apply "$RESTAURANT_DB" restaurant-service/migrations/orders_kot_order_status.sql
 # orders (Takeaway/Delivery) have no table and createKOT inserts NULL for them.
 apply "$RESTAURANT_DB" restaurant-service/migrations/kot_list_table_no_nullable_1809202607.sql
 apply "$RESTAURANT_DB" restaurant-service/migrations/kot_list_public_order_no_2209202607.sql
+# restaurant-service — tbl_kot_list.status becomes 'P' pending / 'C' completed (was
+# 'Pending'), set per item by the KDS item modal's "Mark Ready".
+apply "$RESTAURANT_DB" restaurant-service/migrations/kot_list_status_25102026.sql
 
 # retail + restaurant — default units + GST rates for a new branch, seeded
 # DB-side via seed_branch_defaults(). Unique indexes make it idempotent.

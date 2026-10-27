@@ -22,22 +22,25 @@ exports.purgeCompany = async (zodu_id) => {
 
 // ── CREATE ────────────────────────────────────────────────────────────────────
 
-// Next sequential code per zodu_id, e.g. CHECKLIST-001
-// uq_checklists_zodu_code guards against a duplicate slipping through on concurrent inserts.
-exports.generateChecklistCode = async (client, zodu_id) => {
+// Next sequential code per zodu_id + branch_id, e.g. CH-001.
+// Must run inside the creating transaction: the advisory lock makes concurrent
+// creates in the same branch queue up (released on commit/rollback) so two never
+// read the same max. uq_checklists_zodu_branch_code is the backstop.
+exports.generateChecklistCode = async (client, zodu_id, branch_id) => {
+  await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`checklist_code:${zodu_id}:${branch_id}`]);
   const { rows } = await client.query(
     `SELECT MAX(CAST(NULLIF(REGEXP_REPLACE(checklist_code, '[^0-9]', '', 'g'), '') AS INTEGER)) AS max_num
      FROM tbl_checklists
-     WHERE zodu_id = $1`,
-    [zodu_id]
+     WHERE zodu_id = $1 AND branch_id = $2`,
+    [zodu_id, branch_id]
   );
   const next = (rows[0].max_num || 0) + 1;
-  return `CHECKLIST-${String(next).padStart(3, '0')}`;
+  return `CH-${String(next).padStart(3, '0')}`;
 };
 
 exports.insertChecklist = async (client, d) => {
   console.log('Inserting checklist into DB with data:', d);
-  const checklist_code = await exports.generateChecklistCode(client, d.zodu_id);
+  const checklist_code = await exports.generateChecklistCode(client, d.zodu_id, d.branch_id);
 
   const { rows } = await client.query(
     `INSERT INTO tbl_checklists (
@@ -271,7 +274,7 @@ exports.insertAttachments = async (client, { checklist_id, files, uploaded_by, u
     `INSERT INTO tbl_checklist_attachments (checklist_id, file_url, uploaded_by, uploaded_by_name)
      VALUES ($1, $2::jsonb, $3, $4)
      ON CONFLICT (checklist_id) DO UPDATE
-       SET file_url   = tbl_checklist_attachments.file_url || EXCLUDED.file_url,
+       SET file_url   = COALESCE(tbl_checklist_attachments.file_url, '[]'::jsonb) || EXCLUDED.file_url,
            uploaded_by      = EXCLUDED.uploaded_by,
            uploaded_by_name = EXCLUDED.uploaded_by_name,
            uploaded_at      = NOW()
@@ -522,6 +525,163 @@ exports.countInstances = async ({ checklist_id, zodu_id, branch_id, status }) =>
     vals
   );
   return rows[0].total;
+};
+
+// ── OCCURRENCES ───────────────────────────────────────────────────────────────
+
+// "Overdue" is never stored: an open occurrence past its due date reads as
+// Overdue. $1 is always `today` (checklist timezone), so the status filter and
+// the returned status agree.
+const OCCURRENCE_STATUS = `
+  CASE WHEN i.status IN ('Not Started', 'In Progress') AND i.due_date < $1::date
+       THEN 'Overdue' ELSE i.status END`;
+
+// One row per occurrence, newest first. Filterable by date range (inclusive),
+// employee, task, status and search. Returns the rows with the total match
+// count (window COUNT) so a page costs a single query.
+exports.findOccurrences = async ({
+  zodu_id, branch_id, created_by, is_admin, checklist_id, employee_id,
+  from, to, status, search, today, limit, offset,
+}) => {
+  const conds = ['i.zodu_id = $2', 'i.branch_id = $3'];
+  const vals  = [today, zodu_id, branch_id];
+  let   idx   = 4;
+
+  // Non-admins only see tasks they created (same rule as the landing list)
+  if (!is_admin && created_by) { conds.push(`c.created_by = $${idx++}`); vals.push(created_by); }
+  if (checklist_id) { conds.push(`i.checklist_id = $${idx++}`);   vals.push(checklist_id); }
+  if (from)         { conds.push(`i.scheduled_date >= $${idx++}`); vals.push(from); }
+  if (to)           { conds.push(`i.scheduled_date <= $${idx++}`); vals.push(to); }
+  if (employee_id) {
+    conds.push(`EXISTS (
+      SELECT 1 FROM tbl_checklist_assignees x
+      WHERE x.checklist_id = i.checklist_id AND x.employee_id = $${idx++}
+    )`);
+    vals.push(employee_id);
+  }
+  if (status) {
+    conds.push(`(${OCCURRENCE_STATUS}) = $${idx++}`);
+    vals.push(status === 'Pending' ? 'Not Started' : status);
+  }
+  if (search) {
+    conds.push(`(
+      c.checklist_code ILIKE $${idx}
+      OR c.title ILIKE $${idx}
+      OR EXISTS (
+        SELECT 1 FROM tbl_checklist_assignees x
+        WHERE x.checklist_id = i.checklist_id AND x.employee_name ILIKE $${idx}
+      )
+    )`);
+    idx++;
+    vals.push(`%${search}%`);
+  }
+
+  vals.push(limit, offset);
+
+  const { rows } = await db.query(
+    `SELECT
+       i.id                                          AS instance_id,
+       i.checklist_id,
+       c.checklist_code,
+       c.title,
+       c.is_recurring,
+       c.recur_frequency,
+       c.created_by_name,
+       TO_CHAR(i.scheduled_date, 'YYYY-MM-DD')       AS scheduled_date,
+       TO_CHAR(i.due_date,       'YYYY-MM-DD')       AS due_date,
+       (${OCCURRENCE_STATUS})                        AS status,
+       i.completed_at,
+       COALESCE(a.assignees, '[]'::json)             AS assignees,
+       COUNT(*) OVER()::int                          AS total
+     FROM tbl_checklist_instances i
+     JOIN tbl_checklists c ON c.id = i.checklist_id
+     LEFT JOIN LATERAL (
+       SELECT json_agg(json_build_object(
+         'employee_id', ca.employee_id,
+         'employee_name', ca.employee_name
+       )) AS assignees
+       FROM tbl_checklist_assignees ca
+       WHERE ca.checklist_id = i.checklist_id
+     ) a ON TRUE
+     WHERE ${conds.join(' AND ')}
+     ORDER BY i.scheduled_date DESC, c.checklist_code
+     LIMIT $${idx++} OFFSET $${idx}`,
+    vals
+  );
+
+  return { rows, total: rows[0]?.total ?? 0 };
+};
+
+// Sets one occurrence's status. instance_id omitted = the task's latest
+// occurrence. Returns { id, is_latest } or null when the task has no
+// occurrence (older tasks created before instances were tracked).
+exports.updateInstanceStatus = async (client, { checklist_id, instance_id, status }) => {
+  const { rows } = await client.query(
+    `UPDATE tbl_checklist_instances
+     SET status       = $3::varchar,
+         -- keep the original completion time if the occurrence is re-saved as Completed
+         completed_at = CASE WHEN $3::varchar = 'Completed' THEN COALESCE(completed_at, NOW()) ELSE NULL END
+     WHERE checklist_id = $1
+       AND id = COALESCE(
+         $2::uuid,
+         (SELECT id FROM tbl_checklist_instances WHERE checklist_id = $1 ORDER BY scheduled_date DESC LIMIT 1)
+       )
+     RETURNING id,
+       scheduled_date = (SELECT MAX(scheduled_date) FROM tbl_checklist_instances WHERE checklist_id = $1) AS is_latest`,
+    [checklist_id, instance_id || null, status]
+  );
+  return rows[0] || null;
+};
+
+// After a task's dates or recurrence were edited: re-derive its OPEN
+// occurrences from the new settings. Past and finished occurrences are
+// history and are left as they are.
+exports.resyncInstances = async (client, checklist_id, today) => {
+  await client.query(
+    `DELETE FROM tbl_checklist_instances
+     WHERE checklist_id = $1 AND scheduled_date > $2::date AND status = 'Not Started'`,
+    [checklist_id, today]
+  );
+
+  // Recurring: today's/open occurrences take the new occurrence length.
+  await client.query(
+    `UPDATE tbl_checklist_instances i
+     SET due_date = i.scheduled_date + CASE
+           WHEN c.start_date IS NOT NULL AND c.due_date IS NOT NULL
+             THEN GREATEST(c.due_date - c.start_date, 0) ELSE 0 END
+     FROM tbl_checklists c
+     WHERE c.id = i.checklist_id AND i.checklist_id = $1 AND c.is_recurring
+       AND i.status IN ('Not Started', 'In Progress') AND i.scheduled_date >= $2::date`,
+    [checklist_id, today]
+  );
+
+  // Not recurring: its single occurrence follows the task's due date.
+  await client.query(
+    `UPDATE tbl_checklist_instances i
+     SET scheduled_date = COALESCE(c.due_date, i.scheduled_date),
+         due_date       = COALESCE(c.due_date, i.due_date)
+     FROM tbl_checklists c
+     WHERE c.id = i.checklist_id AND i.checklist_id = $1 AND NOT c.is_recurring
+       AND i.id = (SELECT id FROM tbl_checklist_instances WHERE checklist_id = $1 ORDER BY scheduled_date DESC LIMIT 1)`,
+    [checklist_id]
+  );
+
+  // New settings may make today an occurrence day.
+  await client.query(
+    `SELECT generate_checklist_instances($2::date, $2::date, $1::uuid)`,
+    [checklist_id, today]
+  );
+};
+
+// Creates the occurrences of ONE task between two dates (inclusive). Used when
+// a recurring task is created with a start date in the past, so its history is
+// complete. The SQL function caps the range at 366 days.
+exports.generateInstances = async (client, checklist_id, from, to) => {
+  const { rows } = await client.query(
+    `SELECT generate_checklist_instances($2::date, $3::date, $1::uuid) AS inserted`,
+    [checklist_id, from, to]
+  );
+  return rows[0].inserted;
 };
 
 // ── ITEM PROGRESS ─────────────────────────────────────────────────────────────
@@ -780,7 +940,7 @@ exports.countMyAssignedTasks = async ({ zodu_id, branch_id, employee_id, status,
 // ── ASSIGNED TO EMPLOYEES (admin view — one row per CHECKLIST I assigned) ─────
 // Every checklist created by this admin (created_by), with its assignees and
 // item/status counts. search matches against assignee employee_name.
-exports.findAssignedEmployees = async ({ zodu_id, branch_id, created_by, is_admin, search, status, limit, offset }) => {
+exports.findAssignedEmployees = async ({ zodu_id, branch_id, created_by, is_admin, search, status, today, limit, offset }) => {
   // Admin sees every task in the branch — created_by filter is applied for non-admins only
   const conds = ['c.zodu_id = $1', 'c.branch_id = $2'];
   const vals  = [zodu_id, branch_id];
@@ -814,7 +974,8 @@ exports.findAssignedEmployees = async ({ zodu_id, branch_id, created_by, is_admi
     vals.push(`%${search}%`);
   }
 
-  vals.push(limit, offset);
+  const todayIdx = idx++;
+  vals.push(today, limit, offset);
 
   const { rows } = await db.query(
     `SELECT
@@ -823,7 +984,12 @@ exports.findAssignedEmployees = async ({ zodu_id, branch_id, created_by, is_admi
        c.title,
        c.status,
        c.created_by_name,
-       TO_CHAR(c.due_date, 'YYYY-MM-DD')     AS due_date,
+       -- A recurring task shows the due date of its latest occurrence
+       TO_CHAR(COALESCE(li.due_date, c.due_date), 'YYYY-MM-DD') AS due_date,
+       c.is_recurring,
+       c.recur_frequency,
+       li.id                                 AS latest_instance_id,
+       COALESCE(od.overdue_count, 0)         AS overdue_count,
        c.updated_at                          AS last_activity,
        -- Task-wise: the task itself is the single unit, counted under its own status
        1                                                    AS total_items,
@@ -843,6 +1009,20 @@ exports.findAssignedEmployees = async ({ zodu_id, branch_id, created_by, is_admi
        FROM tbl_checklist_assignees ca
        WHERE ca.checklist_id = c.id
      ) a ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT id, due_date
+       FROM tbl_checklist_instances
+       WHERE checklist_id = c.id
+       ORDER BY scheduled_date DESC
+       LIMIT 1
+     ) li ON TRUE
+     LEFT JOIN LATERAL (
+       -- open occurrences already past their due date (drives the "N overdue" badge)
+       SELECT COUNT(*)::int AS overdue_count
+       FROM tbl_checklist_instances
+       WHERE c.is_recurring AND checklist_id = c.id
+         AND status IN ('Not Started', 'In Progress') AND due_date < $${todayIdx}::date
+     ) od ON TRUE
      WHERE ${conds.join(' AND ')}
      ORDER BY c.created_at DESC
      LIMIT $${idx++} OFFSET $${idx}`,
