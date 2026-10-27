@@ -92,4 +92,11 @@ const kot_order_ready = Joi.object({
   api_order_id: Joi.string().max(100).required(),
 }).options({ abortEarly: false });
 
-module.exports = { order_create, order_update, kot_order_ready, itemSchema };
+const kot_item_ready = Joi.object({
+  zodu_id: Joi.string().max(50).required(),
+  branch_id: Joi.string().max(50).required(),
+  api_order_id: Joi.string().max(100).required(),
+  item_name: Joi.string().max(255).required(),
+}).options({ abortEarly: false });
+
+module.exports = { order_create, order_update, kot_order_ready, kot_item_ready, itemSchema };

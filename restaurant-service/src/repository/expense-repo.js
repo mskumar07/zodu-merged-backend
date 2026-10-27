@@ -202,7 +202,8 @@ exports.getExpenseById = async (id, { branch_id, zodu_id } = {}) => {
         v.vendor_type,
        c.name AS category_name,
        TO_CHAR(e.expense_date, 'DD Mon YYYY') AS expense_date_formatted,
-       TO_CHAR(e.due_date,     'DD Mon YYYY') AS due_date_formatted
+       TO_CHAR(e.due_date,     'DD Mon YYYY') AS due_date_formatted,
+       TO_CHAR(e.created_at,   'DD Mon YYYY, HH12:MI AM') AS created_at_formatted
      FROM tbl_expense e
      LEFT JOIN tbl_category c ON c.id = e.category_id
     LEFT JOIN tbl_vendor v ON v.vendor_id = e.vendor_id AND v.zodu_id = e.zodu_id AND v.branch_id = e.branch_id

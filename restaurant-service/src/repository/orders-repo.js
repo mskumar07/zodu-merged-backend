@@ -1113,7 +1113,9 @@ exports.getKotList = async (zodu_id, branch_id) => {
         item_name,
         SUM(qty) AS qty
       FROM filtered
+      WHERE status IS DISTINCT FROM 'C'
       GROUP BY item_name
+      HAVING SUM(qty) > 0
       ORDER BY SUM(qty) DESC
     ),
     order_type_summary AS (
@@ -1129,6 +1131,21 @@ exports.getKotList = async (zodu_id, branch_id) => {
   `;
   const { rows } = await conn.query(query, [zodu_id, branch_id]);
   return rows[0] || { data: [], item_summary: [], order_type_summary: [] };
+};
+
+// tbl_kot_list.status: 'P' = Pending (default), 'C' = Completed.
+// Item-level "Mark Ready" from the KDS item modal: flags this order's rows for
+// the item as Completed. Rows stay on tbl_kot_list so the card keeps showing
+// them (struck through) until the whole order is marked ready.
+exports.markKotItemReady = async (zodu_id, branch_id, api_order_id, item_name) => {
+  const { rows } = await conn.query(
+    `UPDATE tbl_kot_list SET status = 'C'
+     WHERE zodu_id = $1 AND branch_id = $2 AND api_order_id = $3 AND item_name = $4
+       AND status IS DISTINCT FROM 'C'
+     RETURNING item_id, item_name, qty, status`,
+    [zodu_id, branch_id, api_order_id, item_name]
+  );
+  return rows;
 };
 
 // "Order Ready" action from the KDS screen: marks the order Ready on

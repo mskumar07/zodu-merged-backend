@@ -173,4 +173,19 @@ router.put("/api/kot/order-ready", async (req, res) => {
   }
 });
 
+// PUT /api/kot/item-ready — marks one item of one order Ready on tbl_kot_list.
+// The row stays on the KDS card (shown struck through) until "Order Ready".
+router.put("/api/kot/item-ready", async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(schema.kot_item_ready, req.body);
+    if (errors) return res.status(400).json({ errors });
+    const result = await service.markKotItemReady(input.zodu_id, input.branch_id, input.api_order_id, input.item_name);
+    if (!result.success) return res.status(400).json({ message: result.message });
+    return res.status(200).json({ message: "Item marked ready", updatedItems: result.updatedItems });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;

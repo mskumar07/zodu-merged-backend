@@ -261,6 +261,7 @@ exports.getPurchaseById = async (id, { branch_id, zodu_id } = {}) => {
      p.*,
      TO_CHAR(p.purchase_date, 'DD Mon YYYY') AS purchase_date_formatted,
      TO_CHAR(p.due_date, 'DD Mon YYYY') AS due_date_formatted,
+     TO_CHAR(p.created_at, 'DD Mon YYYY, HH12:MI AM') AS created_at_formatted,
      v.vendor_name,
      v.company_name,
      v.vendor_phone,
