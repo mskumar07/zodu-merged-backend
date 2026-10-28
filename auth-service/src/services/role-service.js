@@ -111,8 +111,14 @@ exports.deleteRole = async (role_id, { zodu_id, branch_id }) => {
 
 // ── GET MODULES ───────────────────────────────────────────────────────────────
 
-exports.getModules = async () => {
-  const modules   = await repo.findAllModules();
+const RESTAURANT_HIDDEN_MODULES = ['accounting', 'customer management'];
+
+exports.getModules = async (business_type) => {
+  let modules = await repo.findAllModules();
+
+  if (String(business_type || '').toLowerCase() === 'restaurant') {
+    modules = modules.filter((m) => !RESTAURANT_HIDDEN_MODULES.includes(String(m.module_name).trim().toLowerCase()));
+  }
   const parentMap = {};
   const children  = [];
 
