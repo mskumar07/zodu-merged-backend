@@ -3984,11 +3984,22 @@ exports.getSalesHistorySummary = async (filters) => {
 
   const { rows } = await conn.query(
     `SELECT
-      COUNT(*)   FILTER (WHERE s.sale_type != 'Q') AS total_transactions,
-      COALESCE(SUM(s.total_amount) FILTER (WHERE s.sale_type != 'Q'), 0) AS net_revenue,
+      -- a fully returned sale no longer counts as a transaction
+      COUNT(*) FILTER (
+        WHERE s.sale_type != 'Q'
+          AND NOT (s.total_amount > 0 AND COALESCE(r.returned_amount, 0) >= s.total_amount)
+      ) AS total_transactions,
+      COALESCE(SUM(GREATEST(s.total_amount - COALESCE(r.returned_amount, 0), 0))
+               FILTER (WHERE s.sale_type != 'Q'), 0) AS net_revenue,
       COUNT(*)   FILTER (WHERE s.sale_type = 'Q')  AS total_quotations
     FROM tbl_sales s
     LEFT JOIN tbl_customer c ON c.cust_uuid = s.customer_uuid
+    LEFT JOIN (
+      SELECT original_sale_uuid, SUM(return_amount) AS returned_amount
+        FROM tbl_sale_returns
+       WHERE zodu_id = $1 AND branch_id = $2
+       GROUP BY original_sale_uuid
+    ) r ON r.original_sale_uuid = s.sale_uuid
     WHERE ${where}`,
     values
   );

@@ -24,7 +24,8 @@ export const createPurchaseReturnSchema = Joi.object({
   branch_id:            Joi.string().trim().max(50).required(),
   return_type:          Joi.string().valid('PURCHASE_RETURN', 'DEBIT_NOTE').default('PURCHASE_RETURN'),
   return_reason:        Joi.string().trim().max(500).optional().allow('', null),
-  refund_type:          Joi.string().trim().max(50).optional().allow('', null),
+  refund_type: Joi.string().trim().max(50).optional().allow('', null),
+  return_date: Joi.date().iso().raw().required(),
   refund_payment:       refundPaymentSchema.optional(),
   notes:                Joi.string().trim().max(1000).optional().allow('', null),
   created_by:           Joi.string().trim().max(100).optional().allow('', null),
@@ -39,6 +40,7 @@ export const updatePurchaseReturnSchema = Joi.object({
   return_type:   Joi.string().valid('PURCHASE_RETURN', 'DEBIT_NOTE').optional(),
   return_reason: Joi.string().trim().max(500).optional().allow('', null),
   refund_type:   Joi.string().trim().max(50).optional().allow('', null),
+  return_date:   Joi.date().iso().raw().required(),
   notes:         Joi.string().trim().max(1000).optional().allow('', null),
   items,
 });

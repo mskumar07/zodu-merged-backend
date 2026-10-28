@@ -176,25 +176,38 @@ exports.getPurchaseById = async (id, params = {}) => {
 exports.getPurchaseSummary = async ({ zodu_id, branch_id }) => {
   try {
     const { rows } = await conn.query(
-      `SELECT
-         COUNT(*)::text                                          AS total_purchase_count,
-         TRUNC(COALESCE(SUM(paid_amount),    0))::text                 AS total_paid_amount,
-         TRUNC(COALESCE(SUM(balance_amount), 0))::text                 AS total_unpaid_amount,
-         TRUNC(COALESCE(SUM(total_amount), 0))::text                 AS total_amount,
-         COALESCE(SUM(
-           CASE
-             WHEN DATE_TRUNC('month', purchase_date) = DATE_TRUNC('month', CURRENT_DATE)
-             THEN total_amount ELSE 0
-           END
-         ), 0)::text                                            AS this_month_spent,
-         COALESCE(SUM(
-           CASE
-             WHEN DATE_TRUNC('month', purchase_date) = DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')
-             THEN total_amount ELSE 0
-           END
-         ), 0)::text                                            AS last_month_spent
-       FROM tbl_purchase
-       WHERE zodu_id = $1 AND branch_id = $2 AND cancelled_purchase = false `,
+      // Net of returns, same rules as the purchase reports: a return lowers the bought value
+      // by return_amount and the paid amount by what the vendor has refunded, and a fully
+      // returned purchase no longer counts. Returns are aggregated once, not per purchase.
+      `WITH ret AS (
+         SELECT original_purchase_id,
+                SUM(return_amount)   AS returned,
+                SUM(refunded_amount) AS refunded
+         FROM tbl_purchase_returns
+         WHERE zodu_id = $1 AND branch_id = $2
+         GROUP BY original_purchase_id
+       ),
+       net AS (
+         SELECT p.purchase_date,
+                p.total_amount - COALESCE(r.returned, 0)   AS amt,
+                p.paid_amount  - COALESCE(r.refunded, 0)   AS paid,
+                NOT (p.total_amount > 0 AND COALESCE(r.returned, 0) >= p.total_amount - 0.01) AS counted
+         FROM tbl_purchase p
+         LEFT JOIN ret r ON r.original_purchase_id = p.purchase_id
+         WHERE p.zodu_id = $1 AND p.branch_id = $2 AND p.cancelled_purchase = false
+       )
+       SELECT
+         COUNT(*) FILTER (WHERE counted)::text                   AS total_purchase_count,
+         TRUNC(COALESCE(SUM(paid), 0))::text                     AS total_paid_amount,
+         TRUNC(COALESCE(SUM(amt - paid), 0))::text               AS total_unpaid_amount,
+         TRUNC(COALESCE(SUM(amt), 0))::text                      AS total_amount,
+         COALESCE(SUM(amt) FILTER (
+           WHERE DATE_TRUNC('month', purchase_date) = DATE_TRUNC('month', CURRENT_DATE)
+         ), 0)::text                                             AS this_month_spent,
+         COALESCE(SUM(amt) FILTER (
+           WHERE DATE_TRUNC('month', purchase_date) = DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')
+         ), 0)::text                                             AS last_month_spent
+       FROM net`,
       [zodu_id, branch_id]
     );
     return { success: true, data: rows[0] };

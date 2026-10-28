@@ -218,7 +218,7 @@ exports.getPurchases = async ({
          GREATEST(r.refund_due - r.refunded_amount, 0) AS pending_refund,
          GREATEST(r.refunded_amount - r.refund_due, 0) AS excess_refund,
          r.return_reason,
-         TO_CHAR(r.created_at, 'DD Mon YYYY, HH12:MI AM') AS return_date_fmt,
+         TO_CHAR(r.return_date, 'DD Mon YYYY') AS return_date_fmt,
          r.original_purchase_id,
          p.vendor_id,
          v.vendor_name,

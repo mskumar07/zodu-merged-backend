@@ -210,6 +210,13 @@ async function applyStockDelta(client, { zodu_id, branch_id, deltaByItem, nameBy
   });
 }
 
+// return_date is a YYYY-MM-DD string (Joi .raw()), so a string compare is a date compare.
+function assertReturnDateNotBeforeSale(return_date, sale) {
+  if (return_date && sale.sale_date_iso && String(return_date).slice(0, 10) < sale.sale_date_iso) {
+    throw ValidationError(`Return date cannot be before the sale date (${sale.sale_date_iso})`);
+  }
+}
+
 async function createSaleReturn(dto) {
   const {
     original_sale_uuid,
@@ -217,6 +224,7 @@ async function createSaleReturn(dto) {
     branch_id,
     return_type,
     return_reason,
+    return_date,
     refund_type,
     refund_payment,
     notes,
@@ -233,6 +241,7 @@ async function createSaleReturn(dto) {
     if (!sale) {
       throw NotFoundError("Original sale not found");
     }
+    assertReturnDateNotBeforeSale(return_date, sale);
 
     const [originalItems, alreadyReturnedRows] = await Promise.all([
       repo.findSaleItemsBySaleUuid(client, original_sale_uuid),
@@ -281,6 +290,7 @@ async function createSaleReturn(dto) {
       adjusted_amount: adjustedAmount,
       refund_due: refundDue,
       refund_status: refundStatusFor(refundDue, 0),
+      return_date: return_date || null,
     });
 
     await repo.insertSaleReturnItems(client, returnRow.return_uuid, lines);
@@ -351,6 +361,7 @@ async function updateSaleReturn(dto) {
     zodu_id,
     branch_id,
     return_type,
+    return_date,
     return_reason,
     refund_type,
     notes,
@@ -373,6 +384,7 @@ async function updateSaleReturn(dto) {
     if (!sale || !ret) {
       throw NotFoundError("Sale return not found");
     }
+    assertReturnDateNotBeforeSale(return_date, sale);
 
     const [originalItems, otherReturnedRows, oldItems] = await Promise.all([
       repo.findSaleItemsBySaleUuid(client, saleUuid),
@@ -408,6 +420,7 @@ async function updateSaleReturn(dto) {
       adjusted_amount: adjustedAmount,
       refund_due: refundDue,
       refund_status: refundStatus,
+      return_date: return_date || null,
     });
 
     await repo.deleteSaleReturnItems(client, return_uuid);
@@ -477,6 +490,11 @@ async function recordRefund(dto) {
     }
     if (refund_amount > outstanding) {
       throw ValidationError(`Refund amount exceeds the pending refund of ${outstanding.toFixed(2)}`);
+    }
+
+    // refund_date is a YYYY-MM-DD string (Joi .raw()), so a string compare is a date compare.
+    if (refund_date && ret.return_date_iso && String(refund_date).slice(0, 10) < ret.return_date_iso) {
+      throw ValidationError(`Refund date cannot be before the return date (${ret.return_date_iso})`);
     }
 
     const payment = await repo.insertRefundPayment(client, {

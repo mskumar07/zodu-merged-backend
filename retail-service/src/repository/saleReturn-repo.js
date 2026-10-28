@@ -10,6 +10,7 @@ class SaleReturnRepository {
           sale_uuid, sale_id, branch_id, zodu_id,
           customer_uuid, total_amount, paid_amount, balance_amount, payment_status,
           discount_amount, discount_gst_mode,
+          TO_CHAR(sale_date, 'YYYY-MM-DD') AS sale_date_iso,
           (SELECT COALESCE(SUM(r.return_amount), 0)
              FROM tbl_sale_returns r
             WHERE r.original_sale_uuid = tbl_sales.sale_uuid) AS returned_total
@@ -85,7 +86,7 @@ class SaleReturnRepository {
       total_tax, return_amount, refund_type,
       notes, created_by,
       return_type, adjusted_amount, refund_due, refund_status,
-      discount_amount, round_off,
+      discount_amount, round_off,return_date,
     } = payload;
 
     const { rows } = await client.query(
@@ -96,9 +97,9 @@ class SaleReturnRepository {
           total_tax, return_amount, refund_type,
           notes, created_by,
           return_type, adjusted_amount, refund_due, refund_status,
-          discount_amount, round_off
+          discount_amount, round_off, return_date
        )
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
        RETURNING
           return_uuid, return_id, return_amount,
           refund_type, return_type, adjusted_amount,
@@ -113,7 +114,7 @@ class SaleReturnRepository {
         notes, created_by,
         return_type, adjusted_amount.toFixed(2),
         refund_due.toFixed(2), refund_status,
-        discount_amount.toFixed(2), round_off.toFixed(2),
+        discount_amount.toFixed(2), round_off.toFixed(2),return_date || null,
       ]
     );
     return rows[0];
@@ -277,7 +278,7 @@ class SaleReturnRepository {
     const {
       return_uuid, return_type, return_reason, refund_type, notes,
       total_items, subtotal, total_tax, return_amount,
-      adjusted_amount, refund_due, refund_status, discount_amount, round_off,
+      adjusted_amount, refund_due, refund_status, discount_amount, round_off,return_date,
     } = payload;
 
     await client.query(
@@ -294,13 +295,14 @@ class SaleReturnRepository {
            refund_due      = $11,
            refund_status   = $12,
            discount_amount = $13,
-           round_off       = $14
+           round_off       = $14,
+           return_date     = $15
        WHERE return_uuid   = $1`,
       [
         return_uuid, return_type ?? null, return_reason ?? null, refund_type ?? null, notes ?? null,
         total_items, subtotal.toFixed(2), total_tax.toFixed(2), return_amount.toFixed(2),
         adjusted_amount.toFixed(2), refund_due.toFixed(2), refund_status,
-        discount_amount.toFixed(2), round_off.toFixed(2),
+        discount_amount.toFixed(2), round_off.toFixed(2), return_date || null,
       ]
     );
   }
@@ -311,7 +313,8 @@ class SaleReturnRepository {
     const { rows } = await client.query(
       `SELECT
           return_uuid, return_id, original_sale_id, return_amount,
-          refund_due, refunded_amount, refund_status
+          refund_due, refunded_amount, refund_status,
+          TO_CHAR(return_date, 'YYYY-MM-DD') AS return_date_iso
        FROM tbl_sale_returns
        WHERE return_uuid = $1
          AND zodu_id     = $2
