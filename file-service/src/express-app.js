@@ -8,6 +8,7 @@ const { createUploadSlots } = require('./middleware/upload');
 const { createFileService } = require('./services/file-service');
 const { createFileRouter } = require('./api/file-controller');
 const { createInternalRouter } = require('./api/internal-controller');
+const { createLegacyRouter } = require('./api/legacy-controller');
 
 // deps: { config, repo, storage, authClient, rateLimitStore }. Built in server.js
 // from the real database / MinIO / Redis; tests pass fakes.
@@ -50,8 +51,12 @@ function createApp({ config, repo, storage, authClient, rateLimitStore }) {
   const limits = {
     // Per client IP across the whole API.
     api: limit({ name: 'API', max: 300, key: (req) => req.ip }),
-    // Per user: 30 upload requests a minute (up to 300 files).
-    upload: limit({ name: 'upload', max: 30, key: (req) => `${req.ctx.zoduId}:${req.ctx.userId || req.ctx.caller}` }),
+    // Per user: 30 upload requests a minute (up to 300 files). Internal calls
+    // without a user (old anonymous /upload) count per end-user address.
+    upload: limit({
+      name: 'upload', max: 30,
+      key: (req) => `${req.ctx.zoduId || '-'}:${req.ctx.userId || (req.ctx.internal ? `ip:${req.ctx.ip}` : '-')}`,
+    }),
     // Stable links are cached by browsers and proxies, so this one is generous.
     publicLinks: limit({ name: 'link', max: 3000, key: (req) => req.ip }),
   };
@@ -65,6 +70,9 @@ function createApp({ config, repo, storage, authClient, rateLimitStore }) {
 
   app.get('/health', (_req, res) => res.json({ success: true, status: 'ok' }));
   app.use('/internal', createInternalRouter({ files, requireInternal, limits, uploadSlots }));
+  if (config.LEGACY_BUCKET_NAME) {
+    app.use('/legacy', createLegacyRouter({ storage, legacyBucket: config.LEGACY_BUCKET_NAME, limits }));
+  }
   app.use('/', createFileRouter({ files, requireUser, limits, uploadSlots }));
 
   app.use((_req, _res, next) => next(NotFoundError('Not found')));

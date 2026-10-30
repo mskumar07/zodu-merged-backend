@@ -6,6 +6,10 @@
 //   POST /internal/store?module=&entity_id=&file_name=[&category=]   raw body (server-generated PDFs, exports)
 //   POST /internal/resolve  { file_ids }                    → URLs for responses
 //   POST /internal/delete   { file_ids } | { module, entity_id }   soft delete
+//   POST /internal/claim    { file_ids, module, entity_id, category? }   staged uploads → the record
+//   POST /internal/discard  { file_ids }                    drop staged uploads nobody claimed
+//
+// X-Zodu-Id may be absent only for module=uploads (the old anonymous /upload routes).
 
 const express = require('express');
 const validate = require('../utils/requestValidator');
@@ -57,7 +61,22 @@ function createInternalRouter({ files, requireInternal, limits, uploadSlots }) {
   router.post('/resolve', express.json({ limit: '16kb' }), async (req, res) => {
     const { file_ids } = validate(schema.batchUrlsBody, req.body || {});
     const rows = await files.getAuthorisedFiles(req.ctx, file_ids);
-    res.json({ success: true, data: await files.urlsFor(req.ctx, rows, 'resolve') });
+    res.json({ success: true, data: await files.urlsFor(req.ctx, rows, 'resolve', { presignStreamOnly: true }) });
+  });
+
+  router.post('/claim', express.json({ limit: '16kb' }), async (req, res) => {
+    const { file_ids, module, entity_id, category } = validate(schema.claimBody, req.body || {});
+    req.logFields = { module };
+    res.json({
+      success: true,
+      data: await files.claim(req.ctx, { module, entityId: entity_id, category, fileIds: file_ids }),
+    });
+  });
+
+  router.post('/discard', express.json({ limit: '16kb' }), async (req, res) => {
+    const { file_ids } = validate(schema.batchUrlsBody, req.body || {});
+    const discarded = await files.discardStaged(req.ctx, file_ids);
+    res.json({ success: true, data: { discarded_count: discarded.length, file_ids: discarded } });
   });
 
   router.post('/delete', express.json({ limit: '16kb' }), async (req, res) => {

@@ -8,7 +8,7 @@
 
 const crypto = require('crypto');
 const path = require('path');
-const { FILE_TYPES, MAX_FILES_PER_UPLOAD, getModule } = require('../storage/modules');
+const { FILE_TYPES, MAX_FILES_PER_UPLOAD, STAGING, getModule } = require('../storage/modules');
 const { inspectFile } = require('../storage/file-inspector');
 const { transformFile } = require('../storage/transform');
 const { onScan } = require('../storage/scan');
@@ -25,7 +25,7 @@ function createFileService({ repo, storage, config }) {
   // ── context helpers ──────────────────────────────────────────────────────
   // Branch modules need a branch; tenant modules live in _shared (branch null).
   function scopeFor(ctx, mod) {
-    if (mod.scope === 'tenant') return null;
+    if (mod.scope === 'tenant' || mod.scope === 'staging') return null;
     if (!ctx.branchId) throw ValidationError('X-Branch-Id header is required for this module');
     return ctx.branchId;
   }
@@ -52,6 +52,10 @@ function createFileService({ repo, storage, config }) {
     }
     const mod = getModule(module);
     const branchId = scopeFor(ctx, mod);
+    // Staged uploads may come from a caller with no verified tenant (the old
+    // anonymous /upload routes); they are filed under "anon" until claimed.
+    const staging = module === STAGING;
+    if (staging) entityId = ctx.zoduId || 'anon';
 
     const checked = [];
     const errors = [];
@@ -72,10 +76,11 @@ function createFileService({ repo, storage, config }) {
           throw httpError(422, 'Image could not be processed (damaged or too large)');
         }
         // Key from the final type: a transform may have turned a PNG into WEBP.
-        const key = buildKey({ zoduId: ctx.zoduId, branchId, module, entityId, category, mimeType: out.mime });
+        const fileId = crypto.randomUUID();
+        const key = buildKey({ zoduId: ctx.zoduId, branchId, module, entityId, category, mimeType: out.mime, fileId });
         const ready = { buffer: out.buffer, mime: out.mime, size: out.buffer.length, name, module };
         await onScan(ready);
-        checked.push({ ...ready, key, fileId: crypto.randomUUID() });
+        checked.push({ ...ready, key, fileId });
       } catch (err) {
         if (!err.status) throw err;
         errors.push({ file: name, status: err.status, error: err.message });
@@ -105,7 +110,7 @@ function createFileService({ repo, storage, config }) {
       }
       const rows = await repo.insertFiles(checked.map((f) => ({
         file_id: f.fileId,
-        zodu_id: ctx.zoduId,
+        zodu_id: ctx.zoduId || STAGING_OWNER,
         branch_id: branchId,
         module,
         category: category || null,
@@ -139,10 +144,7 @@ function createFileService({ repo, storage, config }) {
 
   // Ids the caller may see, in request order; foreign, deleted and unknown ids are left out.
   async function getAuthorisedFiles(ctx, fileIds) {
-    const ids = [...new Set(fileIds.filter(isFileId).map((s) => s.toLowerCase()))];
-    if (!ids.length) return [];
-    const byId = new Map((await repo.findReadyMany(ids)).map((r) => [r.file_id, r]));
-    return ids.map((id) => byId.get(id)).filter((row) => canSee(ctx, row));
+    return (await getRows(fileIds)).filter((row) => canSee(ctx, row));
   }
 
   // Force the safe headers on the link itself, whatever is stored on the object.
@@ -162,14 +164,20 @@ function createFileService({ repo, storage, config }) {
   // 'link' files: their permanent cacheable URL. Stream-only files: the
   // authorised /content URL (needs the Authorization header). Other private
   // files: a presigned URL.
-  function urlFor(row) {
+  //
+  // presignStreamOnly: /internal/resolve fills the old URL fields of clients
+  // that can't send an Authorization header with a link yet (Phase 2), so
+  // stream-only files get a presigned URL there too. Drop it once clients
+  // use *_file_id with /files/:id/content.
+  function urlFor(row, { presignStreamOnly = false } = {}) {
     if (isLink(row)) return stableUrl(row);
-    if (isStreamOnly(row)) return contentUrl(row);
+    if (isStreamOnly(row) && !presignStreamOnly) return contentUrl(row);
     return presign(row);
   }
 
   // Issuing a presigned URL counts as a download; a /content URL is logged when it is used.
-  const logIssued = (ctx, rows, action) => logPrivate(ctx, rows.filter((row) => !isStreamOnly(row)), action);
+  const logIssued = (ctx, rows, action, { presignStreamOnly = false } = {}) =>
+    logPrivate(ctx, presignStreamOnly ? rows : rows.filter((row) => !isStreamOnly(row)), action);
 
   async function getDownloadUrl(ctx, row, { download = false } = {}) {
     const url = isStreamOnly(row)
@@ -179,17 +187,78 @@ function createFileService({ repo, storage, config }) {
     return { file_id: row.file_id, url, mime_type: row.mime_type, expires_in_seconds: expiresIn(row) };
   }
 
-  async function urlsFor(ctx, rows, action) {
-    const out = await Promise.all(rows.map(async (row) => ({
-      file_id: row.file_id,
-      module: row.module,
-      mime_type: row.mime_type,
-      original_name: row.original_name,
-      url: await urlFor(row),
-      expires_in_seconds: expiresIn(row),
-    })));
-    await logIssued(ctx, rows, action);
+  async function urlsFor(ctx, rows, action, opts = {}) {
+    const out = await Promise.all(rows.map(async (row) => {
+      const presigned = !isLink(row) && (!isStreamOnly(row) || Boolean(opts.presignStreamOnly));
+      return {
+        file_id: row.file_id,
+        module: row.module,
+        mime_type: row.mime_type,
+        original_name: row.original_name,
+        url: await urlFor(row, opts),
+        expires_in_seconds: presigned ? PRESIGNED_URL_TTL : null,
+      };
+    }));
+    await logIssued(ctx, rows, action, opts);
     return out;
+  }
+
+  // ── claim ────────────────────────────────────────────────────────────────
+  // Moves staged uploads into the record that now uses them:
+  //   _staging/uploads/...  →  {zoduId}/{branchId}/{module}/{entityId}/...
+  // The file_id stays the same, so a stable /files/v/:id link keeps working
+  // for link modules. Idempotent: a file already in this record is returned
+  // as is (saving a record twice re-sends the same ids). Ids that are neither
+  // staged nor this record's, or belong to another tenant, are left out.
+  async function claim(ctx, { module, entityId, category, fileIds }) {
+    const mod = getModule(module);
+    if (mod.internalOnly) throw httpError(400, `Files can't be claimed into "${module}"`);
+    const branchId = scopeFor(ctx, mod);
+    const rows = await getRows(fileIds);
+
+    const out = [];
+    for (const row of rows) {
+      const already = row.module === module && row.entity_id === entityId
+        && row.zodu_id === ctx.zoduId && row.branch_id === branchId;
+      if (already) { out.push(row); continue; }
+
+      const staged = row.module === STAGING && (row.zodu_id === ctx.zoduId || row.zodu_id === STAGING_OWNER);
+      if (!staged) continue;
+
+      if (!mod.allowedTypes.includes(row.mime_type)) {
+        throw httpError(415, `"${row.original_name}" (${FILE_TYPES[row.mime_type]?.ext || row.mime_type}) is not allowed for ${module}`);
+      }
+      if (Number(row.size_bytes) > mod.maxSizeMb * 1024 * 1024) {
+        throw httpError(413, `"${row.original_name}" exceeds the ${mod.maxSizeMb}MB limit for ${module}`);
+      }
+      const key = buildKey({
+        zoduId: ctx.zoduId, branchId, module, entityId, category, mimeType: row.mime_type, fileId: row.file_id,
+      });
+      await internal.copyObject(bucket, key, `/${bucket}/${row.object_key}`);
+      let moved;
+      try {
+        moved = await repo.reassign(row.file_id, {
+          zodu_id: ctx.zoduId, branch_id: branchId, module, category: category || null, entity_id: entityId, object_key: key,
+        });
+      } catch (err) {
+        await internal.removeObject(bucket, key).catch(() => {});
+        throw err;
+      }
+      if (!moved) {   // claimed by a concurrent request in the meantime
+        await internal.removeObject(bucket, key).catch(() => {});
+        continue;
+      }
+      await internal.removeObject(bucket, row.object_key).catch(() => {});
+      out.push(moved);
+    }
+    return urlsFor(ctx, out, 'claim');
+  }
+
+  async function getRows(fileIds) {
+    const ids = [...new Set(fileIds.filter(isFileId).map((s) => s.toLowerCase()))];
+    if (!ids.length) return [];
+    const byId = new Map((await repo.findReadyMany(ids)).map((r) => [r.file_id, r]));
+    return ids.map((id) => byId.get(id)).filter(Boolean);
   }
 
   async function listEntityFiles(ctx, { module, entityId }) {
@@ -280,11 +349,23 @@ function createFileService({ repo, storage, config }) {
     if (priv.length) await repo.logAccess(priv.map((row) => accessEntry(ctx, row, action)));
   }
 
+  // Staged files are not anyone's yet: the service that took the upload may
+  // discard one (old DELETE /delete/file/:name) as long as nothing claimed it.
+  async function discardStaged(ctx, fileIds) {
+    const rows = (await getRows(fileIds)).filter((row) => row.module === STAGING
+      && (row.zodu_id === ctx.zoduId || row.zodu_id === STAGING_OWNER));
+    for (const row of rows) await deleteFile(ctx, row);
+    return rows.map((r) => r.file_id);
+  }
+
   return {
-    uploadMany, getAuthorisedFile, getAuthorisedFiles, getDownloadUrl, urlsFor,
+    uploadMany, getAuthorisedFile, getAuthorisedFiles, getDownloadUrl, urlsFor, claim, discardStaged,
     listEntityFiles, streamFile, streamPublic, deleteFile, deleteEntityFiles, isFileId,
   };
 }
+
+// tbl_files.zodu_id of a staged upload whose caller had no verified tenant.
+const STAGING_OWNER = '_staging';
 
 function toDto(row) {
   return {

@@ -10,21 +10,31 @@ const PURGEABLE = Object.entries(MODULES).filter(([, m]) => !m.keepOnDelete).map
 const BATCH = 200;
 const EVERY_MS = 6 * 60 * 60 * 1000;
 
-function createPurgeJob({ repo, storage, olderThanDays }) {
-  async function runOnce() {
+function createPurgeJob({ repo, storage, olderThanDays, stagingTtlHours = 48 }) {
+  // With bucket versioning on, removal leaves a delete marker; the bucket's
+  // lifecycle rule expires the old versions (see minio-setup.md).
+  const remove = async (rows) => {
+    await storage.internal.removeObjects(storage.bucket, rows.map((r) => r.object_key));
+    return rows.map((r) => r.file_id);
+  };
+
+  async function drain(batch) {
     let total = 0;
     for (;;) {
-      const n = await repo.withPurgeBatch({ modules: PURGEABLE, olderThanDays, limit: BATCH }, async (rows) => {
-        // With bucket versioning on, this leaves a delete marker; the bucket's
-        // lifecycle rule expires the old versions (see minio-setup.md).
-        await storage.internal.removeObjects(storage.bucket, rows.map((r) => r.object_key));
-        return rows.map((r) => r.file_id);
-      });
+      const n = await batch();
       total += n;
-      if (n < BATCH) break;
+      if (n < BATCH) return total;
     }
-    if (total) logger.info({ purged: total }, 'purged soft-deleted files');
-    return total;
+  }
+
+  async function runOnce() {
+    const deleted = await drain(() => repo.withPurgeBatch({ modules: PURGEABLE, olderThanDays, limit: BATCH }, remove));
+    // Uploads whose record was never saved (never claimed out of staging).
+    const abandoned = repo.withExpiredStagingBatch
+      ? await drain(() => repo.withExpiredStagingBatch({ olderThanHours: stagingTtlHours, limit: BATCH }, remove))
+      : 0;
+    if (deleted || abandoned) logger.info({ purged: deleted, abandonedUploads: abandoned }, 'purged files');
+    return deleted + abandoned;
   }
 
   function start() {

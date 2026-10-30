@@ -68,10 +68,27 @@ test('a client-supplied X-Internal-Token never reaches a service', async () => {
 });
 
 test('normal routes still pass', async () => {
-  for (const path of ['/auth/api/login', '/restaurant/api/menu/get', '/files/expense/EXP1', '/auth/file/internal.png']) {
+  for (const path of ['/auth/api/login', '/restaurant/api/menu/get', '/files/expense/EXP1']) {
     const res = await get(path);
     assert.equal(res.status, 200, path);
+    assert.equal((await res.json()).reached, path.replace(/^\/[^/]+/, ''), path);
   }
+});
+
+test('old /{service}/file/* URLs go to file-service /legacy (GET only)', async () => {
+  const cases = {
+    '/auth/file/company-logo-Z001-1712.png': '/legacy/company-logo-Z001-1712.png',
+    '/restaurant/file/internal.png': '/legacy/internal.png',
+    '/retail/file/1712-bill.webp': '/legacy/1712-bill.webp',
+    '/employee/file/1712-pan.webp': '/legacy/1712-pan.webp',
+    '/checklist/file/checklist-attachments/abc/17-a%20b.pdf': '/legacy/checklist-attachments/abc/17-a%20b.pdf',
+  };
+  for (const [path, expected] of Object.entries(cases)) {
+    assert.equal((await (await get(path)).json()).reached, expected, path);
+  }
+  // other methods still reach the service
+  const del = await get('/restaurant/file/x.png', { method: 'DELETE' });
+  assert.equal((await del.json()).reached, '/file/x.png');
 });
 
 test('CORS allows the X-Branch-Id header', async () => {

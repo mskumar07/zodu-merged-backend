@@ -48,6 +48,22 @@ const proxyError = (serviceName) => (err, req, res) => {
   res.status(502).json({ error: `${serviceName} unavailable` });
 };
 
+// Files stored before file-service are referenced by full URLs in the services'
+// tables (/auth/file/<key>, /checklist/file/<folder>/<key>, ...). file-service
+// serves them read-only from the old bucket, so the services hold no MinIO
+// credentials. Must come before the service proxies below.
+const legacyFiles = createProxyMiddleware({
+  target: FILE_SERVICE_URL,
+  changeOrigin: true,
+  xfwd: true,
+  pathRewrite: (p) => `/legacy${p}`,
+  on: { error: proxyError('file-service') }
+});
+for (const service of ['auth', 'employee', 'restaurant', 'retail', 'checklist']) {
+  app.use(`/${service}/file`, (req, res, next) =>
+    (req.method === 'GET' || req.method === 'HEAD' ? legacyFiles(req, res, next) : next()));
+}
+
 app.use('/auth', createProxyMiddleware({
   target: AUTH_SERVICE_URL,
   changeOrigin: true,

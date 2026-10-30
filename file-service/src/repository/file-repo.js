@@ -80,6 +80,52 @@ exports.softDeleteEntity = async ({ zodu_id, branch_id, module, entity_id }) => 
   return rows;
 };
 
+// Claim: a staged upload becomes part of a record. Only a still-staged, still-ready
+// row moves, so two concurrent claims can't both take it.
+exports.reassign = async (file_id, t) => {
+  const { rows } = await conn.query(
+    `UPDATE tbl_files
+        SET zodu_id = $2, branch_id = $3, module = $4, category = $5, entity_id = $6, object_key = $7
+      WHERE file_id = $1 AND module = 'uploads' AND status = 'ready'
+      RETURNING ${COLUMNS}`,
+    [file_id, t.zodu_id, t.branch_id, t.module, t.category, t.entity_id, t.object_key],
+  );
+  return rows[0] || null;
+};
+
+// Staged uploads nobody claimed: the record was never saved. Locked per batch
+// like withPurgeBatch; the caller removes the objects.
+exports.withExpiredStagingBatch = async ({ olderThanHours, limit }, fn) => {
+  const client = await conn.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `SELECT file_id, object_key FROM tbl_files
+        WHERE module = 'uploads' AND status = 'ready'
+          AND created_at < now() - make_interval(hours => $1)
+        ORDER BY created_at
+        LIMIT $2
+        FOR UPDATE SKIP LOCKED`,
+      [olderThanHours, limit],
+    );
+    const purged = rows.length ? await fn(rows) : [];
+    if (purged.length) {
+      await client.query(
+        `UPDATE tbl_files SET status = 'deleted', deleted_at = now(), purged_at = now()
+          WHERE file_id = ANY($1::uuid[])`,
+        [purged],
+      );
+    }
+    await client.query('COMMIT');
+    return purged.length;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+};
+
 exports.logAccess = async (entries) => {
   if (!entries.length) return;
   const values = [];

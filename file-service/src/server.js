@@ -43,7 +43,9 @@ async function StartServer() {
   });
 
   if (config.PURGE_JOB_ENABLED) {
-    createPurgeJob({ repo, storage, olderThanDays: config.PURGE_AFTER_DAYS }).start();
+    createPurgeJob({
+      repo, storage, olderThanDays: config.PURGE_AFTER_DAYS, stagingTtlHours: config.STAGING_TTL_HOURS,
+    }).start();
   }
 
   app.listen(config.PORT, () => logger.info(`file-service listening on ${config.PORT} (bucket ${storage.bucket})`));

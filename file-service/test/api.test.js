@@ -31,7 +31,7 @@ const SAMPLE = {
   'text/csv': [Buffer.from('a,b\n1,2\n'), 'a.csv'],
 };
 
-for (const [name, mod] of Object.entries(MODULES)) {
+for (const [name, mod] of Object.entries(MODULES).filter(([, m]) => !m.internalOnly)) {
   test(`${name}: accepts an allowed type, refuses others and anything over ${mod.maxSizeMb}MB`, async () => {
     const { app } = makeApp();
     const okType = mod.allowedTypes.find((t) => SAMPLE[t]);
@@ -410,7 +410,8 @@ test('/internal/upload, /resolve, /store and /delete use the passed context', as
   const resolved = await request(app).post('/internal/resolve').set(internal())
     .send({ file_ids: [ok.body.data[0].file_id, store.body.data.file_id] });
   assert.equal(resolved.body.data.length, 2);
-  assert.equal(resolved.body.data[0].url, `https://api.test/files/${ok.body.data[0].file_id}/content`);
+  // resolve fills the old URL fields of clients that can't send a token with a link: presigned, even for employee
+  assert.match(resolved.body.data[0].url, /X-Amz-Expires=900/);
   assert.match(resolved.body.data[1].url, /X-Amz-Expires=900/);
 
   const otherBranch = await request(app).post('/internal/resolve').set(internal({ 'X-Branch-Id': 'B2' }))

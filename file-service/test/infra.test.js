@@ -13,12 +13,13 @@ test('registry: every module has access, permission and a sane limit', () => {
   const perms = new Set(Object.values(PERM));
   for (const [name, m] of Object.entries(MODULES)) {
     assert.ok(['link', 'private'].includes(m.access), name);
-    assert.ok(perms.has(m.permission), name);
+    assert.ok(m.internalOnly || perms.has(m.permission), name);
     assert.ok(m.maxSizeMb > 0 && m.maxSizeMb <= 25, name);
-    assert.ok(['branch', 'tenant'].includes(m.scope), name);
+    assert.ok(['branch', 'tenant', 'staging'].includes(m.scope), name);
   }
   assert.equal(MODULES.employee.access, 'private');
-  assert.deepEqual(PURGEABLE.sort(), ['branding', 'checklist', 'documents', 'employee', 'invoice-settings', 'menu-items']);
+  assert.deepEqual(PURGEABLE.sort(),
+    ['branding', 'checklist', 'documents', 'employee', 'invoice-settings', 'menu-items', 'uploads']);
 });
 
 test('access answers are cached for the TTL, per user/company/branch', async () => {

@@ -87,7 +87,9 @@ function assertPermission(ctx, moduleName, action) {
 
 // /internal/*: one token per calling service in X-Internal-Token. The caller
 // passes the user context it has already verified in X-User-Id / X-Zodu-Id /
-// X-Branch-Id.
+// X-Branch-Id, and the end user's address in X-Client-Ip (rate limits, audit).
+// X-Zodu-Id may be missing only for staged uploads; every other operation
+// needs a tenant and fails without one.
 function createRequireInternal(tokens) {
   const hashed = Object.entries(tokens).map(([name, token]) => [name, sha256(token)]);
 
@@ -102,14 +104,17 @@ function createRequireInternal(tokens) {
     }
     if (!caller) return next(AuthenticationError('Invalid internal token'));
 
-    const zoduId = req.get('X-Zodu-Id');
+    const zoduId = req.get('X-Zodu-Id') || null;
     const branchId = req.get('X-Branch-Id') || null;
     const userId = req.get('X-User-Id') || null;
-    if (!SAFE_ID.test(String(zoduId || ''))) return next(ValidationError('X-Zodu-Id header is required'));
+    const clientIp = req.get('X-Client-Ip') || null;
+    const staging = req.path === '/upload' && req.query.module === 'uploads';
+    if (zoduId ? !SAFE_ID.test(zoduId) : !staging) return next(ValidationError('X-Zodu-Id header is required'));
     if (branchId && !BRANCH_ID.test(branchId)) return next(ValidationError('Invalid X-Branch-Id header'));
     if (userId && !/^[A-Za-z0-9_.:@-]{1,100}$/.test(userId)) return next(ValidationError('Invalid X-User-Id header'));
+    if (clientIp && !/^[0-9A-Fa-f:.]{2,45}$/.test(clientIp)) return next(ValidationError('Invalid X-Client-Ip header'));
 
-    req.ctx = { userId, zoduId, branchId, caller, internal: true, ip: req.ip };
+    req.ctx = { userId, zoduId, branchId, caller, internal: true, ip: clientIp || req.ip };
     next();
   };
 }

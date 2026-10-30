@@ -41,6 +41,9 @@ module.exports = {
   MINIO_ACCESSKEY: process.env.MINIO_ACCESSKEY,
   MINIO_SECRETKEY: process.env.MINIO_SECRETKEY,
   BUCKET_NAME: process.env.MINIO_BUCKET_NAME || 'zodu-files',
+  // Old shared bucket, read-only: serves URLs stored before file-service
+  // (GET /legacy/*). Empty disables the route.
+  LEGACY_BUCKET_NAME: process.env.LEGACY_BUCKET_NAME ?? 'zodu',
   PRESIGNED_URL_TTL: int(process.env.PRESIGNED_URL_TTL, 900),
 
   // Public origin of the gateway; stable /files/v/:fileId links are built on it.
@@ -59,6 +62,8 @@ module.exports = {
   // Non-accounting files are removed from storage this long after a soft delete.
   PURGE_AFTER_DAYS: int(process.env.PURGE_AFTER_DAYS, 30),
   PURGE_JOB_ENABLED: process.env.PURGE_JOB_ENABLED !== 'false',
+  // Uploads to the staging area that no saved record claimed are removed after this.
+  STAGING_TTL_HOURS: int(process.env.STAGING_TTL_HOURS, 48),
   // Browser origins allowed to call file-service directly. Normally empty:
   // browsers go through the gateway, which handles CORS.
   CORS_ORIGINS: list(process.env.CORS_ORIGINS),

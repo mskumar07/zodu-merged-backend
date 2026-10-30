@@ -55,6 +55,12 @@ function fakeRepo() {
       return Promise.all(hit.map((id) => repo.softDelete(id)));
     },
     async logAccess(entries) { log.push(...entries); },
+    async reassign(id, t) {
+      const r = rows.get(id);
+      if (!r || r.module !== 'uploads' || r.status !== 'ready') return null;
+      Object.assign(r, t);
+      return clone(r);
+    },
   };
   return repo;
 }
@@ -70,17 +76,30 @@ function fakeStorage() {
         if (objects.size >= storage.failPutAfter) throw new Error('minio down');
         objects.set(key, { buffer, size, meta });
       },
-      async getObject(_b, key) {
-        const o = objects.get(key);
+      async getObject(bucket, key) {
+        const o = bucket === 'zodu' ? storage.internal.legacy.get(key) : objects.get(key);
         if (!o) throw Object.assign(new Error('missing'), { code: 'NoSuchKey' });
         return Readable.from([o.buffer]);
       },
       async removeObjects(_b, keys) { keys.forEach((k) => objects.delete(k)); },
+      async removeObject(_b, key) { objects.delete(key); },
+      async copyObject(bucket, key, source) {
+        const o = objects.get(source.slice(bucket.length + 2));
+        if (!o) throw Object.assign(new Error('missing'), { code: 'NoSuchKey' });
+        objects.set(key, { ...o });
+      },
+      // The old "zodu" bucket, for /legacy.
+      legacy: new Map(),
+      async statObject(bucket, key) {
+        const o = bucket === 'zodu' ? storage.internal.legacy.get(key) : objects.get(key);
+        if (!o) throw Object.assign(new Error('missing'), { code: 'NotFound' });
+        return { size: o.buffer.length, etag: 'etag-1', lastModified: new Date('2026-01-01') };
+      },
     },
     signer: {
       // Mirrors the real call's shape so tests can check expiry and forced headers.
       async presignedGetObject(bucket, key, expiry, reqParams) {
-        const q = new URLSearchParams({ 'X-Amz-Expires': String(expiry), ...reqParams });
+        const q = new URLSearchParams({ 'X-Amz-Expires': String(expiry), ...reqParams, 'X-Amz-Signature': 'sig' });
         return `https://files.test/${bucket}/${key}?${q}`;
       },
     },
@@ -127,6 +146,7 @@ function makeApp(overrides = {}) {
     UPLOAD_QUEUE_TIMEOUT_MS: 1000,
     CORS_ORIGINS: [],
     TRUST_PROXY: false,
+    LEGACY_BUCKET_NAME: 'zodu',
     ...overrides.config,
   };
   const app = createApp({ config, repo, storage, authClient, rateLimitStore: overrides.store || createMemoryStore() });

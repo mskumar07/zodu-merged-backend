@@ -4,6 +4,7 @@
 // Layout:
 //   {zoduId}/{branchId}/{module}/{entityId}[/{category}][/{yyyy}/{mm}]/{uuid}.{ext}
 //   {zoduId}/_shared/{module}/{entityId}[/{category}]/{uuid}.{ext}
+//   _staging/uploads/{zoduId|anon}/{yyyy}/{mm}/{uuid}.{ext}     ← not yet claimed by a record
 //
 // Branch folders sit directly under the zodu ID, next to "_shared", so branch
 // IDs may not start with "_" (that name space is reserved for tenant areas).
@@ -12,6 +13,7 @@ const crypto = require('crypto');
 const { getModule, EXT_BY_MIME } = require('./modules');
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function httpError(status, message) {
   return Object.assign(new Error(message), { status });
@@ -24,7 +26,9 @@ function assertSafeId(label, value) {
 }
 
 // Prefix that every file of this tenant (and branch, if given) lives under.
+// "staging" holds uploads that no record has claimed yet; it belongs to no tenant.
 function scopePrefix({ zoduId, branchId, scope = 'branch' }) {
+  if (scope === 'staging') return '_staging/';
   assertSafeId('zoduId', zoduId);
   if (scope === 'tenant') return `${zoduId}/_shared/`;
   assertSafeId('branchId', branchId);
@@ -39,7 +43,9 @@ function entityPrefix({ zoduId, branchId, module, entityId }) {
   return `${scopePrefix({ zoduId, branchId, scope: mod.scope })}${module}/${entityId}/`;
 }
 
-function buildKey({ zoduId, branchId, module, entityId, mimeType, category, now = new Date() }) {
+// fileId: the file's tbl_files id, used as the object name so a key (and a
+// presigned URL) names its file. A fresh UUID when not given.
+function buildKey({ zoduId, branchId, module, entityId, mimeType, category, fileId, now = new Date() }) {
   const mod = getModule(module);
 
   const ext = EXT_BY_MIME[mimeType];
@@ -61,7 +67,8 @@ function buildKey({ zoduId, branchId, module, entityId, mimeType, category, now 
   }
 
   // UUID file name: never collides, never overwrites, leaks nothing from the original name.
-  parts.push(`${crypto.randomUUID()}.${ext}`);
+  if (fileId !== undefined && !UUID.test(String(fileId))) throw httpError(400, 'Invalid file id');
+  parts.push(`${fileId ? String(fileId).toLowerCase() : crypto.randomUUID()}.${ext}`);
   return parts.join('/');
 }
 

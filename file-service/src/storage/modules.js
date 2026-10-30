@@ -15,6 +15,7 @@
 //                  create to upload, delete to delete
 //   transform      optional re-encoding after inspection (transform.js)
 //   keepOnDelete   accounting records: a soft delete never removes the object
+//   internalOnly   only other services may upload to it (/internal/upload), never users directly
 
 const MIME = {
   JPEG: 'image/jpeg',
@@ -62,9 +63,19 @@ const PERM = {
 
 const OPTIMISE_IMAGES = { image: { maxPx: 1800, format: 'webp' } };
 
+// Staging area for the services' generic "upload first, save the record later"
+// routes (/upload, /upload/multiple). Files wait here under _staging/ until the
+// record that uses them is saved and claims them into its own module and key
+// (POST /internal/claim). Unclaimed files are purged after STAGING_TTL_HOURS.
+// Same re-encoding the old generic upload did: images → 1800px webp, PDFs rewritten.
+const STAGING = 'uploads';
+
+// branding / invoice-settings allow 5MB: the old upload routes accepted that
+// (logo, watermark), and clients don't change in Phase 2.
 const MODULES = {
-  'branding':         { scope: 'tenant', allowedTypes: IMAGES,                        maxSizeMb: 2,  categories: ['logo'], access: 'link', permission: PERM.SETTINGS, transform: OPTIMISE_IMAGES },
-  'invoice-settings': { scope: 'branch', allowedTypes: [MIME.PNG, MIME.WEBP, MIME.JPEG], maxSizeMb: 1, categories: ['signature', 'watermark', 'receiver-signature'], access: 'link', permission: PERM.SETTINGS },
+  [STAGING]:          { scope: 'staging', allowedTypes: [...IMAGES, ...DOCS],          maxSizeMb: 10, datePartition: true, access: 'link', internalOnly: true, transform: { ...OPTIMISE_IMAGES, pdf: true } },
+  'branding':         { scope: 'tenant', allowedTypes: IMAGES,                        maxSizeMb: 5,  categories: ['logo'], access: 'link', permission: PERM.SETTINGS, transform: OPTIMISE_IMAGES },
+  'invoice-settings': { scope: 'branch', allowedTypes: [MIME.PNG, MIME.WEBP, MIME.JPEG], maxSizeMb: 5, categories: ['signature', 'watermark', 'receiver-signature'], access: 'link', permission: PERM.SETTINGS },
   'menu-items':       { scope: 'branch', allowedTypes: IMAGES,                        maxSizeMb: 5,  access: 'link', permission: PERM.MENU, transform: OPTIMISE_IMAGES },
   'expense':          { scope: 'branch', allowedTypes: [...IMAGES, ...DOCS],          maxSizeMb: 10, datePartition: true, access: 'private', permission: PERM.EXPENSE, keepOnDelete: true },
   'purchase':         { scope: 'branch', allowedTypes: [...IMAGES, ...DOCS],          maxSizeMb: 10, categories: ['order', 'bill'], datePartition: true, access: 'private', permission: PERM.PURCHASE, keepOnDelete: true },
@@ -93,5 +104,5 @@ function getModule(name) {
 }
 
 module.exports = {
-  MIME, FILE_TYPES, MODULES, PERM, MAX_FILES_PER_UPLOAD, MAX_MODULE_SIZE_MB, EXT_BY_MIME, getModule,
+  MIME, FILE_TYPES, MODULES, PERM, STAGING, MAX_FILES_PER_UPLOAD, MAX_MODULE_SIZE_MB, EXT_BY_MIME, getModule,
 };
