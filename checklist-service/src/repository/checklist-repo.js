@@ -256,13 +256,17 @@ exports.updateItemStatus = async (item_id, { status, remarks, employee_id }) => 
 // One row PER CHECKLIST — file_url is a JSONB array of { id, file_name, file_url,
 // uploaded_by, uploaded_by_name }. New uploads APPEND to the existing row's array;
 // only creates a new row the first time a checklist gets an attachment.
-exports.insertAttachments = async (client, { checklist_id, files, uploaded_by, uploaded_by_name }) => {
+// Files stored in file-service are saved as file refs ({ ..., file_id, file_ctx,
+// url_key: 'file_url' }); responses get a fresh file_url (utils/file-client).
+exports.insertAttachments = async (client, { checklist_id, files, file_ctx, uploaded_by, uploaded_by_name }) => {
   const { v4: uuidv4 } = require('uuid');
 
   const newEntries = files.map(f => ({
     id:               uuidv4(),
-    file_name:        f.fileName,
-    file_url:         f.fileUrl,
+    file_name:        f.original_name,
+    file_id:          f.file_id,
+    file_ctx,
+    url_key:          'file_url',
     uploaded_by,
     uploaded_by_name,
   }));

@@ -4,6 +4,7 @@ const router   = express.Router();
 const service  = require('../services/checklist-service');
 const validate = require('../utils/requestValidator');
 const schema   = require('../schema/checklist-schema');
+const files    = require('../utils/file-client');
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -188,7 +189,7 @@ router.delete('/:id', async (req, res) => {
     if (!zodu_id)   return res.status(400).json({ success: false, error: 'zodu_id is required' });
     if (!branch_id) return res.status(400).json({ success: false, error: 'branch_id is required' });
 
-    const result = await service.deleteChecklist(req.params.id, { zodu_id, branch_id });
+    const result = await service.deleteChecklist(req.params.id, { zodu_id, branch_id }, files.requestCtx(req));
     return res.status(200).json(result);
   } catch (err) {
     const status = err.message === 'Checklist not found' ? 404 : 500;
@@ -207,10 +208,14 @@ router.post('/:id/attachments', upload.array('files', 5), async (req, res) => {
     if (!req.files?.length) return res.status(400).json({ success: false, error: 'At least one file is required' });
 
     const result = await service.uploadAttachments(
-      req.params.id, req.files, { zodu_id, branch_id, employee_id, employee_name }
+      req.params.id, req.files, { zodu_id, branch_id, employee_id, employee_name }, files.requestCtx(req)
     );
     return res.status(201).json(result);
   } catch (err) {
+    // file-service refused a file (type, size, unsafe content) or is down
+    if (err instanceof files.FileServiceError) {
+      return res.status(err.status).json({ success: false, error: err.message, details: err.details });
+    }
     const status = err.message.includes('not found') ? 404
                  : err.message.includes('Maximum')   ? 400
                  : 500;

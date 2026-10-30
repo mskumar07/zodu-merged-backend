@@ -1,6 +1,6 @@
 const db     = require('../database/connection');
 const repo   = require('../repository/checklist-repo');
-const minio  = require('../utils/minio');
+const files  = require('../utils/file-client');
 const { parsePage, buildMeta } = require('../utils/pagination');
 
 // Derive checklist status from its items.
@@ -206,13 +206,36 @@ exports.updateTaskStatus = async (checklist_id, { zodu_id, branch_id, status }) 
 
 // ── UPDATE ────────────────────────────────────────────────────────────────────
 
+// Attachments sent back on an edit carry the URL the client was shown (a
+// presigned link that expires). Entries that already exist keep their stored
+// file ref instead; files whose entries were left out are removed afterwards.
+async function attachmentsForUpdate(id, sent) {
+  const current = await repo.findAttachments(id);
+  const byId = new Map(current.map((a) => [a.id, a]));
+  const next = sent.map((a) => {
+    const prev = byId.get(a.id);
+    if (!prev || !files.isFileId(prev.file_id) || prev.file_ctx === undefined) return a;
+    const { file_url: _shownUrl, ...rest } = a;
+    return { ...rest, file_id: prev.file_id, file_ctx: prev.file_ctx, url_key: prev.url_key || 'file_url' };
+  });
+  const kept = new Set(files.refIds(next));
+  const dropped = current.filter((a) => files.refIds([a]).length && !kept.has(a.file_id));
+  return { next, dropped };
+}
+
 exports.updateChecklist = async (id, data) => {
   const client = await db.connect();
+  let dropped = [];
   try {
     await client.query('BEGIN');
 
     const existing = await repo.findById(id, { zodu_id: data.zodu_id, branch_id: data.branch_id });
     if (!existing) throw new Error('Checklist not found');
+
+    let attachmentsToSave = null;
+    if (data.attachments) {
+      ({ next: attachmentsToSave, dropped } = await attachmentsForUpdate(id, data.attachments));
+    }
 
     const updated = await repo.updateChecklist(client, id, {
       ...data,
@@ -231,12 +254,13 @@ exports.updateChecklist = async (id, data) => {
       // data.items
       //   ? repo.upsertItems(client, id, data.items)
       //   : repo.findItems(id),
-      data.attachments
-        ? repo.updateAttachments(client, id, data.attachments)
+      attachmentsToSave
+        ? repo.updateAttachments(client, id, attachmentsToSave)
         : repo.findAttachments(id),
     ]);
 
     await client.query('COMMIT');
+    for (const a of dropped) await files.quietly(files.remove(files.ctxOfRef(a), [a.file_id]));
 
     return {
       success: true,
@@ -252,9 +276,11 @@ exports.updateChecklist = async (id, data) => {
 
 // ── DELETE ────────────────────────────────────────────────────────────────────
 
-exports.deleteChecklist = async (id, { zodu_id, branch_id }) => {
+exports.deleteChecklist = async (id, { zodu_id, branch_id }, ctx = {}) => {
   const deleted = await repo.deleteChecklist(id, { zodu_id, branch_id });
   if (!deleted) throw new Error('Checklist not found');
+  // The checklist's files go with it (soft delete; purged after 30 days).
+  await files.quietly(files.removeEntity({ ...ctx, zoduId: zodu_id, branchId: branch_id }, 'checklist', id));
   return { success: true };
 };
 
@@ -262,24 +288,26 @@ exports.deleteChecklist = async (id, { zodu_id, branch_id }) => {
 
 // Uploads multiple files — appends to the checklist's single attachments row
 // (file_url array). files = array of multer file objects (req.files)
-exports.uploadAttachments = async (checklist_id, files, { zodu_id, branch_id, employee_id, employee_name }) => {
+exports.uploadAttachments = async (checklist_id, uploads, { zodu_id, branch_id, employee_id, employee_name }, ctx = {}) => {
   const checklist = await repo.findById(checklist_id, { zodu_id, branch_id });
   if (!checklist) throw new Error('Checklist not found');
 
-  if (!files?.length) throw new Error('At least one file is required');
-  if (files.length > 5) throw new Error('Maximum 5 attachments allowed per checklist');
+  if (!uploads?.length) throw new Error('At least one file is required');
+  if (uploads.length > 5) throw new Error('Maximum 5 attachments allowed per checklist');
 
-  // Upload all files to MinIO concurrently
-  const uploadedFiles = await Promise.all(
-    files.map(file => minio.uploadFile(file, `checklist-attachments/${checklist_id}`))
-  );
+  // One all-or-nothing batch: if any file is refused, none is stored.
+  const fileCtx = { ...ctx, zoduId: zodu_id, branchId: branch_id };
+  const stored = await files.upload(fileCtx, {
+    module: 'checklist', entityId: checklist_id, category: 'attachments', files: uploads,
+  });
 
   const client = await db.connect();
   try {
     await client.query('BEGIN');
     const attachmentRow = await repo.insertAttachments(client, {
       checklist_id,
-      files:            uploadedFiles,
+      files:            stored,
+      file_ctx:         `${zodu_id}/${branch_id}`,
       uploaded_by:      employee_id,
       uploaded_by_name: employee_name,
     });
@@ -287,6 +315,7 @@ exports.uploadAttachments = async (checklist_id, files, { zodu_id, branch_id, em
     return { success: true, data: attachmentRow.file_url };
   } catch (err) {
     await client.query('ROLLBACK');
+    await files.quietly(files.remove(fileCtx, stored.map((f) => f.file_id)));
     throw err;
   } finally {
     client.release();
@@ -322,9 +351,14 @@ exports.uploadAttachments = async (checklist_id, files, { zodu_id, branch_id, em
 // };
 
 // Remove one file from the checklist attachments JSONB array by file id
+// file_id here is the attachment entry's own id (the route's name for it).
 exports.deleteAttachment = async (checklist_id, file_id) => {
+  const entry = (await repo.findAttachments(checklist_id)).find((a) => a.id === file_id);
   const result = await repo.deleteAttachment(file_id, checklist_id);
   if (!result) throw new Error('Attachment not found');
+  if (entry && files.refIds([entry]).length) {
+    await files.quietly(files.remove(files.ctxOfRef(entry), [entry.file_id]));
+  }
   return { success: true, data: result.file_url || [] };
 };
 

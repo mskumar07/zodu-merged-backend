@@ -10,33 +10,15 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cors());
 app.use(httpLogger);
+// Stored file refs → fresh URLs in every JSON response (attachment file_url).
+app.use(require('./utils/file-client').fileUrlsMiddleware);
 
 app.use('/api/checklists', require('./api/checklist-controller'));
 app.use('/internal', require('./api/internal-controller'));
 
-// GET /file/* — stream file from MinIO
-app.get('/file/*', async (req, res) => {
-  try {
-    const minio   = require('./utils/minio');
-    const fileKey = req.params[0];
-    await minio.streamFile(fileKey, res);
-  } catch (err) {
-    if (err.code === 'NoSuchKey') return res.status(404).json({ success: false, error: 'File not found' });
-    res.status(500).json({ success: false, error: 'Failed to retrieve file' });
-  }
-});
-
-// DELETE /delete/file/:name — delete file directly from MinIO by name
-app.delete('/delete/file/:name', async (req, res) => {
-  try {
-    const minio    = require('./utils/minio');
-    const fileName = req.params.name;
-    const result   = await minio.deleteFileByName(fileName);
-    return res.status(200).json(result);
-  } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
-  }
-});
+// Files are served by file-service: old /checklist/file/* URLs through the
+// gateway's legacy route, new ones as file-service URLs. Attachments are
+// removed with DELETE /api/checklists/:id/attachments/:file_id.
 
 app.use(HandleErrorWithLogger);
 

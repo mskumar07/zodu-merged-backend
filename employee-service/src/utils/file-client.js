@@ -179,6 +179,13 @@ const ref = (row, { urlKey = 'file_url' } = {}) => (row && isFileId(row.file_id)
   ? { ...row, file_ctx: `${row.zodu_id}/${row.branch_id || ''}`, url_key: urlKey }
   : row);
 
+// The company/branch a stored ref was saved under (for deletes on routes that
+// carry no tenant of their own).
+const ctxOfRef = (r) => {
+  const [zoduId, branchId] = String(r?.file_ctx || '').split('/');
+  return { zoduId: zoduId || null, branchId: branchId || null };
+};
+
 // file_ids of the refs in a stored JSONB value (for deletes).
 const refIds = (entries) => (Array.isArray(entries) ? entries : [])
   .map((e) => (e && typeof e === 'object' && e.file_ctx !== undefined && isFileId(e.file_id) ? e.file_id : null))
@@ -261,5 +268,5 @@ function requestCtx(req, { zoduId, branchId, userId } = {}) {
 module.exports = {
   FileServiceError,
   upload, stage, claim, resolve, remove, removeEntity, discard, quietly,
-  toRefs, refIds, ref, fileUrls, fileUrlsMiddleware, fileIdFromUrl, isFileId, requestCtx,
+  toRefs, refIds, ref, ctxOfRef, fileUrls, fileUrlsMiddleware, fileIdFromUrl, isFileId, requestCtx,
 };
