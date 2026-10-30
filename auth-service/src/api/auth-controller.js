@@ -9,8 +9,9 @@ const { logger, ValidateSignature } = require('../utils');
 const router = express.Router();
 
 // Signature images are small; keep them in memory and hand the buffer straight
-// to MinIO rather than touching disk. The 2MB cap is enforced here as well as
-// in utils/minio so an oversized upload is rejected before it is buffered.
+// to file-service rather than touching disk. The 2MB cap is enforced here so an
+// oversized upload is rejected before it is buffered; file-service checks the
+// content (real type from the bytes) before anything is stored.
 const uploadSignature = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 2 * 1024 * 1024 },

@@ -210,6 +210,9 @@ apply "$AUTH_DB" auth-service/migrations/tbl_users_login_user.sql
 # (stored as NULL), so tbl_bank_details.account_number must be nullable.
 apply "$AUTH_DB" auth-service/migrations/bank_details_account_number_nullable.sql
 
+# auth-service — file-service ids for the company logo and invoice images (Phase 2).
+apply "$AUTH_DB" auth-service/migrations/file_service_file_ids.sql
+
 # retail-service / restaurant-service — item description
 apply "$RETAIL_DB"     retail-service/migrations/item_description.sql
 apply "$RESTAURANT_DB" restaurant-service/migrations/item_description.sql

@@ -8,12 +8,14 @@ services:
     restart: always
     expose:
       - "4000"
-    # INTERNAL_SERVICE_TOKEN_FILE (file-service's access checks). Optional so
+    # INTERNAL_SERVICE_TOKEN_FILE (file-service access checks) and FILE_SERVICE_TOKEN
+    # (its calls to file-service). Optional so
     # auth-service still deploys before file-service exists.
     env_file:
       - path: ./env/auth-service.uat.env
         required: false
     environment:
+      FILE_SERVICE_URL: http://file-service:4007
       NODE_ENV: production
       PORT: 4000
       DB_HOSTNAME: 72.60.206.59
@@ -21,12 +23,6 @@ services:
       DB_USERNAME: zodudb
       DB_PASSWORD: zodu@2025
       DB_NAME: retail_auth_service
-      MINIO_HOST: 72.60.206.59
-      MINIO_PORT: 9000
-      MINIO_ACCESSKEY: zoduminio
-      MINIO_SECRETKEY: zodu@2025
-      MINIO_BUCKET_NAME: zodu
-      PUBLIC_FILE_BASE_URL: https://api.myzodu.com
 
 
 

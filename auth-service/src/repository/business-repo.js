@@ -59,8 +59,8 @@ exports.createCompany = async (data, externalClient = null) => {
     const r = await client.query(
       `INSERT INTO tbl_business
          (zodu_id, business_name, owner_admin_name, mobile_no, mail_id, gst_no, type, address_id, bank_details_id,
-          company_logo_url, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true)
+          company_logo_url, company_logo_file_id, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true)
        ON CONFLICT (zodu_id) DO UPDATE
          SET business_name    = EXCLUDED.business_name,
              owner_admin_name = EXCLUDED.owner_admin_name,
@@ -71,12 +71,15 @@ exports.createCompany = async (data, externalClient = null) => {
              address_id       = COALESCE(EXCLUDED.address_id, tbl_business.address_id),
              bank_details_id  = COALESCE(EXCLUDED.bank_details_id, tbl_business.bank_details_id),
              company_logo_url = COALESCE(EXCLUDED.company_logo_url, tbl_business.company_logo_url),
+             company_logo_file_id = CASE WHEN EXCLUDED.company_logo_url IS NULL
+                                         THEN tbl_business.company_logo_file_id
+                                         ELSE EXCLUDED.company_logo_file_id END,
              updated_at       = now()
        RETURNING *`,
       [data.zodu_id, data.restaurant_name || data.business_name,
        data.owner_admin_name || null, data.mobile_no || null, data.mail_id || null,
        data.gst_no || null, data.type || data.business_type || null, address_id, bank_details_id,
-       data.company_logo_url || null]
+       data.company_logo_url || null, data.company_logo_file_id || null]
     );
 
     if (ownsTransaction) await client.query('COMMIT');
@@ -643,7 +646,11 @@ exports.isRetailCompany = async (zodu_id) => {
   return r.rowCount > 0;
 };
 
-exports.upsertInvoiceSettings = async (zodu_id, branch_id, fields, document_type = 'invoice') => {
+// fileIds: the *_file_id columns. Set only by the image upload/delete flows,
+// never from a request body (they are not in `allowed`).
+const INVOICE_FILE_ID_COLUMNS = ['signature_file_id', 'watermark_file_id', 'receiver_signature_file_id'];
+
+exports.upsertInvoiceSettings = async (zodu_id, branch_id, fields, document_type = 'invoice', fileIds = {}) => {
   const allowed = [
     // Invoice numbering
     'invoice_prefix', 'invoice_prefix_enabled', 'invoice_start_number',
@@ -668,7 +675,12 @@ exports.upsertInvoiceSettings = async (zodu_id, branch_id, fields, document_type
     // POS settings — Additional Settings
     'stock_check_enabled', 'customer_mandatory',
   ];
-  const cols = Object.keys(fields).filter((k) => allowed.includes(k));
+  fields = { ...fields };
+  for (const k of INVOICE_FILE_ID_COLUMNS) {
+    if (Object.hasOwn(fileIds, k)) fields[k] = fileIds[k];
+    else delete fields[k];
+  }
+  const cols = Object.keys(fields).filter((k) => allowed.includes(k) || INVOICE_FILE_ID_COLUMNS.includes(k));
 
   // pos_screen_type and kot_print_enabled live on tbl_pos_settings, not
   // tbl_invoice_settings, but the frontend saves them from this same
