@@ -1,0 +1,72 @@
+name: security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "30 3 * * 1"   # weekly, catches advisories published after the last change
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: npm audit (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - api-gateway
+          - auth-service
+          - employee-service
+          - restaurant-service
+          - retail-service
+          - payroll-service
+          - checklist-service
+          - admin-service
+          - file-service
+          - packages/zodu-security
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # The lockfile must match package.json (installs exactly what ships).
+      - run: npm ci --omit=dev --ignore-scripts
+        working-directory: ${{ matrix.service }}
+      - run: npm audit --omit=dev --audit-level=high
+        working-directory: ${{ matrix.service }}
+
+  test:
+    name: tests (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - packages/zodu-security
+          - api-gateway
+          - file-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+        working-directory: ${{ matrix.service }}
+      - run: npm test
+        working-directory: ${{ matrix.service }}
+
+  face-service:
+    name: tests (face-service auth)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: pip install "fastapi==0.115.6" httpx pytest
+      - run: pytest -q test_internal_auth.py
+        working-directory: face-service

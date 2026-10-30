@@ -1,166 +1,174 @@
-version: "3.9"
+# Secrets (DB credentials, APP_SECRET, service tokens, Redis password) live in
+# ./env/<service>.prod.env on the host, never in this file. Templates: each
+# service's .env.example; scripts/gen-secrets.sh writes the service tokens.
+# Node images build from the repository root: docker compose -f <this file> build
 
 services:
   # Auth Service
   auth-service:
     image: vicky0015/zodu-backemd-retail-auth-service:latest
+    build:
+      context: .
+      dockerfile: auth-service/Dockerfile
     container_name: retail-auth-service
     restart: always
     expose:
       - "3000"
-    # INTERNAL_SERVICE_TOKEN_FILE (file-service access checks) and FILE_SERVICE_TOKEN
-    # (its calls to file-service). Optional so
-    # auth-service still deploys before file-service exists.
     env_file:
-      - path: ./env/auth-service.prod.env
-        required: false
+      - ./env/auth-service.prod.env
     environment:
-      FILE_SERVICE_URL: http://file-service:4007
       NODE_ENV: production
       PORT: 3000
       DB_HOSTNAME: 72.60.206.59
-      DB_PORT:  5433
-      DB_USERNAME: zoduprod
-      DB_PASSWORD: zodu@2025
+      DB_PORT: 5433
       DB_NAME: auth_service
+      RETAIL_SERVICE_URL: http://retail-service:3001
+      RESTAURANT_SERVICE_URL: http://restaurant-service:3004
+      EMPLOYEE_SERVICE_URL: http://employee-service:3002
+      PAYROLL_SERVICE_URL: http://payroll-service:3003
+      CHECKLIST_SERVICE_URL: http://checklist-service:3005
+      FILE_SERVICE_URL: http://file-service:4007
 
-
-
-  # Restaurant Service
+  # Retail Service
   retail-service:
     image: vicky0015/zodu-backemd-retail-service:latest
+    build:
+      context: .
+      dockerfile: retail-service/Dockerfile
     container_name: retail-service
     restart: always
     expose:
       - "3001"
-    # FILE_SERVICE_TOKEN (file-service INTERNAL_SERVICE_TOKEN_*), kept off this file.
     env_file:
-      - path: ./env/retail-service.prod.env
-        required: false
+      - ./env/retail-service.prod.env
     environment:
-      FILE_SERVICE_URL: http://file-service:4007
       NODE_ENV: production
       PORT: 3001
       DB_HOSTNAME: 72.60.206.59
-      DB_PORT:  5433
-      DB_USERNAME: zoduprod
-      DB_PASSWORD: zodu@2025
+      DB_PORT: 5433
       DB_NAME: retail_service
-
+      AUTH_SERVICE_URL: http://auth-service:3000
+      FILE_SERVICE_URL: http://file-service:4007
 
   # Face Service — photo → face embedding for face-recognition attendance.
-  # Stateless and internal: only employee-service calls it.
+  # Stateless and internal: only employee-service calls it (its X-Internal-Token).
   face-service:
     image: vicky0015/zodu-backemd-retail-face-service:latest
+    build:
+      context: ./face-service
     container_name: retail-face-service
     restart: always
     expose:
       - "8000"
+    env_file:
+      - ./env/face-service.prod.env
 
   # Employee Service
   employee-service:
     image: vicky0015/zodu-backemd-retail-employee-service:latest
+    build:
+      context: .
+      dockerfile: employee-service/Dockerfile
     container_name: retail-employee-service
     restart: always
     expose:
       - "3002"
-    # FILE_SERVICE_TOKEN (file-service INTERNAL_SERVICE_TOKEN_*), kept off this file.
     env_file:
-      - path: ./env/employee-service.prod.env
-        required: false
+      - ./env/employee-service.prod.env
     environment:
-      FILE_SERVICE_URL: http://file-service:4007
       NODE_ENV: production
       PORT: 3002
       DB_HOSTNAME: 72.60.206.59
-      DB_PORT:  5433
-      DB_USERNAME: zoduprod
-      DB_PASSWORD: zodu@2025
+      DB_PORT: 5433
       DB_NAME: employee-service
+      AUTH_SERVICE_URL: http://auth-service:3000
+      PAYROLL_SERVICE_URL: http://payroll-service:3003
       FACE_SERVICE_URL: http://face-service:8000
+      FILE_SERVICE_URL: http://file-service:4007
     depends_on:
       - face-service
 
-
+  # Restaurant Service
   restaurant-service:
     image: vicky0015/zodu-backemd-restaurant-service:latest
+    build:
+      context: .
+      dockerfile: restaurant-service/Dockerfile
     container_name: restaurant-service
     restart: always
     expose:
       - "3004"
-    # FILE_SERVICE_TOKEN (file-service INTERNAL_SERVICE_TOKEN_*), kept off this file.
     env_file:
-      - path: ./env/restaurant-service.prod.env
-        required: false
+      - ./env/restaurant-service.prod.env
     environment:
-      FILE_SERVICE_URL: http://file-service:4007
       NODE_ENV: production
       PORT: 3004
       DB_HOSTNAME: 72.60.206.59
-      DB_PORT:  5433
-      DB_USERNAME: zoduprod
-      DB_PASSWORD: zodu@2025
+      DB_PORT: 5433
       DB_NAME: restaurant_service
+      AUTH_SERVICE_URL: http://auth-service:3000
+      FILE_SERVICE_URL: http://file-service:4007
 
-
+  # Payroll Service — not proxied by the gateway; only employee-service and
+  # auth-service call it.
   payroll-service:
     image: vicky0015/zodu-backemd-payroll-service:latest
+    build:
+      context: .
+      dockerfile: payroll-service/Dockerfile
     container_name: payroll-service
     restart: always
     expose:
       - "3003"
+    env_file:
+      - ./env/payroll-service.prod.env
     environment:
       NODE_ENV: production
       PORT: 3003
       DB_HOSTNAME: 72.60.206.59
-      DB_PORT:  5433
-      DB_USERNAME: zoduprod
-      DB_PASSWORD: zodu@2025
+      DB_PORT: 5433
       DB_NAME: payroll-service
 
+  # Checklist Service
   checklist-service:
     image: vicky0015/zodu-backemd-checklist-service:latest
+    build:
+      context: .
+      dockerfile: checklist-service/Dockerfile
     container_name: checklist-service
     restart: always
     expose:
       - "3005"
-    # FILE_SERVICE_TOKEN (file-service INTERNAL_SERVICE_TOKEN_*), kept off this file.
     env_file:
-      - path: ./env/checklist-service.prod.env
-        required: false
+      - ./env/checklist-service.prod.env
     environment:
-      FILE_SERVICE_URL: http://file-service:4007
       NODE_ENV: production
       PORT: 3005
       DB_HOSTNAME: 72.60.206.59
-      DB_PORT:  5433
-      DB_USERNAME: zoduprod
-      DB_PASSWORD: zodu@2025
+      DB_PORT: 5433
       DB_NAME: checklist-service
+      FILE_SERVICE_URL: http://file-service:4007
 
-
-  # Admin Panel Service — staff-only console API. Reached ONLY through
-  # api-gateway's /admin route, same as every other service here — no
-  # published port of its own. Its own outbound calls to auth-service,
-  # retail-service, etc. go straight over the internal network
-  # (AUTH_SERVICE_URL etc.), the same way api-gateway's own proxy targets do.
+  # Admin Panel Service — staff-only console API. Reached only through the
+  # gateway's /admin route. Its APP_SECRET is its own, never the customer services'.
   admin-service:
     image: vicky0015/zodu-backemd-retail-admin-service:latest
+    build:
+      context: .
+      dockerfile: admin-service/Dockerfile
     container_name: retail-admin-service
     restart: always
     expose:
       - "3007"
+    env_file:
+      - ./env/admin-service.prod.env
     environment:
       NODE_ENV: production
       PORT: 3007
       DB_HOSTNAME: 72.60.206.59
       DB_PORT: 5433
-      DB_USERNAME: zoduprod
-      DB_PASSWORD: zodu@2025
       DB_NAME: admin_service
-      APP_SECRET: zodu@2025adminsecret
       JWT_EXPIRES_IN: 8h
-      INTERNAL_SERVICE_KEY: zodu@2025internalkey
       CORS_ORIGIN: https://admin.zodu.in
       AUTH_SERVICE_URL: http://auth-service:3000
       RETAIL_SERVICE_URL: http://retail-service:3001
@@ -176,10 +184,12 @@ services:
       - checklist-service
 
   # File Service — the only service with MinIO credentials. Reached only through
-  # api-gateway's /files route (no published port). Secrets come from the
-  # env_file on the host, never from this file (see file-service/.env.example).
+  # the gateway's /files route.
   file-service:
     image: vicky0015/zodu-backemd-file-service:latest
+    build:
+      context: .
+      dockerfile: file-service/Dockerfile
     container_name: retail-file-service
     restart: always
     expose:
@@ -193,46 +203,59 @@ services:
       PRESIGNED_URL_TTL: 900
       PUBLIC_FILE_BASE_URL: https://api.zodu.in
       AUTH_SERVICE_URL: http://auth-service:3000
-      REDIS_URL: redis://redis:6379
       MAX_CONCURRENT_UPLOADS: 4
     depends_on:
       - redis
       - auth-service
 
-  # Shared rate-limit counters for file-service replicas. Internal only, no
-  # persistence: losing it just resets the current minute's counters.
+  # Shared state: rate-limit counters (gateway, file-service) and, from the
+  # auth phase on, refresh-token sessions — so it is persisted (AOF) and never
+  # evicts keys. Internal only, password from ./env/redis.prod.env (REDIS_PASSWORD).
   redis:
     image: redis:7.4-alpine
     container_name: retail-redis
     restart: always
-    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    env_file:
+      - ./env/redis.prod.env
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --appendonly yes --appendfsync everysec --maxmemory 256mb --maxmemory-policy noeviction"]
+    volumes:
+      - redis-data:/data
     expose:
       - "6379"
 
-  # API Gateway
+  # API Gateway — the only published port. HTTPS and HSTS are at the reverse
+  # proxy in front (TRUST_PROXY=1 hop); CORS_ORIGINS and REDIS_URL come from its env file.
   apigateway:
     image: vicky0015/zodu-backemd-retail-apigateway:latest
+    build:
+      context: .
+      dockerfile: api-gateway/Dockerfile
     container_name: retail-apigateway
     restart: always
     ports:
       - "5000:5000"
+    env_file:
+      - ./env/api-gateway.prod.env
     environment:
+      NODE_ENV: production
       PORT: 5000
+      TRUST_PROXY: 1
       AUTH_SERVICE_URL: http://auth-service:3000
       RETAIL_SERVICE_URL: http://retail-service:3001
       EMPLOYEE_SERVICE_URL: http://employee-service:3002
       RESTAURANT_SERVICE_URL: http://restaurant-service:3004
-      PAYROLL_SERVICE_URL: http://payroll-service:3003
       CHECKLIST_SERVICE_URL: http://checklist-service:3005
       ADMIN_SERVICE_URL: http://admin-service:3007
       FILE_SERVICE_URL: http://file-service:4007
     depends_on:
+      - redis
       - auth-service
       - retail-service
       - employee-service
       - restaurant-service
-      - payroll-service
       - checklist-service
       - admin-service
-
       - file-service
+
+volumes:
+  redis-data:
