@@ -10,6 +10,8 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 app.use(httpLogger);
+// Stored file refs (expense / purchase / payment attachments) → fresh URLs in every JSON response.
+app.use(require('./utils/file-client').fileUrlsMiddleware);
 
 
 app.use('/api/retail', (req, res) => {

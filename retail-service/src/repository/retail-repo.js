@@ -2,11 +2,10 @@ const moment = require('moment/moment');
 const conn = require('../database/connection');
 const { withDescription } = require('../utils/description');
 const { randomUUID } = require("crypto");
-const { deleteFileFromMinIO } = require('../services/retail-service');
+const attachments = require('../utils/attachments');
 // const { calculateItemTax } = require('../utils/gstcalcukator');
 const { generatePublicOrderNo } = require('./generatePublicOrderNo');
 const { calculateItemsWithDiscount } = require('../utils/gstcalcukator');
-const sharp = require('sharp');
 const authClient = require('../utils/authClient');
 
 
@@ -4891,7 +4890,9 @@ exports.createPurchaseOrder = async (orderData) => {
       branch_id,
       purchase_date,
       purchase_type,
-      JSON.stringify(attachment_url || null),
+      JSON.stringify((await attachments.storedAttachments(conn, {
+        table: 'tbl_purchase', idColumn: 'purchase_id', id: purchase_id, data: orderData, module: 'purchase',
+      })) || null),
       payment_type,
       notes
     ]);
@@ -4957,7 +4958,9 @@ exports.updatePurchase = async (purchaseData) => {
         purchaseData.vendor,
         purchaseData.purchase_date,
         purchaseData.purchase_type,
-        JSON.stringify(purchaseData.attachment_url || []),
+        JSON.stringify((await attachments.storedAttachments(conn, {
+          table: 'tbl_purchase', idColumn: 'purchase_id', id: purchase_id, data: purchaseData, module: 'purchase',
+        })) || []),
         purchaseData.payment_type,
         purchaseData.notes || null,
         purchase_id,
@@ -5385,13 +5388,8 @@ exports.deleteExpense = async (expenseId) => {
 
     const attachmentURL = expenseData.rows[0]?.attachment_url ?? [];
 
-if (Array.isArray(attachmentURL)) {
-  for (const file of attachmentURL) {
-    if (file?.name) {
-      await deleteFileFromMinIO(file.name);
-    }
-  }
-}
+// The record's files: soft-deleted in file-service (accounting files are kept).
+await attachments.removeStored(attachmentURL);
 
 
     // 1) Get the payment_id linked to this expense
@@ -5464,13 +5462,8 @@ exports.deletePurchase = async (purchaseId) => {
 
   const attachmentURL = purchaseData.rows[0]?.attachment_url ?? [];
 
-if (Array.isArray(attachmentURL)) {
-  for (const file of attachmentURL) {
-    if (file?.name) {
-      await deleteFileFromMinIO(file.name);
-    }
-  }
-}
+// The record's files: soft-deleted in file-service (accounting files are kept).
+await attachments.removeStored(attachmentURL);
 
       const paymentResult = await conn.query(
       `SELECT payment_id 

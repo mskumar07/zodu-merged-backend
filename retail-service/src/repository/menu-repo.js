@@ -1,3 +1,4 @@
+const attachments = require('../utils/attachments');
 const conn = require("../database/connection");
 const { withDescription } = require("../utils/description");
 
@@ -89,6 +90,7 @@ exports.createMenuItem = async (client, data) => {
     ]
   );
 
+  attachments.claimImage(rows[0], { field: 'item_img', idField: 'item_uuid' });
   return rows[0];
 };
 
@@ -145,6 +147,7 @@ exports.updateMenuItem = async (client, item_uuid, data) => {
 
   if (rows.length === 0) throw new Error("Menu item not found");
 
+  attachments.claimImage(rows[0], { field: 'item_img', idField: 'item_uuid' });
   return rows[0];
 };
 

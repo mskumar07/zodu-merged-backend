@@ -1,4 +1,5 @@
 const conn = require("../database/connection");
+const attachments = require("../utils/attachments");
 
 exports.createPurchase = async (client, data) => {
   const { rows } = await client.query(
@@ -20,7 +21,9 @@ exports.createPurchase = async (client, data) => {
       data.paid_amount || 0,
       data.payment_status || "pending",
       data.notes || null,
-      data.attachment_url ? JSON.stringify(data.attachment_url) : null,
+      data.attachment_url
+        ? JSON.stringify(await attachments.storedAttachments(client, { table: 'tbl_purchase', idColumn: 'purchase_id', id: data.purchase_id, data: data, module: 'purchase' }))
+        : null,
       data.due_date || null,
       data.invoice_bill_no || null,
     ]
@@ -458,7 +461,9 @@ exports.updatePurchase = async (client, purchase_id, data) => {
       totalAmount,
       paidAmount,
       data.notes || null,
-      data.attachment_url ? JSON.stringify(data.attachment_url) : null,
+      data.attachment_url
+        ? JSON.stringify(await attachments.storedAttachments(client, { table: 'tbl_purchase', idColumn: 'purchase_id', id: purchase_id, data: data, module: 'purchase' }))
+        : null,
       String(purchase_id), // ✅ FORCE STRING
       data.due_date || null,
       data.invoice_bill_no || null,

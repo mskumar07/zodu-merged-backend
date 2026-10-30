@@ -6,35 +6,26 @@ const STATUS_CODES = require("../utils/error/status-codes.js");
 const service = require("../services/retail-service.js");
 const branchService = require("../services/branch-service.js");
 const conn = require("../database/connection.js");
-const Minio = require("minio");
 const multer = require("multer")
 const repository = require('../repository/retail-repo.js');
 const branchRepository = require('../repository/branch-repo.js');
 const XLSX = require("xlsx");
+// Memory storage. Files go on to file-service (10MB per file) or are parsed here
+// (Excel import); 25MB keeps a single request from holding hundreds of MB.
 const upload = multer({
-  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB
+  limits: { fileSize: 25 * 1024 * 1024 },
 });
-// memory storage
-const mime = require("mime-types");
 const moment = require('moment/moment');
 const jwt = require("jsonwebtoken");
 const { validateDateFilter } = require("../utils/Date_Folder/valaidator.js");
-const { MINIO_HOST, MINIO_PORT, MINIO_ACCESSKEY, BUCKET_NAME, MINIO_SECRETKEY, APP_SECRET } = require("../config/index.js");
+const { APP_SECRET } = require("../config/index.js");
+const files = require("../utils/file-client");
+const attachments = require("../utils/attachments");
 
 
 const router = express.Router();
 
 
-// MinIO client
-const minioClient = new Minio.Client({
-  endPoint: MINIO_HOST,
-  port: MINIO_PORT,
-  useSSL: false,
-  accessKey: MINIO_ACCESSKEY,
-  secretKey: MINIO_SECRETKEY
-});
-
-const bucketName = BUCKET_NAME;
 
 
 
@@ -176,10 +167,12 @@ router.post("/add/branch", async (req, res) => {
 });
 
 
+// Upload first, save the record later: the file goes to file-service's staging
+// area and the URL returned is a file-service link. Saving an expense / purchase
+// / item with that link moves the file into the record (utils/attachments.js).
 router.post("/upload", upload.single("file"), async (req, res) => {
   try {
-    console.log(req.file)
-    const result = await service.uploadImg(req.file);
+    const result = await service.uploadImg(req.file, attachments.uploadCtx(req));
     return res.status(200).json({ data: result });
   } catch (err) {
     console.log(err)
@@ -193,52 +186,14 @@ router.post("/upload/multiple", upload.array("files", 20), async (req, res) => {
       return res.status(400).json({ error: "No files uploaded" });
     }
 
-    const result = await service.uploadMultiple(req.files);
+    const result = await service.uploadMultiple(req.files, attachments.uploadCtx(req));
 
 
     return res.status(200).json({ success: true, files: result });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status && err.status < 500 ? err.status : 500).json({ error: err.message, details: err.details });
   }
 });
-
-
-router.get("/file/:name", async (req, res) => {
-  try {
-    const fileName = req.params.name;
-    const fileStream = await minioClient.getObject(bucketName, fileName);
-
-    const contentType = mime.lookup(fileName) || "application/octet-stream";
-
-    // Common inline preview types
-    const inlineTypes = [
-      "image/jpeg",
-      "image/png",
-      "image/webp",
-      "image/gif",
-      "application/pdf",
-    ];
-
-    res.setHeader("Content-Type", contentType);
-
-    // 🧠 Automatically decide inline vs download
-    if (inlineTypes.includes(contentType)) {
-      res.setHeader("Content-Disposition", `inline; filename="${fileName}"`);
-    } else {
-      res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
-    }
-
-    // Pipe file to client
-    fileStream.pipe(res);
-  } catch (err) {
-    console.error("File fetch error:", err);
-    if (err.code === "NoSuchKey") {
-      return res.status(404).json({ error: "File not found" });
-    }
-    res.status(500).json({ error: "Failed to retrieve file" });
-  }
-});
-
 
 
 router.post(
@@ -856,14 +811,39 @@ router.post(
       value.zodu_id   = req.user?.zodu_id   ?? value.zodu_id;
       value.branch_id = req.user?.branch_id ?? value.branch_id;
 
-      // Upload attachments (if any) to MinIO, same pipeline as other document uploads
-      value.attachment_url = req.files?.length ? await service.uploadMultiple(req.files) : [];
+      // Attachments go to file-service under the customer (module customer-payment,
+      // private); the payment rows keep file refs and answer with fresh URLs.
+      const fileCtx = files.requestCtx(req, { zoduId: value.zodu_id, branchId: value.branch_id });
+      const stored = req.files?.length
+        ? await files.upload(fileCtx, {
+            module: "customer-payment", entityId: attachments.entityKey(value.cust_uuid), files: req.files,
+          })
+        : [];
+      value.attachment_url = stored.map((f, i) => ({
+        id:       f.file_id,
+        filename: req.files[i].originalname || f.original_name,
+        size:     req.files[i].size || 0,
+        mimetype: f.mime_type,
+        file_id:  f.file_id,
+        file_ctx: `${value.zodu_id}/${value.branch_id || ""}`,
+        url_key:  "url",
+      }));
 
-      const data = await service.markCustomerPayment(value);
+      let data;
+      try {
+        data = await service.markCustomerPayment(value);
+      } finally {
+        if (!data?.success && stored.length) {
+          await files.quietly(files.remove(fileCtx, stored.map((f) => f.file_id)));
+        }
+      }
       if (!data.success) return res.status(400).json({ message: data.message });
 
       return res.status(201).json(data);
     } catch (error) {
+      if (error instanceof files.FileServiceError) {
+        return res.status(error.status).json({ error: error.message, details: error.details });
+      }
       console.error("[POST /api/customers/:cust_uuid/mark-payment]", error);
       return res.status(500).json({ error: error.message });
     }
@@ -1513,7 +1493,7 @@ router.delete("/delete/file/:name", async (req, res) => {
   try {
     const fileName = req.params.name;
 
-    const result = await service.deleteFileFromMinIO(fileName);
+    const result = await service.deleteFileFromMinIO(fileName, attachments.uploadCtx(req));
 
     if (!result.success) {
       return res.status(400).json(result);
