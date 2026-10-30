@@ -180,9 +180,19 @@ test('images keep their type in modules without a transform, but EXIF is still s
   assert.equal(out.includes(Buffer.from('SecretCam')), false);
 });
 
-// Noisy pixels compress like a real photo or scan, unlike a flat colour.
-const noise = (width, height) => sharp(Buffer.from(Array.from({ length: width * height * 3 }, (_, i) => (i * 7919) % 251)),
-  { raw: { width, height, channels: 3 } });
+// Noisy pixels compress like a real photo or scan, unlike a flat colour. A smooth
+// gradient plus random grain gives thousands of colours, so a lossy 256-colour
+// palette can't pass for lossless.
+const noise = (width, height) => {
+  let seed = 42;
+  const grain = () => { seed = (seed * 1103515245 + 12345) >>> 0; return (seed >>> 24) % 24; };
+  const px = Buffer.alloc(width * height * 3);
+  for (let i = 0; i < px.length; i += 1) {
+    const p = Math.floor(i / 3);
+    px[i] = (((p % width) * 200) / width + ((Math.floor(p / width) * 30) / height) * (i % 3) + grain()) & 255;
+  }
+  return sharp(px, { raw: { width, height, channels: 3 } });
+};
 const pixels = (buf) => sharp(buf).raw().toBuffer();
 const stored = async (app, storage, repo, module, file) => {
   const res = await upload(app, { module, files: [file] });

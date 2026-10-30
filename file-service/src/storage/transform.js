@@ -24,7 +24,8 @@ const FORMAT_MIME = { webp: MIME.WEBP, jpeg: MIME.JPEG, png: MIME.PNG };
 const QUALITY = 90;
 const ENCODE = {
   [MIME.JPEG]: (img) => img.jpeg({ quality: QUALITY, mozjpeg: true }),
-  [MIME.PNG]:  (img) => img.png({ compressionLevel: 9, adaptiveFiltering: true, effort: 10 }),
+  // No effort / quality / colours here: any of them switches sharp to a lossy 256-colour palette.
+  [MIME.PNG]:  (img) => img.png({ compressionLevel: 9, adaptiveFiltering: true, palette: false }),
   // A PNG source is a logo, signature or screenshot: lossless keeps its edges and text sharp.
   [MIME.WEBP]: (img, from) => (from === MIME.PNG
     ? img.webp({ lossless: true, effort: 5 })
