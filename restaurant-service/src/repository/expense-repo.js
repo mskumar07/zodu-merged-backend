@@ -1,3 +1,4 @@
+const attachments = require('../utils/attachments');
 const conn = require("../database/connection");
 
 // ── EXPENSE ITEM CATALOG (tbl_expense_menu_items) ────────────────
@@ -105,7 +106,9 @@ exports.createExpense = async (client, data) => {
       totalAmount,
       paidAmount,
       data.notes          || null,
-      data.attachment_url ? JSON.stringify(data.attachment_url) : null,
+      data.attachment_url
+        ? JSON.stringify(await attachments.storedAttachments(client, { table: 'tbl_expense', idColumn: 'expense_id', id: data.expense_id, data: data, module: 'expense' }))
+        : null,
       data.due_date       || null,
     ]
   );
@@ -308,7 +311,9 @@ exports.updateExpense = async (client, expense_id, data) => {
       totalAmount,
       paidAmount,
       data.notes          || null,
-      data.attachment_url ? JSON.stringify(data.attachment_url) : null,
+      data.attachment_url
+        ? JSON.stringify(await attachments.storedAttachments(client, { table: 'tbl_expense', idColumn: 'expense_id', id: expense_id, data: data, module: 'expense' }))
+        : null,
       String(expense_id),
       data.due_date       || null,
     ]

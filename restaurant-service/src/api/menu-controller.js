@@ -6,7 +6,9 @@ const schema = require("../schema/restaurant-schema");
 const service = require("../services/menu-service");
 const conn = require("../database/connection");
 
-const upload = multer({ limits: { fileSize: 500 * 1024 * 1024 } });
+// The menu image is uploaded beforehand (POST /upload) and arrives here as a URL;
+// a file sent in menu_image is ignored. Keep the in-memory part small.
+const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } });
 
 router.post(
   "/api/add/menu_item",

@@ -10,6 +10,8 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 app.use(httpLogger);
+// Stored file refs (expense / purchase / payment attachments) → fresh URLs in every JSON response.
+app.use(require('./utils/file-client').fileUrlsMiddleware);
 
 // KOT counters, printers and tickets — ahead of resRouter, which shares the '/' mount.
 app.use('/', require('./api/kot-controller'));

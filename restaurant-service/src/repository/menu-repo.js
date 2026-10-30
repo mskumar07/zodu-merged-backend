@@ -1,4 +1,5 @@
 const conn = require("../database/connection");
+const attachments = require("../utils/attachments");
 const { withDescription } = require("../utils/description");
 
 exports.updateMenuItem = async (menuId, data) => {
@@ -38,6 +39,7 @@ exports.updateMenuItem = async (menuId, data) => {
     const result = await conn.query(query, values);
     const updatedMenu = result.rows[0];
     if (!updatedMenu) throw new Error("Menu item not found");
+    attachments.claimImage(updatedMenu, { field: 'menu_image', idField: 'menu_id' });
 
     if (updatedMenu.menu_type && updatedMenu.menu_type.toLowerCase() === "product") {
       const stockQty = Number(data.opening_stock || 0);
@@ -105,6 +107,7 @@ exports.createMenuItem = async (menuData) => {
     ];
     const result = await conn.query(query, values);
     const createdMenu = result.rows[0];
+    attachments.claimImage(createdMenu, { field: 'menu_image', idField: 'menu_id' });
 
     if (createdMenu.menu_type && createdMenu.menu_type.toLowerCase() === "product") {
       const existing = await conn.query(`SELECT item_id FROM tbl_inventory WHERE item_id = $1`, [createdMenu.menu_id]);

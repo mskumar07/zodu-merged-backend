@@ -7,36 +7,27 @@ const STATUS_CODES = require("../utils/error/status-codes");
 const service = require("../services/restaurant-service");
 const branchService = require("../services/branch-service");
 const conn = require("../database/connection");
-const Minio = require("minio");
 const multer = require("multer")
 const repository = require('../repository/restaurant-repo.js');
 const branchRepository = require('../repository/branch-repo.js');
 const XLSX = require("xlsx");
+// Memory storage. Files go on to file-service (10MB per file) or are parsed here
+// (Excel import); 25MB keeps a single request from holding hundreds of MB.
 const upload = multer({
-  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB
+  limits: { fileSize: 25 * 1024 * 1024 },
 });
-// memory storage
-const mime = require("mime-types");
 const moment = require('moment/moment');
 const jwt = require("jsonwebtoken");
 const { validateDateFilter } = require("../utils/Date_Folder/valaidator");
-const { MINIO_HOST, MINIO_PORT, MINIO_ACCESSKEY, BUCKET_NAME, MINIO_SECRETKEY, APP_SECRET } = require("../config");
+const { APP_SECRET } = require("../config");
+const files = require("../utils/file-client");
+const attachments = require("../utils/attachments");
 const menuRepo = require("../repository/menu-repo");
 
 
 const router = express.Router();
 
 
-// MinIO client
-const minioClient = new Minio.Client({
-  endPoint: MINIO_HOST,
-  port: MINIO_PORT,
-  useSSL: false,
-  accessKey: MINIO_ACCESSKEY,
-  secretKey: MINIO_SECRETKEY
-});
-
-const bucketName = BUCKET_NAME;
 
 
 
@@ -178,10 +169,12 @@ router.post("/add/branch", async (req, res) => {
 });
 
 
+// Upload first, save the record later: the file goes to file-service's staging
+// area and the URL returned is a file-service link. Saving an expense / purchase
+// / item with that link moves the file into the record (utils/attachments.js).
 router.post("/upload", upload.single("file"), async (req, res) => {
   try {
-    console.log(req.file)
-    const result = await service.uploadImg(req.file);
+    const result = await service.uploadImg(req.file, attachments.uploadCtx(req));
     return res.status(200).json({ data: result });
   } catch (err) {
     console.log(err)
@@ -195,52 +188,14 @@ router.post("/upload/multiple", upload.array("files", 20), async (req, res) => {
       return res.status(400).json({ error: "No files uploaded" });
     }
 
-    const result = await service.uploadMultiple(req.files);
+    const result = await service.uploadMultiple(req.files, attachments.uploadCtx(req));
 
 
     return res.status(200).json({ success: true, files: result });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status && err.status < 500 ? err.status : 500).json({ error: err.message, details: err.details });
   }
 });
-
-
-router.get("/file/:name", async (req, res) => {
-  try {
-    const fileName = req.params.name;
-    const fileStream = await minioClient.getObject(bucketName, fileName);
-
-    const contentType = mime.lookup(fileName) || "application/octet-stream";
-
-    // Common inline preview types
-    const inlineTypes = [
-      "image/jpeg",
-      "image/png",
-      "image/webp",
-      "image/gif",
-      "application/pdf",
-    ];
-
-    res.setHeader("Content-Type", contentType);
-
-    // 🧠 Automatically decide inline vs download
-    if (inlineTypes.includes(contentType)) {
-      res.setHeader("Content-Disposition", `inline; filename="${fileName}"`);
-    } else {
-      res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
-    }
-
-    // Pipe file to client
-    fileStream.pipe(res);
-  } catch (err) {
-    console.error("File fetch error:", err);
-    if (err.code === "NoSuchKey") {
-      return res.status(404).json({ error: "File not found" });
-    }
-    res.status(500).json({ error: "Failed to retrieve file" });
-  }
-});
-
 
 
 router.post(
@@ -1294,7 +1249,7 @@ router.delete("/delete/file/:name", async (req, res) => {
   try {
     const fileName = req.params.name;
 
-    const result = await service.deleteFileFromMinIO(fileName);
+    const result = await service.deleteFileFromMinIO(fileName, attachments.uploadCtx(req));
 
     if (!result.success) {
       return res.status(400).json(result);
