@@ -180,6 +180,59 @@ test('images keep their type in modules without a transform, but EXIF is still s
   assert.equal(out.includes(Buffer.from('SecretCam')), false);
 });
 
+// Noisy pixels compress like a real photo or scan, unlike a flat colour.
+const noise = (width, height) => sharp(Buffer.from(Array.from({ length: width * height * 3 }, (_, i) => (i * 7919) % 251)),
+  { raw: { width, height, channels: 3 } });
+const pixels = (buf) => sharp(buf).raw().toBuffer();
+const stored = async (app, storage, repo, module, file) => {
+  const res = await upload(app, { module, files: [file] });
+  assert.equal(res.status, 201);
+  const row = repo.rows.get(res.body.data[0].file_id);
+  return { row, buffer: storage.objects.get(row.object_key).buffer };
+};
+
+test('PNGs are compressed losslessly: every pixel is unchanged, also as webp', async () => {
+  const { app, storage, repo } = makeApp();
+  const png = await noise(300, 200).png({ compressionLevel: 0 }).toBuffer();
+  for (const module of ['expense', 'menu-items']) {
+    const { row, buffer } = await stored(app, storage, repo, module, [png, 'scan.png']);
+    assert.ok(buffer.length < png.length, `${module} is smaller`);
+    assert.deepEqual(await pixels(buffer), await pixels(png), `${module} pixels`);
+    assert.equal(row.mime_type, module === 'menu-items' ? 'image/webp' : 'image/png');
+  }
+});
+
+test('an already compressed, clean image is stored exactly as uploaded', async () => {
+  const { app, storage, repo } = makeApp();
+  const small = await noise(400, 300).jpeg({ quality: 40, mozjpeg: true }).toBuffer();
+  const { buffer, row } = await stored(app, storage, repo, 'expense', [small, 'bill.jpg']);
+  assert.deepEqual(buffer, small);
+  assert.equal(row.size_bytes, small.length);
+});
+
+test('bill photos keep full resolution up to 3000px; larger phone photos shrink to 3000', async () => {
+  const { app, storage, repo } = makeApp();
+  const big = await noise(4000, 3000).jpeg({ quality: 95 }).toBuffer();
+  const { buffer } = await stored(app, storage, repo, 'expense', [big, 'bill.jpg']);
+  const meta = await sharp(buffer).metadata();
+  assert.equal(meta.format, 'jpeg');
+  assert.deepEqual([meta.width, meta.height], [3000, 2250]);
+});
+
+test('PDFs are compressed in document modules, but a signed PDF is stored untouched', async () => {
+  const { app, storage, repo } = makeApp();
+  const { PDFDocument } = require('pdf-lib');
+  const doc = await PDFDocument.create();
+  for (let i = 0; i < 20; i += 1) doc.addPage().drawText(`Bill line ${i}`);
+  const plain = Buffer.from(await doc.save({ useObjectStreams: false }));
+  const out = await stored(app, storage, repo, 'expense', [plain, 'bill.pdf']);
+  assert.ok(out.buffer.length < plain.length);
+  assert.equal((await PDFDocument.load(out.buffer)).getPageCount(), 20);
+
+  const signed = Buffer.concat([plain, Buffer.from('\n% /ByteRange [0 1 2 3]\n')]);
+  assert.deepEqual((await stored(app, storage, repo, 'expense', [signed, 'signed.pdf'])).buffer, signed);
+});
+
 // ── access ─────────────────────────────────────────────────────────────────
 async function seed(app, { module = 'expense', headers = asAdmin(), category } = {}) {
   const res = await upload(app, { module, headers, category, files: [[PNG, 'a.png']] });

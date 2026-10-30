@@ -5,6 +5,7 @@ Other services store `file_id`s, never URLs or keys.
 
 - Layout: `{zoduId}/{branchId|_shared}/{module}/{entityId}[/{category}][/{yyyy}/{mm}]/{uuid}.{ext}`
 - Modules, types, limits, access and permissions: [src/storage/modules.js](src/storage/modules.js)
+- Compression (visually lossless images, lossless PNG and PDF, original kept when smaller): [src/storage/transform.js](src/storage/transform.js)
 - Content inspection (type from bytes, PDF JS, macros, zip bombs, CSV formulas): [src/storage/file-inspector.js](src/storage/file-inspector.js)
 - Tenant / branch / permission context: [src/middleware/context.js](src/middleware/context.js)
 - MinIO bucket, user policy, HTTPS proxy: [docs/file-service/minio-setup.md](../docs/file-service/minio-setup.md)
