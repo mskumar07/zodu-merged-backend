@@ -1,9 +1,34 @@
 const express = require('express');
 const router  = express.Router();
 const repo    = require('../repository/business-repo');
+const authRepo = require('../repository/auth-repo');
+const { requireInternalToken } = require('../utils/internal-auth');
+const { INTERNAL_SERVICE_TOKEN_FILE } = require('../config');
 
 // Internal routes — called by restaurant-service only, NOT exposed via gateway
 // No JWT required. Protect at network/gateway level (not callable from internet).
+
+const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const UUID    = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// GET /internal/user-branch-access?user_id=&zodu_id=[&branch_id=]
+// file-service's tenant / branch / module-permission check. Unlike the routes
+// below it also requires file-service's X-Internal-Token.
+// → { is_member, branch_exists, has_branch_access, is_admin, permissions: { [module_name]: {read, create, edit, delete} } }
+router.get('/user-branch-access', requireInternalToken(INTERNAL_SERVICE_TOKEN_FILE), async (req, res) => {
+  try {
+    const { user_id, zodu_id, branch_id } = req.query;
+    if (!UUID.test(String(user_id || '')) || !SAFE_ID.test(String(zodu_id || ''))
+        || (branch_id !== undefined && !SAFE_ID.test(String(branch_id)))) {
+      return res.status(400).json({ success: false, message: 'user_id (uuid) and zodu_id are required; branch_id is optional' });
+    }
+    const data = await authRepo.getUserBranchAccess({ user_id, zodu_id, branch_id: branch_id || null });
+    return res.status(200).json({ success: true, data });
+  } catch (err) {
+    console.error('[internal] getUserBranchAccess:', err.message);
+    return res.status(500).json({ success: false, message: 'Internal error' });
+  }
+});
 
 // POST /internal/company  — create or upsert company
 router.post('/company', async (req, res) => {

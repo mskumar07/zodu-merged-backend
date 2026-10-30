@@ -183,6 +183,48 @@ async function getUserRoleAccess({ user_id, zodu_id, branch_id }) {
   return rows;
 }
 
+// file-service's tenant/branch gate (GET /internal/user-branch-access).
+// branch_id null → company-level question only (tenant-wide files).
+// Same branch rule as getUserRoleAccess: Admin and company-wide (branch_id NULL)
+// roles reach every branch, other roles only their own.
+async function getUserBranchAccess({ user_id, zodu_id, branch_id }) {
+  const { rows: [flags] } = await conn.query(
+    `SELECT
+       EXISTS (
+         SELECT 1 FROM tbl_users u
+         JOIN tbl_user_companies uc ON uc.user_id = u.user_id
+         WHERE u.user_id = $1 AND uc.zodu_id = $2
+           AND u.is_active = true AND COALESCE(u.is_deleted, false) = false
+       ) AS is_member,
+       ($3::varchar IS NULL OR EXISTS (
+         SELECT 1 FROM tbl_branch WHERE zodu_id = $2 AND branch_id = $3
+       )) AS branch_exists,
+       EXISTS (
+         SELECT 1 FROM tbl_user_roles ur
+         JOIN tbl_roles r ON r.role_id = ur.role_id
+         WHERE ur.user_id = $1 AND ur.zodu_id = $2
+           AND (r.role_name = 'Admin' OR ur.branch_id IS NULL OR ur.branch_id = $3)
+       ) AS has_branch_access,
+       EXISTS (
+         SELECT 1 FROM tbl_user_roles ur
+         JOIN tbl_roles r ON r.role_id = ur.role_id
+         WHERE ur.user_id = $1 AND ur.zodu_id = $2 AND r.zodu_id = $2 AND r.role_name = 'Admin'
+       ) AS is_admin`,
+    [user_id, zodu_id, branch_id || null]
+  );
+
+  // Several roles may grant the same module: any grant wins.
+  const permissions = {};
+  for (const row of await getUserRoleAccess({ user_id, zodu_id, branch_id })) {
+    const p = (permissions[row.module_name] ??= { read: false, create: false, edit: false, delete: false });
+    p.read   ||= row.can_read;
+    p.create ||= row.can_create;
+    p.edit   ||= row.can_edit;
+    p.delete ||= row.can_delete;
+  }
+  return { ...flags, permissions };
+}
+
 async function createDefaultRoleForCompany({ user_id, zodu_id }) {
   const client = await conn.connect();
   try {
@@ -249,4 +291,5 @@ module.exports = {
   getUserCompanies,
   createDefaultRoleForCompany,
   getUserRoleAccess,
+  getUserBranchAccess,
 };

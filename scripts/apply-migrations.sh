@@ -55,6 +55,7 @@ case "$ENV" in
     EMPLOYEE_DB=employee-service
     PAYROLL_DB=payroll-service
     ADMIN_DB=admin_service
+    FILE_DB=file_service
     # api-gateway (not the frontend on 5173) — it proxies /auth/* to
     # auth-service, so /auth/file/<key> is reachable through here, matching
     # how uat/prod point at their public gateway origins below.
@@ -74,6 +75,7 @@ case "$ENV" in
     EMPLOYEE_DB=employee-service
     PAYROLL_DB=payroll-service
     ADMIN_DB=admin_service
+    FILE_DB=file_service
     PUBLIC_BASE=https://api.myzodu.com
     run_sql() { psql -h "$HOST" -p "$PORT" -U "$USER" -d "$1" -v ON_ERROR_STOP=1 -f "$2"; }
     run_sql_str() { psql -h "$HOST" -p "$PORT" -U "$USER" -d "$1" -v ON_ERROR_STOP=1 -tAc "$2"; }
@@ -91,6 +93,7 @@ case "$ENV" in
     EMPLOYEE_DB=employee_service
     PAYROLL_DB=payroll-service
     ADMIN_DB=admin_service
+    FILE_DB=file_service
     PUBLIC_BASE=https://api.zodu.in
     run_sql() { psql -h "$HOST" -p "$PORT" -U "$USER" -d "$1" -v ON_ERROR_STOP=1 -f "$2"; }
     run_sql_str() { psql -h "$HOST" -p "$PORT" -U "$USER" -d "$1" -v ON_ERROR_STOP=1 -tAc "$2"; }
@@ -153,6 +156,11 @@ force_apply() {  # force_apply <db> <path-relative-to-repo-root>
   run_sql "$1" "$ROOT/$2"
   record_applied "$1" "$2"
 }
+
+# file-service — tbl_files (every stored file; owning services keep only
+# file_id) and tbl_file_access_log. Own file_service database, which must
+# already exist, like every other service database above.
+apply "$FILE_DB" file-service/migrations/001_files.sql
 
 # admin-service — tbl_admin_users, the admin console's own login table.
 # Lives in its own admin_service database, never in AUTH_DB — the admin

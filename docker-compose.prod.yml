@@ -8,6 +8,11 @@ services:
     restart: always
     expose:
       - "3000"
+    # INTERNAL_SERVICE_TOKEN_FILE (file-service's access checks). Optional so
+    # auth-service still deploys before file-service exists.
+    env_file:
+      - path: ./env/auth-service.prod.env
+        required: false
     environment:
       NODE_ENV: production
       PORT: 3000
@@ -178,6 +183,40 @@ services:
       - payroll-service
       - checklist-service
 
+  # File Service — the only service with MinIO credentials. Reached only through
+  # api-gateway's /files route (no published port). Secrets come from the
+  # env_file on the host, never from this file (see file-service/.env.example).
+  file-service:
+    image: vicky0015/zodu-backemd-file-service:latest
+    container_name: retail-file-service
+    restart: always
+    expose:
+      - "4007"
+    env_file:
+      - ./env/file-service.prod.env
+    environment:
+      NODE_ENV: production
+      PORT: 4007
+      MINIO_BUCKET_NAME: zodu-files
+      PRESIGNED_URL_TTL: 900
+      PUBLIC_FILE_BASE_URL: https://api.zodu.in
+      AUTH_SERVICE_URL: http://auth-service:3000
+      REDIS_URL: redis://redis:6379
+      MAX_CONCURRENT_UPLOADS: 4
+    depends_on:
+      - redis
+      - auth-service
+
+  # Shared rate-limit counters for file-service replicas. Internal only, no
+  # persistence: losing it just resets the current minute's counters.
+  redis:
+    image: redis:7.4-alpine
+    container_name: retail-redis
+    restart: always
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    expose:
+      - "6379"
+
   # API Gateway
   apigateway:
     image: vicky0015/zodu-backemd-retail-apigateway:latest
@@ -194,6 +233,7 @@ services:
       PAYROLL_SERVICE_URL: http://payroll-service:3003
       CHECKLIST_SERVICE_URL: http://checklist-service:3005
       ADMIN_SERVICE_URL: http://admin-service:3007
+      FILE_SERVICE_URL: http://file-service:4007
     depends_on:
       - auth-service
       - retail-service
@@ -202,3 +242,5 @@ services:
       - payroll-service
       - checklist-service
       - admin-service
+
+      - file-service

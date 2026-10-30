@@ -32,5 +32,8 @@ module.exports = {
   RETAIL_SERVICE_URL: process.env.RETAIL_SERVICE_URL || 'http://retail-service:3001',
   PAYROLL_SERVICE_URL: process.env.PAYROLL_SERVICE_URL || 'http://payroll-service:3005',
   CHECKLIST_SERVICE_URL: process.env.CHECKLIST_SERVICE_URL || 'http://checklist-service:3006',
+  // file-service presents this in X-Internal-Token on /internal/user-branch-access
+  // (file-service's AUTH_INTERNAL_TOKEN). Min 32 chars; unset → the route refuses every call.
+  INTERNAL_SERVICE_TOKEN_FILE: process.env.INTERNAL_SERVICE_TOKEN_FILE,
 
 };
