@@ -106,6 +106,12 @@ test('discard drops unclaimed staged files only', async () => {
   assert.deepEqual(res.body.data.file_ids, [a.file_id]);
   assert.equal(repo.rows.get(a.file_id).status, 'deleted');
   assert.equal(repo.rows.get(b.file_id).status, 'ready');
+
+  // anonymous: only staged files nobody owns
+  const [anon] = await stage(app);
+  const [owned] = await stage(app, tenant());
+  const res2 = await request(app).post('/internal/discard').set(svc()).send({ file_ids: [anon.file_id, owned.file_id] });
+  assert.deepEqual(res2.body.data.file_ids, [anon.file_id]);
 });
 
 test('internal resolve presigns employee files (old clients open links without a token)', async () => {

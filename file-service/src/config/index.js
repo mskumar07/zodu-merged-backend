@@ -62,8 +62,11 @@ module.exports = {
   // Non-accounting files are removed from storage this long after a soft delete.
   PURGE_AFTER_DAYS: int(process.env.PURGE_AFTER_DAYS, 30),
   PURGE_JOB_ENABLED: process.env.PURGE_JOB_ENABLED !== 'false',
-  // Uploads to the staging area that no saved record claimed are removed after this.
-  STAGING_TTL_HOURS: int(process.env.STAGING_TTL_HOURS, 48),
+  // Uploads to the staging area that no saved record claimed are removed after
+  // this many hours. 0 (the default) keeps them: some saved fields (branch
+  // image, bulk-import item images) still point at staged files until Phase 3
+  // moves them; switch it on (e.g. 48) after that.
+  STAGING_TTL_HOURS: int(process.env.STAGING_TTL_HOURS, 0),
   // Browser origins allowed to call file-service directly. Normally empty:
   // browsers go through the gateway, which handles CORS.
   CORS_ORIGINS: list(process.env.CORS_ORIGINS),

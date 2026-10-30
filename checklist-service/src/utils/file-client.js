@@ -121,6 +121,15 @@ const quietly = (p) => Promise.resolve(p).catch((err) => console.warn('[file-ser
 
 const isFileId = (v) => typeof v === 'string' && FILE_ID.test(v);
 
+// Claim the file behind one stored URL (an image field) into a record. The
+// URL stays valid (same file_id). → the claimed file, or null.
+async function claimUrl(ctx, url, { module, entityId, category }) {
+  const id = fileIdFromUrl(url);
+  if (!id) return null;
+  const [claimed] = await claim(ctx, { module, entityId, category, fileIds: [id] });
+  return claimed || null;
+}
+
 // file_id named by a file-service URL (what /upload hands out, or a URL a
 // response carried and the client sent back), else null.
 function fileIdFromUrl(url) {
@@ -267,6 +276,6 @@ function requestCtx(req, { zoduId, branchId, userId } = {}) {
 
 module.exports = {
   FileServiceError,
-  upload, stage, claim, resolve, remove, removeEntity, discard, quietly,
+  upload, stage, claim, claimUrl, resolve, remove, removeEntity, discard, quietly,
   toRefs, refIds, ref, ctxOfRef, fileUrls, fileUrlsMiddleware, fileIdFromUrl, isFileId, requestCtx,
 };

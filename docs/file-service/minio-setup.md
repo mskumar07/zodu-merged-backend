@@ -78,6 +78,19 @@ mc admin policy attach zodu-admin zodu-files-rw --user file-service
 # → MINIO_ACCESSKEY=file-service, MINIO_SECRETKEY=$SECRET in env/file-service.<env>.env
 ```
 
+**Until Phase 3 is done,** file-service also serves the URLs stored before it
+existed (`/{service}/file/<key>` → `GET /legacy/<key>`). For that it needs
+read-only access to single objects in the old bucket. Add this statement to the
+policy, and remove it once the legacy route is gone:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": ["s3:GetObject"],
+  "Resource": ["arn:aws:s3:::zodu/*"]
+}
+```
+
 The Phase 3 migration script also needs read access to the old bucket. Give it
 a **separate** user that has `s3:GetObject` and `s3:ListBucket` on `zodu` and
 the policy above on `zodu-files`. Delete that user once the migration is done.
@@ -87,7 +100,7 @@ Check that the user is boxed in:
 ```bash
 mc alias set fs-check http://127.0.0.1:9000 file-service "$SECRET"
 mc ls fs-check/zodu-files          # works
-mc ls fs-check/zodu                # Access Denied
+mc ls fs-check/zodu                # Access Denied (single-object GETs only, for /legacy)
 mc mb fs-check/anything            # Access Denied
 ```
 
