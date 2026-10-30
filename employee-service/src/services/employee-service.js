@@ -2,7 +2,7 @@ const { v4: uuidv4 } = require('uuid');
 const axios  = require('axios');
 const db     = require('../database/connection');
 const repo   = require('../repository/employee-repo');
-const minio  = require('../utils/minio');
+const files  = require('../utils/file-client');
 const { AUTH_SERVICE_URL, PAYROLL_SERVICE_URL } = require('../config');
 
 // ── CREATE ────────────────────────────────────────────────────────────────────
@@ -135,7 +135,7 @@ exports.getEmployeeById = async (employee_id, { zodu_id, branch_id }) => {
       has_password: ls?.has_password ?? null,
       has_role:     ls?.has_role     ?? null,
       login_user:   ls?.login_user   ?? null,
-      documents: docsResult.status  === 'fulfilled' ? docsResult.value              : [],
+      documents: docsResult.status  === 'fulfilled' ? docsResult.value.map((d) => files.ref(d)) : [],
       role_info: authResult.status   === 'fulfilled' ? authResult.value.data.data   : null,
       salary:    salaryResult.status === 'fulfilled' ? salaryResult.value.data.data : null,
     },
@@ -284,11 +284,21 @@ exports.deleteEmployee = async (employee_id, { zodu_id, branch_id, status }) => 
 
 // ── DOCUMENTS ─────────────────────────────────────────────────────────────────
 
-exports.uploadDocument = async (employee_id, fileData, uploaded_by) => {
+// The file goes to file-service under this employee (Aadhaar, PAN, ...:
+// "documents"; the avatar: "profile"); the row keeps only its file_id. If the
+// row can't be saved, the uploaded file is removed again.
+exports.uploadDocument = async (employee_id, fileData, uploaded_by, ctx) => {
   const employee = await repo.findById(employee_id, {
     zodu_id: fileData.zodu_id, branch_id: fileData.branch_id,
   });
   if (!employee) throw new Error('Employee not found');
+
+  const [stored] = await files.upload(ctx, {
+    module:   'employee',
+    entityId: employee_id,
+    category: fileData.document_type === 'Profile Photo' ? 'profile' : 'documents',
+    files:    [fileData.file],
+  });
 
   const client = await db.connect();
   try {
@@ -296,33 +306,31 @@ exports.uploadDocument = async (employee_id, fileData, uploaded_by) => {
     const doc = await repo.insertDocument(client, {
       employee_id, zodu_id: fileData.zodu_id, branch_id: fileData.branch_id,
       document_type: fileData.document_type,
-      file_name:     fileData.file_name || fileData.file_url.split('/').pop(),
-      file_url:      fileData.file_url,
+      file_name:     stored.original_name,
+      file_id:       stored.file_id,
       uploaded_by,
     });
     await client.query('COMMIT');
-    return { success: true, data: doc };
+    return { success: true, data: files.ref(doc) };
   } catch (err) {
     await client.query('ROLLBACK');
+    await files.quietly(files.remove(ctx, [stored.file_id]));
     throw err;
   } finally {
     client.release();
   }
 };
 
-exports.deleteDocument = async (doc_id, employee_id, { zodu_id, branch_id }) => {
+exports.deleteDocument = async (doc_id, employee_id, { zodu_id, branch_id }, ctx) => {
   const employee = await repo.findById(employee_id, { zodu_id, branch_id });
   if (!employee) throw new Error('Employee not found');
 
   const doc = await repo.deleteDocument(doc_id, employee_id);
   if (!doc) throw new Error('Document not found');
 
-  // Delete from MinIO — extract key by removing leading /bucket-name/
-  if (doc.file_url) {
-    const parts = doc.file_url.split('/').filter(Boolean); // remove empty strings
-    const file_key = parts.slice(1).join('/');             // skip bucket name, keep the rest
-    await minio.deleteFile(file_key);
-  }
+  // Files from before file-service (file_url only) stay in the old bucket
+  // until the Phase 3 migration; it never deletes there.
+  if (doc.file_id) await files.quietly(files.remove(ctx, [doc.file_id]));
 
   return { success: true };
 };

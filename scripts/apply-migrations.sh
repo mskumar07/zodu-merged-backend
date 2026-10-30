@@ -395,6 +395,9 @@ apply "$RESTAURANT_DB" restaurant-service/migrations/purchase_return.sql
 # (POST /api/employees/:id/face, POST /api/attendance/face).
 apply "$EMPLOYEE_DB" employee-service/migrations/employee_faces.sql
 
+# employee-service — documents keep a file-service file_id (Phase 2).
+apply "$EMPLOYEE_DB" employee-service/migrations/file_service_file_ids.sql
+
 # Older rows were written before PUBLIC_FILE_BASE_URL existed, so they carry
 # whatever origin the code defaulted to at the time (myzodu.com, zodu.in, ...).
 # Repoint every stored file URL at this environment's public origin: swap the

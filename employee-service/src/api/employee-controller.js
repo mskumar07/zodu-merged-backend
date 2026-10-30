@@ -4,11 +4,11 @@ const router   = express.Router();
 const service  = require('../services/employee-service');
 const RequestValidator = require('../utils/requestValidator');
 const schema   = require('../schema/employee-schema');
-const minio    = require('../utils/minio');
+const files    = require('../utils/file-client');
 const faceService = require('../services/face-service');
 const faceUpload  = require('../utils/face-upload');
 
-// multer — keep file in memory, upload to MinIO
+// multer — keep file in memory, hand it to file-service
 const upload = multer({
   storage: multer.memoryStorage(),
   limits:  { fileSize: 5 * 1024 * 1024 }, // 5 MB
@@ -120,26 +120,24 @@ router.post('/:id/documents', upload.single('file'), async (req, res) => {
     if (!document_type)  return res.status(400).json({ success: false, error: 'document_type is required' });
     if (!req.file)       return res.status(400).json({ success: false, error: 'file is required' });
 
-    // 1. Upload file to MinIO
-    const uploaded = await minio.uploadFile(req.file, `employee-docs/${req.params.id}`);
-
-    // 2. Save URL to DB
+    // Stored in file-service (module employee); the row keeps the file_id and
+    // the response carries a fresh URL in file_url.
     const result = await service.uploadDocument(req.params.id, {
       zodu_id,
       branch_id,
       document_type,
-      file_name: uploaded.fileName,
-      file_url:  uploaded.fileUrl,
-    }, req.user?.user_id);
+      file: req.file,
+    }, req.user?.user_id, files.requestCtx(req, { zoduId: zodu_id, branchId: branch_id }));
 
     return res.status(result.success ? 201 : 400).json(result);
   } catch (err) {
-    // An unreachable MinIO throws an AggregateError whose message is empty.
+    if (err.message === 'Employee not found') return res.status(404).json({ success: false, error: err.message });
+    // file-service refused the file (wrong type, too big, unsafe content) or is down.
+    if (err instanceof files.FileServiceError) {
+      return res.status(err.status).json({ success: false, error: err.details?.[0]?.error || err.message });
+    }
     console.error('[documents] upload failed:', err);
-    return res.status(500).json({
-      success: false,
-      error: err.message || 'File storage is unavailable. Please try again.',
-    });
+    return res.status(500).json({ success: false, error: 'Failed to upload document. Please try again.' });
   }
 });
 
@@ -151,7 +149,8 @@ router.delete('/:id/documents/:doc_id', async (req, res) => {
     if (!zodu_id)   return res.status(400).json({ success: false, error: 'zodu_id is required' });
     if (!branch_id) return res.status(400).json({ success: false, error: 'branch_id is required' });
 
-    const result = await service.deleteDocument(req.params.doc_id, req.params.id, { zodu_id, branch_id });
+    const result = await service.deleteDocument(req.params.doc_id, req.params.id, { zodu_id, branch_id },
+      files.requestCtx(req, { zoduId: zodu_id, branchId: branch_id }));
     return res.status(result.success ? 200 : 400).json(result);
   } catch (err) {
     const status = err.message === 'Document not found' ? 404 : 500;
