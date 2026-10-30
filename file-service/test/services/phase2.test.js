@@ -18,7 +18,7 @@ test.before(async () => {
   await new Promise((r) => server.on('listening', r));
   Object.assign(process.env, {
     FILE_SERVICE_URL: `http://127.0.0.1:${server.address().port}`,
-    FILE_SERVICE_TOKEN: INTERNAL_TOKEN,
+    INTERNAL_TOKEN: INTERNAL_TOKEN,
     NODE_ENV: 'production',
   });
 });

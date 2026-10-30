@@ -7,8 +7,8 @@
 //
 // zodu_id / branch_id / user_id are never read from the body, query or path.
 
-const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
+const { createInternalAuth } = require('@zodu/security');
 const {
   AuthenticationError, ForbiddenError, NotFoundError, ValidationError,
 } = require('../utils/error/errors');
@@ -91,17 +91,11 @@ function assertPermission(ctx, moduleName, action) {
 // X-Zodu-Id may be missing only for staged uploads (upload, discard); every
 // other operation needs a tenant and fails without one.
 function createRequireInternal(tokens) {
-  const hashed = Object.entries(tokens).map(([name, token]) => [name, sha256(token)]);
+  const { identify } = createInternalAuth({ tokens });
 
   return function requireInternal(req, _res, next) {
-    const presented = req.get('X-Internal-Token');
-    if (!presented) return next(AuthenticationError('Internal token missing'));
-    const digest = sha256(presented);
-    // Compare against every token so timing doesn't reveal which one matched.
-    let caller = null;
-    for (const [name, h] of hashed) {
-      if (crypto.timingSafeEqual(digest, h) && !caller) caller = name;
-    }
+    if (!req.get('X-Internal-Token')) return next(AuthenticationError('Internal token missing'));
+    const caller = identify(req);
     if (!caller) return next(AuthenticationError('Invalid internal token'));
 
     const zoduId = req.get('X-Zodu-Id') || null;
@@ -119,7 +113,5 @@ function createRequireInternal(tokens) {
     next();
   };
 }
-
-const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest();
 
 module.exports = { createContext, createRequireInternal, hasPermission, assertPermission };

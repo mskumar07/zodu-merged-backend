@@ -3,6 +3,8 @@ const router  = express.Router();
 const db      = require('../database/connection');
 const repo    = require('../repository/employee-repo');
 
+// All routes here: auth-service only (express-app.js checks its X-Internal-Token).
+
 // Called by auth-service after signup to seed the first Admin employee row.
 // Body: { zodu_id, branch_id, user_id, phone, email }
 router.post('/employee/create-admin', async (req, res) => {

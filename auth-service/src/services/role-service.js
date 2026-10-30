@@ -1,4 +1,4 @@
-const bcrypt = require('bcryptjs');
+const bcrypt = require('bcrypt');
 const repo   = require('../repository/role-repo');
 const { withTransaction } = require('../utils/transaction');
 

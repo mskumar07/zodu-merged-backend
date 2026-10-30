@@ -8,12 +8,12 @@ const { createMemoryStore, createRedisStore } = require('./middleware/rate-limit
 const { createPurgeJob } = require('./jobs/purge-deleted');
 
 function checkConfig() {
-  const missing = ['APP_SECRET', 'MINIO_ACCESSKEY', 'MINIO_SECRETKEY', 'AUTH_INTERNAL_TOKEN', 'DB_HOSTNAME']
+  const missing = ['APP_SECRET', 'MINIO_ACCESSKEY', 'MINIO_SECRETKEY', 'INTERNAL_TOKEN', 'DB_HOSTNAME']
     .filter((k) => !config[k]);
   if (config.NODE_ENV === 'production' && !config.REDIS_URL) missing.push('REDIS_URL');
   if (missing.length) throw new Error(`Missing configuration: ${missing.join(', ')}`);
   if (!Object.keys(config.INTERNAL_TOKENS).length) {
-    logger.warn('No INTERNAL_SERVICE_TOKEN_* configured (min 32 chars): /internal/* will refuse every call');
+    logger.warn('No INTERNAL_TOKEN_<CALLER> configured (min 32 chars): /internal/* will refuse every call');
   }
 }
 
@@ -37,7 +37,7 @@ async function StartServer() {
     repo,
     storage,
     authClient: createAuthClient({
-      baseUrl: config.AUTH_SERVICE_URL, token: config.AUTH_INTERNAL_TOKEN, ttlMs: config.ACCESS_CACHE_TTL_MS,
+      baseUrl: config.AUTH_SERVICE_URL, token: config.INTERNAL_TOKEN, ttlMs: config.ACCESS_CACHE_TTL_MS,
     }),
     rateLimitStore: rateLimitStore(),
   });

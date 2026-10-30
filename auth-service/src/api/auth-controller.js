@@ -83,7 +83,6 @@ async function handleAddBranch(req, res) {
 
 async function handleEditCompany(req, res) {
   try {
-    console.log(req.body)
     // edit_business demands zodu_id + at least one field to change. A logo-only
     // edit sends the file and an empty body, so relax that floor when a file
     // is attached — the file *is* the change.

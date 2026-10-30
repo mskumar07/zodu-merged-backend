@@ -6,7 +6,7 @@ const { createAuthClient } = require('../src/clients/auth-client');
 const { createUploadSlots } = require('../src/middleware/upload');
 const { createPurgeJob, PURGEABLE } = require('../src/jobs/purge-deleted');
 const { createRedisStore } = require('../src/middleware/rate-limit');
-const { internalTokens } = require('../src/config');
+const { callerTokensFromEnv } = require('@zodu/security');
 const { MODULES, PERM } = require('../src/storage/modules');
 
 test('registry: every module has access, permission and a sane limit', () => {
@@ -110,9 +110,9 @@ test('redis store: one shared counter with a window expiry', async () => {
 });
 
 test('internal tokens: one per service, short ones ignored', () => {
-  const t = internalTokens({
-    INTERNAL_SERVICE_TOKEN_RESTAURANT: 'r'.repeat(32),
-    INTERNAL_SERVICE_TOKEN_RETAIL: 'short',
+  const t = callerTokensFromEnv({
+    INTERNAL_TOKEN_RESTAURANT: 'r'.repeat(32),
+    INTERNAL_TOKEN_RETAIL: 'short',
     OTHER: 'x'.repeat(40),
   });
   assert.deepEqual(t, { restaurant: 'r'.repeat(32) });

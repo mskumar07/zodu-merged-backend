@@ -14,7 +14,7 @@ test.before(async () => {
   server = fs.app.listen(0, '127.0.0.1');
   await new Promise((r) => server.on('listening', r));
   process.env.FILE_SERVICE_URL = `http://127.0.0.1:${server.address().port}`;
-  process.env.FILE_SERVICE_TOKEN = INTERNAL_TOKEN;
+  process.env.INTERNAL_TOKEN = INTERNAL_TOKEN;
   client = require('../clients/file-client');
 });
 test.after(() => server.close());

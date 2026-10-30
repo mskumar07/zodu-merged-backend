@@ -17,6 +17,7 @@
   },
   "license": "ISC",
   "dependencies": {
+    "@zodu/security": "file:../packages/zodu-security",
     "axios": "^1.12.2",
     "dotenv": "^17.2.1",
     "express": "^5.1.0",

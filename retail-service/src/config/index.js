@@ -10,8 +10,9 @@ if (process.env.NODE_ENV !== "production") {
 
 console.log(process.env.PORT)
 module.exports = {
-  // Files live in file-service; utils/file-client.js reads FILE_SERVICE_URL and
-  // FILE_SERVICE_TOKEN (= file-service's INTERNAL_SERVICE_TOKEN_RETAIL) from the environment.
+  // Files live in file-service; utils/file-client.js reads FILE_SERVICE_URL from
+  // the environment. Service-to-service tokens (@zodu/security): INTERNAL_TOKEN is
+  // sent, INTERNAL_TOKEN_<CALLER> accepted on /internal/*.
   FILE_SERVICE_URL: process.env.FILE_SERVICE_URL || 'http://file-service:4007',
   PORT: process.env.PORT,
   DB_USERNAME: process.env.DB_USERNAME,
@@ -20,5 +21,5 @@ module.exports = {
   DB_HOSTNAME: process.env.DB_HOSTNAME,
   DB_NAME: process.env.DB_NAME,
   APP_SECRET: process.env.APP_SECRET,
-AUTH_SERVICE_URL: process.env.AUTH_SERVICE_URL || 'http://localhost:3000',
+AUTH_SERVICE_URL: process.env.AUTH_SERVICE_URL || 'http://auth-service:4000',
 };

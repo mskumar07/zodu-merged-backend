@@ -4,6 +4,8 @@ const schema           = require('../schema/role-schema');
 // const { ValidateSignature } = require('../utils');
 
 const router = require('express').Router();
+const { requireInternal } = require('@zodu/security');
+const fromEmployee = requireInternal('employee');
 
 // ── CREATE ROLE ───────────────────────────────────────────────────────────────
 // POST /api/roles
@@ -95,11 +97,10 @@ router.get('/api/modules', /* ValidateSignature, */ async (req, res) => {
   }
 });
 
-// ── INTERNAL — called by employee-service (no JWT, internal network only) ─────
+// ── INTERNAL — called by employee-service only (its X-Internal-Token) ────────
 
-router.post('/internal/employee/create-user', async (req, res) => {
+router.post('/internal/employee/create-user', fromEmployee, async (req, res) => {
   try {
-    console.log('Creating employee user:', req.body);
     const { errors, input } = await RequestValidator(schema.createEmployeeUser, req.body);
     if (errors) return res.status(400).json({ success: false, errors });
 
@@ -111,7 +112,7 @@ router.post('/internal/employee/create-user', async (req, res) => {
   }
 });
 
-router.get('/internal/employee/:user_id/role', async (req, res) => {
+router.get('/internal/employee/:user_id/role', fromEmployee, async (req, res) => {
   try {
     const result = await roleService.getEmployeeRole(req.params.user_id);
     return res.status(200).json(result);
@@ -120,7 +121,7 @@ router.get('/internal/employee/:user_id/role', async (req, res) => {
   }
 });
 
-router.put('/internal/employee/:user_id/role', async (req, res) => {
+router.put('/internal/employee/:user_id/role', fromEmployee, async (req, res) => {
   try {
     const { errors, input } = await RequestValidator(schema.updateEmployeeRole, req.body);
     if (errors) return res.status(400).json({ success: false, errors });
@@ -134,7 +135,7 @@ router.put('/internal/employee/:user_id/role', async (req, res) => {
 
 // POST /internal/employee/check-duplicate
 // Body: { email?, phone?, exclude_user_id }
-router.post('/internal/employee/check-duplicate', async (req, res) => {
+router.post('/internal/employee/check-duplicate', fromEmployee, async (req, res) => {
   try {
     const result = await roleService.checkDuplicate(req.body);
     return res.status(200).json(result);
@@ -145,7 +146,7 @@ router.post('/internal/employee/check-duplicate', async (req, res) => {
 
 // PUT /internal/employee/:user_id/update-user
 // Updates email, phone, password in tbl_users (only fields present in body)
-router.put('/internal/employee/:user_id/update-user', async (req, res) => {
+router.put('/internal/employee/:user_id/update-user', fromEmployee, async (req, res) => {
   try {
     const result = await roleService.updateEmployeeUser(req.params.user_id, req.body);
     return res.status(200).json(result);
@@ -158,7 +159,7 @@ router.put('/internal/employee/:user_id/update-user', async (req, res) => {
 // Body: { user_ids: [uuid], zodu_id, branch_id, with_count? }
 // → { data: { [user_id]: { has_password, has_role, login_user } }, login_user_count? }
 // login_user_count (only when with_count) = users with login_user = true in that company + branch.
-router.post('/internal/employee/login-status', async (req, res) => {
+router.post('/internal/employee/login-status', fromEmployee, async (req, res) => {
   try {
     const { user_ids, zodu_id, branch_id, with_count } = req.body;
     if (!Array.isArray(user_ids) || !zodu_id || !branch_id) {
@@ -174,7 +175,7 @@ router.post('/internal/employee/login-status', async (req, res) => {
 // PUT /internal/employee/login-details
 // Body: { user_id, zodu_id, branch_id, role_id?, password?, email?, phone?, ... } — sets only what is sent.
 // user_id is reserved by employee-service; if no tbl_users row has it yet, the row is created with that id.
-router.put('/internal/employee/login-details', async (req, res) => {
+router.put('/internal/employee/login-details', fromEmployee, async (req, res) => {
   try {
     const { errors, input } = await RequestValidator(schema.setEmployeeLogin, req.body);
     if (errors) return res.status(400).json({ success: false, errors });
@@ -187,7 +188,7 @@ router.put('/internal/employee/login-details', async (req, res) => {
   }
 });
 
-router.put('/internal/employee/:user_id/deactivate', async (req, res) => {
+router.put('/internal/employee/:user_id/deactivate', fromEmployee, async (req, res) => {
   try {
     console.log('Deactivating employee user:', req.params.user_id);
     const result = await roleService.deactivateEmployee(req.params.user_id);

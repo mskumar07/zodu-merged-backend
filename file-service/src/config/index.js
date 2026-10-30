@@ -1,4 +1,5 @@
 const dotEnv = require('dotenv');
+const { callerTokensFromEnv } = require('@zodu/security');
 
 if (process.env.NODE_ENV !== 'production') {
   const configFile = process.env.NODE_ENV ? `./.env.${process.env.NODE_ENV}` : './.env';
@@ -9,17 +10,6 @@ if (process.env.NODE_ENV !== 'production') {
 
 const int = (v, d) => (Number.isFinite(parseInt(v, 10)) ? parseInt(v, 10) : d);
 const list = (v) => String(v || '').split(',').map((s) => s.trim()).filter(Boolean);
-
-// INTERNAL_SERVICE_TOKEN_AUTH=..., INTERNAL_SERVICE_TOKEN_EMPLOYEE=... → { auth: '...', employee: '...' }.
-// One token per calling service, so a leaked token names its source and can be rotated alone.
-// Tokens shorter than 32 characters are ignored.
-function internalTokens(env = process.env) {
-  return Object.fromEntries(
-    Object.entries(env)
-      .filter(([k, v]) => k.startsWith('INTERNAL_SERVICE_TOKEN_') && v && v.length >= 32)
-      .map(([k, v]) => [k.slice('INTERNAL_SERVICE_TOKEN_'.length).toLowerCase(), v]),
-  );
-}
 
 module.exports = {
   NODE_ENV: process.env.NODE_ENV || 'local',
@@ -50,11 +40,12 @@ module.exports = {
   PUBLIC_FILE_BASE_URL: (process.env.PUBLIC_FILE_BASE_URL || 'http://localhost:5001').replace(/\/+$/, ''),
 
   AUTH_SERVICE_URL: process.env.AUTH_SERVICE_URL || 'http://auth-service:4000',
-  // Token file-service presents to auth-service's /internal/user-branch-access.
-  AUTH_INTERNAL_TOKEN: process.env.AUTH_INTERNAL_TOKEN,
   ACCESS_CACHE_TTL_MS: int(process.env.ACCESS_CACHE_TTL_MS, 60_000),
-  INTERNAL_TOKENS: internalTokens(),
-  internalTokens,
+  // This service's own token, sent to auth-service's /internal/user-branch-access.
+  INTERNAL_TOKEN: process.env.INTERNAL_TOKEN,
+  // Services allowed to call /internal/*: INTERNAL_TOKEN_AUTH=..., INTERNAL_TOKEN_RETAIL=...
+  // → { auth: '...', retail: '...' }. One token per caller; under 32 characters is ignored.
+  INTERNAL_TOKENS: callerTokensFromEnv(),
 
   REDIS_URL: process.env.REDIS_URL,
   MAX_CONCURRENT_UPLOADS: int(process.env.MAX_CONCURRENT_UPLOADS, 4),

@@ -9,8 +9,10 @@ import os
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, File, UploadFile
+from fastapi import Depends, FastAPI, File, UploadFile
 from insightface.app import FaceAnalysis
+
+from internal_auth import require_internal
 
 # Faces scored below this by the detector are background noise, not people.
 MIN_DET_SCORE = float(os.getenv("FACE_MIN_DET_SCORE", "0.6"))
@@ -52,7 +54,9 @@ def health_check():
     return {"status": "Face service running"}
 
 
-@app.post("/embedding")
+# Only employee-service calls this (its X-Internal-Token); /health stays open
+# for the container health check.
+@app.post("/embedding", dependencies=[Depends(require_internal("employee"))])
 async def generate_embedding(file: UploadFile = File(...)):
     contents = await file.read()
     img = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_COLOR)

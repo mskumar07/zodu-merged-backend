@@ -17,8 +17,10 @@
 // Load the service's .env before the values below are read (absent in the canonical copy).
 try { require('../config'); } catch { /* no config module next to this copy */ }
 
+// This service's X-Internal-Token (INTERNAL_TOKEN) and the current request id.
+const { internalHeaders } = require('@zodu/security');
+
 const BASE = String(process.env.FILE_SERVICE_URL || 'http://file-service:4007').replace(/\/+$/, '');
-const TOKEN = process.env.FILE_SERVICE_TOKEN || '';
 const TIMEOUT_MS = 30_000;
 
 const FILE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -44,7 +46,7 @@ class FileServiceError extends Error {
 }
 
 function headers(ctx = {}) {
-  const h = { 'X-Internal-Token': TOKEN };
+  const h = internalHeaders();
   if (ctx.zoduId) h['X-Zodu-Id'] = String(ctx.zoduId);
   if (ctx.branchId) h['X-Branch-Id'] = String(ctx.branchId);
   if (ctx.userId) h['X-User-Id'] = String(ctx.userId);

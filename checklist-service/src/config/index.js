@@ -16,8 +16,8 @@ module.exports = {
   DB_NAME:             process.env.DB_NAME,
   APP_SECRET:          process.env.APP_SECRET,
   // Attachments live in file-service; utils/file-client.js reads
-  // FILE_SERVICE_URL and FILE_SERVICE_TOKEN (= file-service's
-  // INTERNAL_SERVICE_TOKEN_CHECKLIST) straight from the environment.
+  // FILE_SERVICE_URL straight from the environment. Service-to-service tokens
+  // (@zodu/security): INTERNAL_TOKEN is sent, INTERNAL_TOKEN_AUTH accepted on /internal/*.
   FILE_SERVICE_URL:    process.env.FILE_SERVICE_URL    || 'http://file-service:4007',
   EMPLOYEE_SERVICE_URL: process.env.EMPLOYEE_SERVICE_URL || 'http://employee-service:4003',
 };

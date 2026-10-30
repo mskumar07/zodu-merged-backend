@@ -1,12 +1,15 @@
 const express  = require('express');
 const router   = express.Router();
+const { requireInternal } = require('@zodu/security');
+const fromEmployee = requireInternal('employee');
+const fromAuth     = requireInternal('auth');
 const service  = require('../services/salary-service');
 const RequestValidator = require('../utils/requestValidator');
 const schema   = require('../schema/salary-schema');
 
-// ── INTERNAL — called by employee-service (no JWT, internal network only) ─────
+// ── INTERNAL — salary: employee-service; purge: auth-service (X-Internal-Token) ─
 
-router.post('/internal/salary/create', async (req, res) => {
+router.post('/internal/salary/create', fromEmployee, async (req, res) => {
   const { errors, input } = await RequestValidator(schema.salary_create, req.body);
   if (errors) return res.status(400).json({ success: false, errors });
 
@@ -14,12 +17,12 @@ router.post('/internal/salary/create', async (req, res) => {
   return res.status(result.success ? 201 : 400).json(result);
 });
 
-router.get('/internal/salary/:employee_id', async (req, res) => {
+router.get('/internal/salary/:employee_id', fromEmployee, async (req, res) => {
   const result = await service.getSalary(req.params.employee_id);
   return res.status(200).json(result);
 });
 
-router.put('/internal/salary/:employee_id', async (req, res) => {
+router.put('/internal/salary/:employee_id', fromEmployee, async (req, res) => {
   const { errors, input } = await RequestValidator(schema.salary_update, req.body);
   if (errors) return res.status(400).json({ success: false, errors });
 
@@ -29,7 +32,7 @@ router.put('/internal/salary/:employee_id', async (req, res) => {
 
 // POST /internal/branches/:zodu_id/:branch_id/purge — hard-delete every row
 // scoped to this branch. Called by auth-service's delete-branch orchestrator.
-router.post('/internal/branches/:zodu_id/:branch_id/purge', async (req, res) => {
+router.post('/internal/branches/:zodu_id/:branch_id/purge', fromAuth, async (req, res) => {
   try {
     const { zodu_id, branch_id } = req.params;
     const result = await service.purgeBranch(zodu_id, branch_id);
@@ -42,7 +45,7 @@ router.post('/internal/branches/:zodu_id/:branch_id/purge', async (req, res) => 
 
 // POST /internal/companies/:zodu_id/purge — hard-delete every row scoped to
 // this company, all branches. Called by auth-service's delete-company orchestrator.
-router.post('/internal/companies/:zodu_id/purge', async (req, res) => {
+router.post('/internal/companies/:zodu_id/purge', fromAuth, async (req, res) => {
   try {
     const { zodu_id } = req.params;
     const result = await service.purgeCompany(zodu_id);

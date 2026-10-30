@@ -52,7 +52,7 @@ credentials.
 
 ```
 POST http://file-service:4007/internal/upload?module=expense&entity_id=EXP12
-X-Internal-Token: <INTERNAL_SERVICE_TOKEN_RETAIL>
+X-Internal-Token: <retail-service's INTERNAL_TOKEN>
 X-Zodu-Id: Z001
 X-Branch-Id: B1
 X-User-Id: <user uuid>

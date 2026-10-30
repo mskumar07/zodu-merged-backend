@@ -1,5 +1,6 @@
 const express = require('express');
 const cors    = require('cors');
+const { requireInternal } = require('@zodu/security');
 const conn    = require('./database/connection');
 const { httpLogger, logger } = require('./utils/logger');
 
@@ -9,6 +10,9 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cors());
 app.use(httpLogger);
+// Service-to-service routes (salary-controller.js): a known service token
+// first; each route then names the services it accepts.
+app.use('/internal', requireInternal());
 
 app.get('/health', (req, res) => res.json({ status: 'ok', service: 'payroll-service' }));
 

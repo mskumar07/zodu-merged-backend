@@ -21,9 +21,8 @@ module.exports = {
 
   CORS_ORIGIN: process.env.CORS_ORIGIN || '*',
 
-  // Shared secret every downstream service call carries as `x-internal-key`.
-  // Each service must validate it on its /internal (or /admin) routes.
-  INTERNAL_SERVICE_KEY: process.env.INTERNAL_SERVICE_KEY,
+  // INTERNAL_TOKEN (this service's X-Internal-Token on downstream /internal
+  // calls) is read by @zodu/security straight from the environment.
 
   // Same env-driven service discovery pattern used by api-gateway / auth-service.
   SERVICES: {

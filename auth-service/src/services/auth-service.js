@@ -10,6 +10,7 @@ const repository = require('../repository/auth-repo');
 const businessRepo = require('../repository/business-repo');
 const files = require('../utils/file-client');
 const axios = require('axios');
+const { createInternalHttp } = require('@zodu/security');
 const jwt = require('jsonwebtoken');
 const { APP_SECRET, EMPLOYEE_SERVICE_URL, RESTAURANT_SERVICE_URL, RETAIL_SERVICE_URL } = require('../config');
 
@@ -17,13 +18,16 @@ const REFRESH_SECRET  = APP_SECRET;
 const REFRESH_EXPIRY_DAYS = 7;
 
 // business_type → which service owns that company's units/GST/menu/inventory data
+// Calls to the other services' /internal routes carry this service's token.
+const internalHttp = createInternalHttp(axios, { timeout: 10_000 });
+
 function businessServiceUrlFor(business_type) {
   return String(business_type).toLowerCase() === 'retail' ? RETAIL_SERVICE_URL : RESTAURANT_SERVICE_URL;
 }
 
 // Non-blocking — seeding defaults must never fail a signup that already succeeded.
 function seedBranchDefaults(business_type, zodu_id, branch_id) {
-  axios.post(`${businessServiceUrlFor(business_type)}/internal/seed-defaults`, { zodu_id, branch_id })
+  internalHttp.post(`${businessServiceUrlFor(business_type)}/internal/seed-defaults`, { zodu_id, branch_id })
     .catch(err => console.error('[seed-defaults] failed (non-fatal):', err.message));
 }
 
@@ -113,7 +117,7 @@ async function CreateAccount(userInputs) {
   }
 
   // Seed Admin employee in employee-service (non-blocking — failure must not break signup)
-  axios.post(`${EMPLOYEE_SERVICE_URL}/internal/employee/create-admin`, {
+  internalHttp.post(`${EMPLOYEE_SERVICE_URL}/internal/employee/create-admin`, {
     zodu_id,
     branch_id: 'B1',
     user_id:   createdData.user_id,
@@ -193,7 +197,7 @@ async function AccountLogin(userInputs, meta = {}) {
   try {
     const primaryCompany = userCompanies.find(c => c.is_primary) || userCompanies[0];
     if (primaryCompany) {
-      const { data: empRes } = await axios.get(
+      const { data: empRes } = await internalHttp.get(
         `${EMPLOYEE_SERVICE_URL}/internal/employee/by-user`,
         { params: { user_id: user.user_id, zodu_id: primaryCompany.zodu_id, branch_id: 'B1' } }
       );
@@ -445,7 +449,7 @@ async function AddCompany(userInputs, user_id, file = null) {
   }
 
   // Seed Admin employee in employee-service (non-blocking — failure must not break company creation)
-  axios.post(`${EMPLOYEE_SERVICE_URL}/internal/employee/create-admin`, {
+  internalHttp.post(`${EMPLOYEE_SERVICE_URL}/internal/employee/create-admin`, {
     zodu_id,
     branch_id: 'B1',
     user_id,
@@ -477,7 +481,7 @@ async function AddBranch(userInputs, user_id) {
     // branch_id), not just (user_id, zodu_id), so the same admin can have a
     // separate employee row per branch.
     const user = await repository.findUserById({ user_id }).catch(() => null);
-    axios.post(`${EMPLOYEE_SERVICE_URL}/internal/employee/create-admin`, {
+    internalHttp.post(`${EMPLOYEE_SERVICE_URL}/internal/employee/create-admin`, {
       zodu_id,
       branch_id: branch.branch_id,
       user_id,

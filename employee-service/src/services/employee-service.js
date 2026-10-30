@@ -1,9 +1,13 @@
 const { v4: uuidv4 } = require('uuid');
 const axios  = require('axios');
+const { createInternalHttp } = require('@zodu/security');
 const db     = require('../database/connection');
 const repo   = require('../repository/employee-repo');
 const files  = require('../utils/file-client');
 const { AUTH_SERVICE_URL, PAYROLL_SERVICE_URL } = require('../config');
+
+// Calls to auth-service / payroll-service /internal routes carry this service's token.
+const internalHttp = createInternalHttp(axios, { timeout: 10_000 });
 
 // ── CREATE ────────────────────────────────────────────────────────────────────
 
@@ -39,7 +43,7 @@ exports.createEmployee = async (data, created_by) => {
 
     // 3. Salary in payroll-service (non-blocking)
     if (data.basic_salary != null) {
-      axios.post(`${PAYROLL_SERVICE_URL}/internal/salary/create`, {
+      internalHttp.post(`${PAYROLL_SERVICE_URL}/internal/salary/create`, {
         employee_id, user_id,
         zodu_id: data.zodu_id, branch_id: data.branch_id,
         basic_salary: data.basic_salary, allowances: data.allowances || 0,
@@ -70,7 +74,7 @@ async function callLoginStatus(user_ids, { zodu_id, branch_id }, with_count = fa
   const ids = [...new Set(user_ids.filter(Boolean))];
   if (!ids.length && !with_count) return {};
   try {
-    const { data } = await axios.post(
+    const { data } = await internalHttp.post(
       `${AUTH_SERVICE_URL}/internal/employee/login-status`,
       { user_ids: ids, zodu_id, branch_id, with_count }
     );
@@ -121,8 +125,8 @@ exports.getEmployeeById = async (employee_id, { zodu_id, branch_id }) => {
   const [[docsResult, authResult, salaryResult], loginStatus] = await Promise.all([
     Promise.allSettled([
       repo.findDocuments(employee_id),
-      axios.get(`${AUTH_SERVICE_URL}/internal/employee/${employee.user_id}/role`),
-      axios.get(`${PAYROLL_SERVICE_URL}/internal/salary/${employee_id}`),
+      internalHttp.get(`${AUTH_SERVICE_URL}/internal/employee/${employee.user_id}/role`),
+      internalHttp.get(`${PAYROLL_SERVICE_URL}/internal/salary/${employee_id}`),
     ]),
     fetchLoginStatus([employee.user_id], { zodu_id, branch_id }),
   ]);
@@ -153,7 +157,7 @@ exports.setLoginDetails = async (employee_id, { zodu_id, branch_id, role_id, pas
   if (!employee) throw new Error('Employee not found');
 
   try {
-    await axios.put(
+    await internalHttp.put(
       `${AUTH_SERVICE_URL}/internal/employee/login-details`,
       {
         user_id: employee.user_id,
@@ -199,7 +203,7 @@ exports.updateEmployee = async (employee_id, data, updated_by) => {
     const emailToCheck = data.email || null;
     const phoneToCheck = data.phone || null;
     if (emailToCheck || phoneToCheck) {
-      const { data: dupCheck } = await axios.post(
+      const { data: dupCheck } = await internalHttp.post(
         `${AUTH_SERVICE_URL}/internal/employee/check-duplicate`,
         { email: emailToCheck, phone: phoneToCheck, exclude_user_id: current.user_id }
       );
@@ -210,7 +214,7 @@ exports.updateEmployee = async (employee_id, data, updated_by) => {
     // Sync email / phone to tbl_users (no-op until Set User has created the login)
     if (emailToCheck || phoneToCheck) {
       try {
-        await axios.put(
+        await internalHttp.put(
           `${AUTH_SERVICE_URL}/internal/employee/${current.user_id}/update-user`,
           { email: data.email, phone: data.phone }
         );
@@ -254,7 +258,7 @@ exports.updateEmployee = async (employee_id, data, updated_by) => {
       if (!isMasked && data.bank_account_number !== undefined)
         salaryPayload.bank_account_number = data.bank_account_number;
 
-      axios.put(`${PAYROLL_SERVICE_URL}/internal/salary/${employee_id}`, salaryPayload)
+      internalHttp.put(`${PAYROLL_SERVICE_URL}/internal/salary/${employee_id}`, salaryPayload)
         .catch(err => console.error('[payroll] salary update failed:', err.message));
     }
 
@@ -276,7 +280,7 @@ exports.deleteEmployee = async (employee_id, { zodu_id, branch_id, status }) => 
 
   await repo.softDelete(employee_id, { zodu_id, branch_id, status });
 
-  axios.put(`${AUTH_SERVICE_URL}/internal/employee/${employee.user_id}/deactivate`)
+  internalHttp.put(`${AUTH_SERVICE_URL}/internal/employee/${employee.user_id}/deactivate`)
     .catch(err => console.error('[auth] deactivate failed:', err.message));
 
   return { success: true };

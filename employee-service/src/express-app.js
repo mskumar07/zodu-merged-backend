@@ -1,5 +1,6 @@
 const express = require('express');
 const cors    = require('cors');
+const { requireInternal } = require('@zodu/security');
 const conn    = require('./database/connection');
 const { httpLogger, logger } = require('./utils/logger');
 const { HandleErrorWithLogger } = require('./utils/error/handler');
@@ -16,7 +17,8 @@ app.use(require('./utils/file-client').fileUrlsMiddleware);
 
 app.use('/api/employees',   require('./api/employee-controller'));
 app.use('/api/attendance',  require('./api/attendance-controller'));
-app.use('/internal',        require('./api/internal-controller'));
+// Service-to-service routes: auth-service only (its X-Internal-Token).
+app.use('/internal',        requireInternal('auth'), require('./api/internal-controller'));
 
 app.use(HandleErrorWithLogger);
 

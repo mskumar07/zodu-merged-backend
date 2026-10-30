@@ -1,5 +1,6 @@
 const express = require('express');
 const cors    = require('cors');
+const { requireInternal } = require('@zodu/security');
 const conn    = require('./database/connection');
 const { httpLogger, logger } = require('./utils/logger');
 const { HandleErrorWithLogger } = require('./utils/error/handler');
@@ -14,7 +15,8 @@ app.use(httpLogger);
 app.use(require('./utils/file-client').fileUrlsMiddleware);
 
 app.use('/api/checklists', require('./api/checklist-controller'));
-app.use('/internal', require('./api/internal-controller'));
+// Service-to-service routes: auth-service only (its X-Internal-Token).
+app.use('/internal', requireInternal('auth'), require('./api/internal-controller'));
 
 // Files are served by file-service: old /checklist/file/* URLs through the
 // gateway's legacy route, new ones as file-service URLs. Attachments are
