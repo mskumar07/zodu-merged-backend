@@ -10,10 +10,11 @@ const crypto = require('crypto');
 const path = require('path');
 const { FILE_TYPES, MAX_FILES_PER_UPLOAD, STAGING, getModule } = require('../storage/modules');
 const { inspectFile } = require('../storage/file-inspector');
-const { transformFile } = require('../storage/transform');
+const { transformFile, imageNeedsTransform } = require('../storage/transform');
 const { onScan } = require('../storage/scan');
 const { buildKey, assertKeyBelongsTo, httpError } = require('../storage/key-builder');
 const { NotFoundError, ValidationError } = require('../utils/error/errors');
+const { fileResponseHeaders } = require('../utils/file-headers');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isFileId = (v) => typeof v === 'string' && UUID.test(v);
@@ -78,7 +79,7 @@ function createFileService({ repo, storage, config }) {
         // Key from the final type: a transform may have turned a PNG into WEBP.
         const fileId = crypto.randomUUID();
         const key = buildKey({ zoduId: ctx.zoduId, branchId, module, entityId, category, mimeType: out.mime, fileId });
-        const ready = { buffer: out.buffer, mime: out.mime, size: out.buffer.length, name, module };
+        const ready = { buffer: out.buffer, mime: out.mime, size: out.buffer.length, name: nameFor(name, out.mime), module };
         await onScan(ready);
         checked.push({ ...ready, key, fileId });
       } catch (err) {
@@ -231,14 +232,31 @@ function createFileService({ repo, storage, config }) {
       if (Number(row.size_bytes) > mod.maxSizeMb * 1024 * 1024) {
         throw httpError(413, `"${row.original_name}" exceeds the ${mod.maxSizeMb}MB limit for ${module}`);
       }
+      // Re-encoded only when this module wants the picture smaller or in another
+      // format (a staged upload saved into a menu item); otherwise copied as is.
+      const reencoded = await reencodeFor(mod, row);
+      const mime = reencoded?.mime || row.mime_type;
       const key = buildKey({
-        zoduId: ctx.zoduId, branchId, module, entityId, category, mimeType: row.mime_type, fileId: row.file_id,
+        zoduId: ctx.zoduId, branchId, module, entityId, category, mimeType: mime, fileId: row.file_id,
       });
-      await internal.copyObject(bucket, key, `/${bucket}/${row.object_key}`);
+      if (reencoded) {
+        const name = nameFor(row.original_name, mime);
+        await internal.putObject(bucket, key, reencoded.buffer, reencoded.buffer.length, {
+          'Content-Type':        mime,
+          'Content-Disposition': contentDisposition(mime, name),
+          'X-Amz-Meta-Original-Name': encodeURIComponent(name),
+          'X-Amz-Meta-File-Id':       row.file_id,
+        });
+      } else {
+        await internal.copyObject(bucket, key, `/${bucket}/${row.object_key}`);
+      }
       let moved;
       try {
         moved = await repo.reassign(row.file_id, {
           zodu_id: ctx.zoduId, branch_id: branchId, module, category: category || null, entity_id: entityId, object_key: key,
+          ...(reencoded && {
+            mime_type: mime, size_bytes: reencoded.buffer.length, original_name: nameFor(row.original_name, mime),
+          }),
         });
       } catch (err) {
         await internal.removeObject(bucket, key).catch(() => {});
@@ -252,6 +270,24 @@ function createFileService({ repo, storage, config }) {
       out.push(moved);
     }
     return urlsFor(ctx, out, 'claim');
+  }
+
+  async function reencodeFor(mod, row) {
+    const opts = mod.transform?.image;
+    if (!opts || !row.mime_type.startsWith('image/')) return null;
+    const buffer = await readObject(row.object_key);
+    if (!(await imageNeedsTransform(buffer, row.mime_type, opts))) return null;
+    try {
+      return await transformFile(buffer, row.mime_type, { image: opts });
+    } catch {
+      throw httpError(422, `"${row.original_name}" could not be processed`);
+    }
+  }
+
+  async function readObject(key) {
+    const chunks = [];
+    for await (const chunk of await internal.getObject(bucket, key)) chunks.push(chunk);
+    return Buffer.concat(chunks);
   }
 
   async function getRows(fileIds) {
@@ -288,8 +324,6 @@ function createFileService({ repo, storage, config }) {
     const stream = await openObject(row);
     sendHeaders(res, row);
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-    // <img> from the web app, Electron and invoice templates on other origins.
-    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     pipe(stream, res);
   }
 
@@ -307,12 +341,7 @@ function createFileService({ repo, storage, config }) {
     res.setHeader('Content-Type', type);
     res.setHeader('Content-Length', String(row.size_bytes));
     res.setHeader('Content-Disposition', contentDisposition(type, row.original_name, download));
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    // Even if a file were misdetected, the browser must not run it as a page.
-    // PDFs are the exception: Chrome's viewer won't open under a sandbox, and
-    // PDFs were already checked for scripts on upload.
-    if (type === 'application/pdf') res.removeHeader('Content-Security-Policy');
-    else res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    fileResponseHeaders(res, type, config.FRAME_ANCESTORS);
   }
 
   function pipe(stream, res) {
@@ -382,6 +411,16 @@ function toDto(row) {
 
 // The original name is only ever shown back to users, never used in a path.
 // Strip any directory part, control characters and odd lengths.
+// The stored name ends in the stored type's extension (blob → blob.png,
+// dosa.jpg re-encoded as WebP → dosa.webp), so downloads open in the right app.
+function nameFor(name, mime) {
+  const type = FILE_TYPES[mime];
+  const ext = path.extname(name).slice(1).toLowerCase();
+  if (!type || type.names.includes(ext)) return name;
+  const base = ext ? name.slice(0, -(ext.length + 1)) : name;
+  return `${base || 'file'}.${type.ext}`;
+}
+
 function safeFileName(name) {
   const base = path.basename(String(name || '').replace(/\\/g, '/'))
     .normalize('NFC')

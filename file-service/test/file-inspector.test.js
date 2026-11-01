@@ -82,7 +82,15 @@ test('file name must match the real content', () => {
   rejects(PNG, 'invoice.pdf', 415, /content is PNG/);
   rejects(pdf(), 'photo.jpg', 415);
   rejects(docx(), 'sheet.xlsx', 415);
-  rejects(PNG, 'noextension', 415);
+  rejects(JPEG, 'photo.docx', 415);
+  rejects(pdf(), 'noextension', 415);
+});
+
+test('pictures: any picture name, or none, is fine (crop tools send "blob")', () => {
+  assert.equal(inspectFile(PNG, 'blob').mime, MIME.PNG);
+  assert.equal(inspectFile(PNG, 'photo.jpg').mime, MIME.PNG);
+  assert.equal(inspectFile(JPEG, 'IMG_0001.HEIC').mime, MIME.JPEG);
+  assert.equal(inspectFile(WEBP, 'x.png').mime, MIME.WEBP);
 });
 
 test('scripts, executables and unknown formats are refused', () => {

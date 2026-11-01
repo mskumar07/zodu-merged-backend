@@ -61,6 +61,9 @@ module.exports = {
   // Browser origins allowed to call file-service directly. Normally empty:
   // browsers go through the gateway, which handles CORS.
   CORS_ORIGINS: list(process.env.CORS_ORIGINS),
+  // Origins allowed to show files in a frame (PDF previews), e.g. the gateway's
+  // CORS_ORIGINS. Empty: any page may frame them (they can't run code either way).
+  FRAME_ANCESTORS: list(process.env.FRAME_ANCESTORS),
   // Hops whose X-Forwarded-For is trusted for req.ip (rate limits, access log).
   TRUST_PROXY: process.env.TRUST_PROXY || 'loopback, linklocal, uniquelocal',
 };

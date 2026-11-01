@@ -14,12 +14,13 @@ const express = require('express');
 const mime = require('mime-types');
 const { contentDisposition } = require('../services/file-service');
 const { NotFoundError } = require('../utils/error/errors');
+const { fileResponseHeaders } = require('../utils/file-headers');
 
 const INLINE = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf']);
 // Never let an old object render as a page in our origin.
 const SCRIPTABLE = /^(text\/html|application\/xhtml|image\/svg|text\/xml|application\/xml|application\/javascript|text\/javascript)/;
 
-function createLegacyRouter({ storage, legacyBucket, limits }) {
+function createLegacyRouter({ storage, legacyBucket, limits, frameAncestors = [] }) {
   const router = express.Router();
 
   router.get('/*key', limits.publicLinks, async (req, res) => {
@@ -38,7 +39,6 @@ function createLegacyRouter({ storage, legacyBucket, limits }) {
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     res.setHeader('ETag', etag);
     res.setHeader('Last-Modified', new Date(stat.lastModified).toUTCString());
-    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     if (req.get('If-None-Match') === etag) return res.status(304).end();
 
     let type = mime.lookup(key) || 'application/octet-stream';
@@ -49,8 +49,7 @@ function createLegacyRouter({ storage, legacyBucket, limits }) {
     res.setHeader('Content-Type', type);
     res.setHeader('Content-Length', String(stat.size));
     res.setHeader('Content-Disposition', contentDisposition(type, safeName(name), !INLINE.has(type)));
-    if (type === 'application/pdf') res.removeHeader('Content-Security-Policy');
-    else res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    fileResponseHeaders(res, type, frameAncestors);
     stream.on('error', () => res.destroy());
     stream.pipe(res);
   });

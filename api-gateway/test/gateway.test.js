@@ -65,8 +65,9 @@ describe('blocked paths', () => {
     ['GET', '/auth/api%5c..%5cinternal'],
     ['GET', '/auth/api/%00'],
     ['GET', '/auth/api/%E0%A4%A'],
-    ['DELETE', '/restaurant/delete/file/abc.png'],
+    ['GET', '/restaurant/delete/file/abc.png'],
     ['DELETE', '/checklist/delete/file/x'],
+    ['DELETE', '/auth/delete/file/x'],
     ['DELETE', '/restaurant/file/x.png'],
     ['PUT', '/retail/file/x.png'],
     ['GET', '/payroll/file/x.png'],
@@ -99,6 +100,23 @@ test('old /{service}/file/* URLs go read-only to file-service /legacy', async ()
     expect(res.body.reached).toBe(expected);
     expect(res.headers['content-security-policy']).toBeUndefined();   // file-service decides
   }
+});
+
+test('removing an unsaved upload still reaches retail / restaurant', async () => {
+  for (const svc of ['retail', 'restaurant']) {
+    const res = await request(app).delete(`/${svc}/delete/file/1712-a.png`);
+    expect(res.status).toBe(200);
+    expect(lastSeen()).toMatchObject({ method: 'DELETE', url: '/delete/file/1712-a.png' });
+  }
+});
+
+test('file responses can be shown in the apps (no frame blocking, no API CSP)', async () => {
+  for (const p of ['/files/v/0b6a3f1e-0000-4000-8000-000000000000', '/retail/file/a.pdf']) {
+    const res = await request(app).get(p);
+    expect(res.headers['x-frame-options']).toBeUndefined();
+    expect(res.headers['content-security-policy']).toBeUndefined();
+  }
+  expect((await request(app).get('/auth/api/my-companies')).headers['x-frame-options']).toBe('SAMEORIGIN');
 });
 
 test('client-supplied internal headers never reach a service', async () => {

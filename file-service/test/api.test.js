@@ -68,7 +68,7 @@ test('branch module without X-Branch-Id is 400; tenant module goes to _shared', 
   assert.equal(res.status, 201);
   const row = repo.rows.get(res.body.data[0].file_id);
   assert.equal(row.branch_id, null);
-  assert.match(row.object_key, /^Z001\/_shared\/branding\/E1\/logo\/[0-9a-f-]{36}\.webp$/);
+  assert.match(row.object_key, /^Z001\/_shared\/branding\/E1\/logo\/[0-9a-f-]{36}\.png$/);   // logos keep their format (printed on invoices)
 });
 
 test('key layout, date folders, UUID names; original name only as metadata', async () => {

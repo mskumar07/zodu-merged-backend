@@ -51,13 +51,16 @@ applySecurity(app, {
 
 // ── Paths that never leave the private network ─────────────────────────────
 //   /{svc}/internal/*      service-to-service routes
-//   /{svc}/delete/file/*   old unauthenticated delete routes
+//   /{svc}/delete/file/*   old delete routes, except DELETE on retail / restaurant:
+//                          the apps call it when an image is removed before saving,
+//                          and it now only discards uploads no saved record uses
 //   /{svc}/file/*          old file routes: only GET/HEAD, which go read-only to file-service
 //   '.' / '..' segments, backslashes, control characters, malformed escapes
 // The path is decoded (up to 3 times) before the checks, so /auth/%69nternal,
 // /auth/%2569nternal or /auth%2Finternal can't slip past. Encoded slashes are
 // otherwise allowed: document numbers such as INV/25-26/001 appear in paths.
 const LEGACY_FILE_SERVICES = new Set(['auth', 'employee', 'restaurant', 'retail', 'checklist']);
+const DISCARD_UPLOAD_SERVICES = new Set(['restaurant', 'retail']);
 
 function decodePath(raw) {
   let p = raw;
@@ -77,7 +80,8 @@ function isBlockedPath(rawPath, method = 'GET') {
   if (p.split('/').some((s) => s === '.' || s === '..')) return true;
   const n = path.posix.normalize(p).toLowerCase();
   if (/^\/+[^/]+\/internal(\/|;|$)/.test(n)) return true;
-  if (/^\/+[^/]+\/delete\/file(\/|;|$)/.test(n)) return true;
+  const del = n.match(/^\/+([^/]+)\/delete\/file(\/|;|$)/);
+  if (del) return !(DISCARD_UPLOAD_SERVICES.has(del[1]) && method === 'DELETE');
   const file = n.match(/^\/+([^/]+)\/file(\/|;|$)/);
   if (file) return !(LEGACY_FILE_SERVICES.has(file[1]) && (method === 'GET' || method === 'HEAD'));
   return false;
@@ -108,10 +112,12 @@ const authLimit = createRateLimit({
 });
 app.use(['/auth/api/login', '/auth/api/create-account', '/auth/api/refresh-token'], authLimit);
 
-// File responses carry file-service's own headers (a PDF must open in the
-// browser's viewer, which a CSP of default-src 'none' would block).
+// File responses carry file-service's own headers: a PDF must open in the
+// browser's viewer (a CSP of default-src 'none' would block it) and may be
+// shown in the apps' frames (X-Frame-Options would block that).
 app.use(['/files', ...[...LEGACY_FILE_SERVICES].map((s) => `/${s}/file`)], (req, res, next) => {
   res.removeHeader('Content-Security-Policy');
+  res.removeHeader('X-Frame-Options');
   next();
 });
 

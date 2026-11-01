@@ -71,7 +71,9 @@ function createApp({ config, repo, storage, authClient, rateLimitStore }) {
   app.get('/health', (_req, res) => res.json({ success: true, status: 'ok' }));
   app.use('/internal', createInternalRouter({ files, requireInternal, limits, uploadSlots }));
   if (config.LEGACY_BUCKET_NAME) {
-    app.use('/legacy', createLegacyRouter({ storage, legacyBucket: config.LEGACY_BUCKET_NAME, limits }));
+    app.use('/legacy', createLegacyRouter({
+      storage, legacyBucket: config.LEGACY_BUCKET_NAME, limits, frameAncestors: config.FRAME_ANCESTORS,
+    }));
   }
   app.use('/', createFileRouter({ files, requireUser, limits, uploadSlots }));
 

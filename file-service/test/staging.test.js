@@ -23,7 +23,7 @@ test('anonymous staged upload: under _staging, served as a stable link', async (
   const { app, repo } = makeApp();
   const [f] = await stage(app);
   const row = repo.rows.get(f.file_id);
-  assert.match(row.object_key, /^_staging\/uploads\/anon\/\d{4}\/\d{2}\/[0-9a-f-]{36}\.webp$/);
+  assert.match(row.object_key, /^_staging\/uploads\/anon\/\d{4}\/\d{2}\/[0-9a-f-]{36}\.png$/);   // keeps its format until claimed
   assert.equal(row.zodu_id, '_staging');
   assert.equal(f.url, `https://api.test/files/v/${f.file_id}`);
   assert.equal((await request(app).get(`/v/${f.file_id}`)).status, 200);
@@ -67,6 +67,25 @@ test('claim into a link module keeps the same stable URL', async () => {
   const res = await claim(app, { file_ids: [f.file_id], module: 'menu-items', entity_id: 'M1' });
   assert.equal(res.body.data[0].url, f.url);
   assert.equal((await request(app).get(`/v/${f.file_id}`)).status, 200);
+});
+
+test('claim into menu-items converts the staged picture to webp; other modules keep it', async () => {
+  const { app, repo, storage } = makeApp();
+  const [f] = await stage(app);
+  await claim(app, { file_ids: [f.file_id], module: 'menu-items', entity_id: 'M1' });
+  const row = repo.rows.get(f.file_id);
+  assert.equal(row.mime_type, 'image/webp');
+  assert.equal(row.original_name, 'bill.webp');
+  assert.match(row.object_key, /\.webp$/);
+  assert.equal(row.size_bytes, storage.objects.get(row.object_key).buffer.length);
+  const served = await request(app).get(`/v/${f.file_id}`);
+  assert.equal(served.status, 200);
+  assert.equal(served.headers['content-type'], 'image/webp');
+
+  const [g] = await stage(app);
+  await claim(app, { file_ids: [g.file_id], module: 'expense', entity_id: 'E1' });
+  assert.equal(repo.rows.get(g.file_id).mime_type, 'image/png');
+  assert.match(repo.rows.get(g.file_id).object_key, /\.png$/);
 });
 
 test('claim is idempotent, skips foreign and unknown ids, refuses wrong types', async () => {

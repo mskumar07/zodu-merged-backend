@@ -63,8 +63,11 @@ const PERM = {
   REPORTS:   'Reports',
 };
 
-// Pictures shown in the apps (menu, logo): 1800px is sharp on any screen.
+// Menu pictures, shown in the apps: 1800px is sharp on any screen.
 const PHOTO = { image: { maxPx: 1800, format: 'webp' } };
+// Logos are also printed on invoices and receipts by the apps, and some PDF and
+// thermal-printer libraries can't read WebP: same size cap, original format.
+const LOGO = { image: { maxPx: 1800 } };
 // Bills, IDs, attachments: keep the format people download and forward, and
 // only shrink phone photos beyond 3000px, so small print stays readable.
 const DOCUMENT = { image: { maxPx: 3000 }, pdf: true };
@@ -73,14 +76,16 @@ const DOCUMENT = { image: { maxPx: 3000 }, pdf: true };
 // routes (/upload, /upload/multiple). Files wait here under _staging/ until the
 // record that uses them is saved and claims them into its own module and key
 // (POST /internal/claim). Unclaimed files are purged after STAGING_TTL_HOURS.
-// It carries both menu pictures and bills, so images become webp at document size.
+// It carries menu pictures, bills and branch images (printed on invoices), so
+// files keep their format and document size here; claiming a file into a module
+// with a smaller size or another format (menu-items) re-encodes it then.
 const STAGING = 'uploads';
 
 // branding / invoice-settings allow 5MB: the old upload routes accepted that
 // (logo, watermark), and clients don't change in Phase 2.
 const MODULES = {
-  [STAGING]:          { scope: 'staging', allowedTypes: [...IMAGES, ...DOCS],          maxSizeMb: 10, datePartition: true, access: 'link', internalOnly: true, transform: { image: { ...DOCUMENT.image, format: 'webp' }, pdf: true } },
-  'branding':         { scope: 'tenant', allowedTypes: IMAGES,                        maxSizeMb: 5,  categories: ['logo'], access: 'link', permission: PERM.SETTINGS, transform: PHOTO },
+  [STAGING]:          { scope: 'staging', allowedTypes: [...IMAGES, ...DOCS],          maxSizeMb: 10, datePartition: true, access: 'link', internalOnly: true, transform: DOCUMENT },
+  'branding':         { scope: 'tenant', allowedTypes: IMAGES,                        maxSizeMb: 5,  categories: ['logo'], access: 'link', permission: PERM.SETTINGS, transform: LOGO },
   'invoice-settings': { scope: 'branch', allowedTypes: [MIME.PNG, MIME.WEBP, MIME.JPEG], maxSizeMb: 5, categories: ['signature', 'watermark', 'receiver-signature'], access: 'link', permission: PERM.SETTINGS },
   'menu-items':       { scope: 'branch', allowedTypes: IMAGES,                        maxSizeMb: 5,  access: 'link', permission: PERM.MENU, transform: PHOTO },
   'expense':          { scope: 'branch', allowedTypes: [...IMAGES, ...DOCS],          maxSizeMb: 10, datePartition: true, access: 'private', permission: PERM.EXPENSE, keepOnDelete: true, transform: DOCUMENT },

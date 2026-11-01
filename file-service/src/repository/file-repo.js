@@ -85,10 +85,13 @@ exports.softDeleteEntity = async ({ zodu_id, branch_id, module, entity_id }) => 
 exports.reassign = async (file_id, t) => {
   const { rows } = await conn.query(
     `UPDATE tbl_files
-        SET zodu_id = $2, branch_id = $3, module = $4, category = $5, entity_id = $6, object_key = $7
+        SET zodu_id = $2, branch_id = $3, module = $4, category = $5, entity_id = $6, object_key = $7,
+            mime_type = COALESCE($8, mime_type), size_bytes = COALESCE($9, size_bytes),
+            original_name = COALESCE($10, original_name)
       WHERE file_id = $1 AND module = 'uploads' AND status = 'ready'
       RETURNING ${COLUMNS}`,
-    [file_id, t.zodu_id, t.branch_id, t.module, t.category, t.entity_id, t.object_key],
+    [file_id, t.zodu_id, t.branch_id, t.module, t.category, t.entity_id, t.object_key,
+      t.mime_type ?? null, t.size_bytes ?? null, t.original_name ?? null],
   );
   return rows[0] || null;
 };

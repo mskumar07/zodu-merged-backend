@@ -4,7 +4,11 @@
 // Never trusted: the browser's Content-Type (Windows sends CSV as
 // application/vnd.ms-excel, an attacker sends anything) and the file name on
 // its own. The name's extension must agree with the detected content, so a
-// renamed .exe, .html or .svg is refused.
+// renamed .exe, .html or .svg is refused. Pictures are the exception: camera,
+// crop and clipboard uploads often arrive as "blob", with no extension, or as a
+// PNG named .jpg. They are identified by their bytes and re-encoded anyway, so
+// any picture name (or none) is accepted for them; the stored name gets the
+// right extension. A picture named like a document (photo.pdf) is still refused.
 //
 // This is a first line of defence. In production also run uploads through an
 // antivirus scanner (e.g. ClamAV) before they become downloadable.
@@ -19,6 +23,9 @@ const MAX_ZIP_ENTRIES      = 5000;
 const MAX_UNZIPPED_BYTES   = 200 * MB;   // zip-bomb guard for .docx / .xlsx
 const MAX_PART_BYTES       = 50 * MB;    // largest single part we inflate to inspect
 const MAX_PDF_INFLATE      = 50 * MB;    // total budget for PDF object streams
+
+const IMAGE_TYPES = new Set([MIME.JPEG, MIME.PNG, MIME.WEBP]);
+const PICTURE_NAMES = new Set(['', 'jpg', 'jpeg', 'jfif', 'pjpeg', 'png', 'webp', 'heic', 'heif']);
 
 const unsupported = (msg) => httpError(415, msg);
 const dangerous   = (msg) => httpError(422, msg);
@@ -43,7 +50,8 @@ function inspectFile(buffer, originalName) {
   const mime = detect(buffer, nameExt);
   const type = FILE_TYPES[mime];
 
-  if (!type.names.includes(nameExt)) {
+  const pictureName = IMAGE_TYPES.has(mime) && PICTURE_NAMES.has(nameExt);
+  if (!type.names.includes(nameExt) && !pictureName) {
     throw unsupported(`File name ends in ".${nameExt || '(none)'}" but the content is ${type.ext.toUpperCase()}`);
   }
   return { mime, ext: type.ext };

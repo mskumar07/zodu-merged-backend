@@ -60,6 +60,17 @@ async function transformImage(buffer, mime, opts = {}) {
   return { buffer: out, mime: outMime };
 }
 
+// An already-processed image moving into another module (a staged upload saved
+// into a menu item) is re-encoded only if that module wants it smaller or in
+// another format. Otherwise it is kept as it is: no second lossy pass.
+async function imageNeedsTransform(buffer, mime, opts) {
+  if (!opts || !IMAGE_TYPES.has(mime)) return false;
+  if (opts.format && FORMAT_MIME[opts.format] !== mime) return true;
+  if (!opts.maxPx) return false;
+  const meta = await getSharp()(buffer, { limitInputPixels: LIMIT_INPUT_PIXELS }).metadata();
+  return Math.max(meta.width, meta.height) > opts.maxPx;
+}
+
 async function transformPdf(buffer) {
   // A rewrite would break a digital signature (it covers the original bytes).
   if (buffer.includes('/ByteRange')) return { buffer, mime: MIME.PDF };
@@ -74,4 +85,4 @@ async function transformPdf(buffer) {
   }
 }
 
-module.exports = { transformFile, LIMIT_INPUT_PIXELS };
+module.exports = { transformFile, imageNeedsTransform, LIMIT_INPUT_PIXELS };
