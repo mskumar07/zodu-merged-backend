@@ -21,13 +21,16 @@ const router = express.Router();
 // Route permissions: src/security/rules.js.
 security.protectParams(router);
 
-// Signed-in routes: the ES256 access token (authenticate), plus req.user in
-// the shape these handlers used before (user_id / zodu_id / user_type).
+// Signed-in routes: req.user in the shape these handlers used before
+// (user_id / zodu_id / user_type). The route policy has already checked the
+// token on most of them; the ones it leaves public (role-access) check it here.
 const withLegacyUser = (req, res, next) => {
   req.user = { user_id: req.auth.userId, zodu_id: req.auth.zoduId, user_type: req.auth.userType };
   next();
 };
-const ValidateSignature = [authenticate, withLegacyUser];
+const signedIn = (req, res, next) => (req.auth
+  ? withLegacyUser(req, res, next)
+  : authenticate(req, res, () => withLegacyUser(req, res, next)));
 
 // Per-IP limits on the public token endpoints (the gateway has a looser one
 // in front). Per-account lockout is in the login flow itself.
@@ -306,20 +309,20 @@ router.get('/api/auth-check', authenticate, (req, res) => res.status(STATUS_CODE
 // ── POST /api/company/add ─────────────────────────────────────────────────────
 // Accepts JSON, or multipart/form-data with the logo image in `company_logo`
 // so a company can be created with its logo in a single request.
-router.post('/api/company/add', ValidateSignature, handleCompanyLogoUpload, handleCreateCompany);
-router.post('/api/create-company', ValidateSignature, handleCompanyLogoUpload, handleCreateCompany);
-router.post('/api/branch/add', ValidateSignature, handleAddBranch);
-router.put('/api/company/edit/:zodu_id', ValidateSignature, handleCompanyLogoUpload, handleEditCompany);
-router.put('/api/branch/edit/:zodu_id/:branch_id', ValidateSignature, handleEditBranch);
-router.delete('/api/branch/:zodu_id/:branch_id', ValidateSignature, handleDeleteBranch);
-router.delete('/api/company/:zodu_id', ValidateSignature, handleDeleteCompany);
+router.post('/api/company/add', signedIn, handleCompanyLogoUpload, handleCreateCompany);
+router.post('/api/create-company', signedIn, handleCompanyLogoUpload, handleCreateCompany);
+router.post('/api/branch/add', signedIn, handleAddBranch);
+router.put('/api/company/edit/:zodu_id', signedIn, handleCompanyLogoUpload, handleEditCompany);
+router.put('/api/branch/edit/:zodu_id/:branch_id', signedIn, handleEditBranch);
+router.delete('/api/branch/:zodu_id/:branch_id', signedIn, handleDeleteBranch);
+router.delete('/api/company/:zodu_id', signedIn, handleDeleteCompany);
 
 // ── POST /api/company/:zodu_id/logo ───────────────────────────────────────────
 // multipart/form-data, image in the `company_logo` field. Replaces whatever
 // logo the company had and returns the full updated company row.
 router.post(
   '/api/company/:zodu_id/logo',
-  ValidateSignature,
+  signedIn,
   handleCompanyLogoUpload,
   async (req, res) => {
     try {
@@ -342,7 +345,7 @@ router.post(
 );
 
 // ── DELETE /api/company/:zodu_id/logo ─────────────────────────────────────────
-router.delete('/api/company/:zodu_id/logo', ValidateSignature, async (req, res) => {
+router.delete('/api/company/:zodu_id/logo', signedIn, async (req, res) => {
   try {
     const data = await authService.DeleteCompanyLogo({
       user_id: req.user.user_id,
@@ -357,7 +360,7 @@ router.delete('/api/company/:zodu_id/logo', ValidateSignature, async (req, res) 
 });
 
 // ── GET /api/my-companies ─────────────────────────────────────────────────────
-router.get('/api/my-companies', ValidateSignature, async (req, res) => {
+router.get('/api/my-companies', signedIn, async (req, res) => {
   try {
     const data = await authService.GetMyCompanies(req.user.user_id);
     return res.status(STATUS_CODES.OK).json(data);
@@ -370,7 +373,7 @@ router.get('/api/my-companies', ValidateSignature, async (req, res) => {
 // ── GET /api/role-access ──────────────────────────────────────────────────────
 // Query: user_id, zodu_id, branch_id
 // Admin role → zodu_id-only access (branch ignored). Other roles → zodu_id + branch_id.
-router.get('/api/role-access', ValidateSignature, async (req, res) => {
+router.get('/api/role-access', signedIn, async (req, res) => {
   try {
     const { zodu_id, branch_id } = req.query;
     const data = await authService.GetRoleAccess({
@@ -391,7 +394,7 @@ router.get('/api/role-access', ValidateSignature, async (req, res) => {
 // in one response, namespaced by category (currently just "invoice"). Add new
 // categories to authService.GetAllSettings as their tables land; this route
 // stays the same.
-router.get('/api/settings/:zodu_id/:branch_id', ValidateSignature, async (req, res) => {
+router.get('/api/settings/:zodu_id/:branch_id', signedIn, async (req, res) => {
   try {
     const { zodu_id, branch_id } = req.params;
     const data = await authService.GetAllSettings({
@@ -409,7 +412,7 @@ router.get('/api/settings/:zodu_id/:branch_id', ValidateSignature, async (req, r
 
 // ── GET /api/invoice-settings/:zodu_id/:branch_id?document_type=invoice|quotation|proforma
 // document_type defaults to 'invoice'; quotation/proforma are Retail-only (400 otherwise).
-router.get('/api/invoice-settings/:zodu_id/:branch_id', ValidateSignature, async (req, res) => {
+router.get('/api/invoice-settings/:zodu_id/:branch_id', signedIn, async (req, res) => {
   try {
     const { zodu_id, branch_id } = req.params;
     const data = await authService.GetInvoiceSettings({
@@ -427,7 +430,7 @@ router.get('/api/invoice-settings/:zodu_id/:branch_id', ValidateSignature, async
 });
 
 // ── PUT /api/invoice-settings/:zodu_id/:branch_id ─────────────────────────────
-router.put('/api/invoice-settings/:zodu_id/:branch_id', ValidateSignature, async (req, res) => {
+router.put('/api/invoice-settings/:zodu_id/:branch_id', signedIn, async (req, res) => {
   try {
     const { errors, input } = await RequestValidator(schema.edit_invoice_settings, {
       ...req.body,
@@ -451,7 +454,7 @@ router.put('/api/invoice-settings/:zodu_id/:branch_id', ValidateSignature, async
 });
 
 // ── GET /api/pos-settings/:zodu_id/:branch_id ─────────────────────────────────
-router.get('/api/pos-settings/:zodu_id/:branch_id', ValidateSignature, async (req, res) => {
+router.get('/api/pos-settings/:zodu_id/:branch_id', signedIn, async (req, res) => {
   try {
     const { zodu_id, branch_id } = req.params;
     const data = await authService.GetPosSettings({
@@ -468,7 +471,7 @@ router.get('/api/pos-settings/:zodu_id/:branch_id', ValidateSignature, async (re
 });
 
 // ── PUT /api/pos-settings/:zodu_id/:branch_id ─────────────────────────────────
-router.put('/api/pos-settings/:zodu_id/:branch_id', ValidateSignature, async (req, res) => {
+router.put('/api/pos-settings/:zodu_id/:branch_id', signedIn, async (req, res) => {
   try {
     const { errors, input } = await RequestValidator(schema.edit_pos_settings, {
       ...req.body,
@@ -494,7 +497,7 @@ router.put('/api/pos-settings/:zodu_id/:branch_id', ValidateSignature, async (re
 // signature the branch had and returns the full updated settings row.
 router.post(
   '/api/invoice-settings/:zodu_id/:branch_id/signature',
-  ValidateSignature,
+  signedIn,
   handleSignatureUpload,
   async (req, res) => {
     try {
@@ -520,7 +523,7 @@ router.post(
 );
 
 // ── DELETE /api/invoice-settings/:zodu_id/:branch_id/signature ────────────────
-router.delete('/api/invoice-settings/:zodu_id/:branch_id/signature', ValidateSignature, async (req, res) => {
+router.delete('/api/invoice-settings/:zodu_id/:branch_id/signature', signedIn, async (req, res) => {
   try {
     const { zodu_id, branch_id } = req.params;
     const data = await authService.DeleteInvoiceSignature({
@@ -568,7 +571,7 @@ for (const { path, kind, field, label, maxMb } of INVOICE_IMAGE_ROUTES) {
       return res.status(STATUS_CODES.BAD_REQUEST).json({ message });
     });
 
-  router.post(route, ValidateSignature, handleUpload, async (req, res) => {
+  router.post(route, signedIn, handleUpload, async (req, res) => {
     try {
       if (!req.file) {
         return res.status(STATUS_CODES.BAD_REQUEST).json({ message: `No file uploaded — send the image as '${field}'` });
@@ -590,7 +593,7 @@ for (const { path, kind, field, label, maxMb } of INVOICE_IMAGE_ROUTES) {
     }
   });
 
-  router.delete(route, ValidateSignature, async (req, res) => {
+  router.delete(route, signedIn, async (req, res) => {
     try {
       const { zodu_id, branch_id } = req.params;
       const data = await authService.DeleteInvoiceImage({

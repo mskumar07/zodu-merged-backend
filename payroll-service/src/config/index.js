@@ -13,6 +13,5 @@ module.exports = {
   DB_PASSWORD:      process.env.DB_PASSWORD,
   DB_PORT:          process.env.DB_PORT,
   DB_HOSTNAME:      process.env.DB_HOSTNAME,
-  DB_NAME:          process.env.DB_NAME,
-  APP_SECRET:       process.env.APP_SECRET,
+  DB_NAME:          process.env.DB_NAME,
 };

@@ -18,6 +18,10 @@ services:
       - ./env/auth-service.uat.env
     environment:
       NODE_ENV: production
+      # Phase 4 switches: off until the client builds that send X-Client-Platform ship
+      # (AUTH_REQUIRE_PLATFORM_HEADER=true docker compose ... up -d).
+      AUTH_REQUIRE_PLATFORM_HEADER: ${AUTH_REQUIRE_PLATFORM_HEADER:-false}
+      AUTH_CHECK_REVOKED_SESSIONS: ${AUTH_CHECK_REVOKED_SESSIONS:-false}
       PORT: 4000
       DB_HOSTNAME: 72.60.206.59
       DB_PORT: 5432
@@ -47,6 +51,8 @@ services:
       - ./env/retail-service.uat.env
     environment:
       NODE_ENV: production
+      # Refuse tokens of revoked sessions (auth-service's Redis deny-list; needs REDIS_URL).
+      AUTH_CHECK_REVOKED_SESSIONS: ${AUTH_CHECK_REVOKED_SESSIONS:-false}
       PORT: 4001
       DB_HOSTNAME: 72.60.206.59
       DB_PORT: 5432
@@ -81,6 +87,8 @@ services:
       - ./env/employee-service.uat.env
     environment:
       NODE_ENV: production
+      # Refuse tokens of revoked sessions (auth-service's Redis deny-list; needs REDIS_URL).
+      AUTH_CHECK_REVOKED_SESSIONS: ${AUTH_CHECK_REVOKED_SESSIONS:-false}
       PORT: 4002
       DB_HOSTNAME: 72.60.206.59
       DB_PORT: 5432
@@ -106,6 +114,8 @@ services:
       - ./env/restaurant-service.uat.env
     environment:
       NODE_ENV: production
+      # Refuse tokens of revoked sessions (auth-service's Redis deny-list; needs REDIS_URL).
+      AUTH_CHECK_REVOKED_SESSIONS: ${AUTH_CHECK_REVOKED_SESSIONS:-false}
       PORT: 4003
       DB_HOSTNAME: 72.60.206.59
       DB_PORT: 5432
@@ -147,6 +157,8 @@ services:
       - ./env/checklist-service.uat.env
     environment:
       NODE_ENV: production
+      # Refuse tokens of revoked sessions (auth-service's Redis deny-list; needs REDIS_URL).
+      AUTH_CHECK_REVOKED_SESSIONS: ${AUTH_CHECK_REVOKED_SESSIONS:-false}
       PORT: 4005
       DB_HOSTNAME: 72.60.206.59
       DB_PORT: 5432
@@ -204,6 +216,8 @@ services:
       - ./env/file-service.uat.env
     environment:
       NODE_ENV: production
+      # Refuse tokens of revoked sessions (auth-service's Redis deny-list; needs REDIS_URL).
+      AUTH_CHECK_REVOKED_SESSIONS: ${AUTH_CHECK_REVOKED_SESSIONS:-false}
       PORT: 4007
       MINIO_BUCKET_NAME: zodu-files
       PRESIGNED_URL_TTL: 900

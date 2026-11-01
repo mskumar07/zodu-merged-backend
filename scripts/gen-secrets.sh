@@ -51,7 +51,8 @@ declare -A SENDS=(
   [retail-service]=retail [checklist-service]=checklist [admin-service]=admin
   [file-service]=file [payroll-service]="" [face-service]="" [api-gateway]=""
 )
-USES_REDIS=(api-gateway auth-service file-service)
+# The customer services read auth-service's revoked-session deny-list (AUTH_CHECK_REVOKED_SESSIONS).
+USES_REDIS=(api-gateway auth-service file-service employee-service checklist-service retail-service restaurant-service)
 
 get() { grep -E "^$1=" "$MASTER" | tail -1 | cut -d= -f2- || true; }
 ensure() {

@@ -53,6 +53,24 @@ function listQueryLimits({ maxLimit = 500, respond }) {
   };
 }
 
+// The revoked-session check (AUTH_CHECK_REVOKED_SESSIONS=true) reads the
+// deny-list auth-service keeps in its Redis: REDIS_URL must name that Redis.
+function redisFromEnv(logger) {
+  if (process.env.AUTH_CHECK_REVOKED_SESSIONS !== 'true') return undefined;
+  if (!process.env.REDIS_URL) {
+    throw new Error("AUTH_CHECK_REVOKED_SESSIONS=true needs REDIS_URL (auth-service's Redis)");
+  }
+  const Redis = require('ioredis');
+  const client = new Redis(process.env.REDIS_URL, { maxRetriesPerRequest: 1, enableOfflineQueue: false });
+  let lastLog = 0;
+  client.on('error', (err) => {
+    if (Date.now() - lastLog < 60_000) return;
+    lastLog = Date.now();
+    (logger.error ? logger.error.bind(logger) : console.error)({ err: err.message }, 'security: Redis');
+  });
+  return client;
+}
+
 function createServiceSecurity({
   rules,
   respond = (req, res, status, message) => res.status(status).json({ success: false, message }),
@@ -79,7 +97,7 @@ function createServiceSecurity({
 
   const v = verifier ?? createAccessTokenVerifier({
     jwksUrl: jwksUrlFromEnv({ ...process.env, AUTH_SERVICE_URL: authServiceUrl }),
-    redis,
+    redis: redis ?? redisFromEnv(logger),
     onError: (err) => event({}, 'auth_keys_unavailable', { error: err.message }),
   });
   const { authenticate } = createAuthenticate({ verifier: v, respond });

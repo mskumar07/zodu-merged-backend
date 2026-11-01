@@ -14,7 +14,6 @@ module.exports = {
   DB_PORT:             process.env.DB_PORT             || 5432,
   DB_HOSTNAME:         process.env.DB_HOSTNAME         || 'localhost',
   DB_NAME:             process.env.DB_NAME,
-  APP_SECRET:          process.env.APP_SECRET,
   // Attachments live in file-service; utils/file-client.js reads
   // FILE_SERVICE_URL straight from the environment. Service-to-service tokens
   // (@zodu/security): INTERNAL_TOKEN is sent, INTERNAL_TOKEN_AUTH accepted on /internal/*.

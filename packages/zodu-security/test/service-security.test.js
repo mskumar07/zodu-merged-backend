@@ -85,6 +85,18 @@ function makeApp({ access = fakeAccess(), events = [] } = {}) {
 
 const bearer = async (extra) => ({ Authorization: `Bearer ${await sign(extra)}` });
 
+test('the revoked-session check without REDIS_URL fails at startup, not per request', () => {
+  const saved = { flag: process.env.AUTH_CHECK_REVOKED_SESSIONS, url: process.env.REDIS_URL };
+  process.env.AUTH_CHECK_REVOKED_SESSIONS = 'true';
+  delete process.env.REDIS_URL;
+  try {
+    expect(() => createServiceSecurity({ rules: [], authServiceUrl: 'http://auth.test' })).toThrow(/needs REDIS_URL/);
+  } finally {
+    if (saved.flag === undefined) delete process.env.AUTH_CHECK_REVOKED_SESSIONS; else process.env.AUTH_CHECK_REVOKED_SESSIONS = saved.flag;
+    if (saved.url !== undefined) process.env.REDIS_URL = saved.url;
+  }
+});
+
 test('public routes need no token; every other route does', async () => {
   const { app } = makeApp();
   expect((await request(app).get('/health')).status).toBe(200);

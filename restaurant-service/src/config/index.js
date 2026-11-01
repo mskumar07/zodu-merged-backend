@@ -20,6 +20,5 @@ module.exports = {
   DB_PORT:         process.env.DB_PORT,
   DB_HOSTNAME:     process.env.DB_HOSTNAME,
   DB_NAME:         process.env.DB_NAME,
-  APP_SECRET:      process.env.APP_SECRET,
   AUTH_SERVICE_URL: process.env.AUTH_SERVICE_URL || 'http://auth-service:4000',
 };
