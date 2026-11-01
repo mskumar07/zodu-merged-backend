@@ -18,6 +18,8 @@ module.exports = {
 
   APP_SECRET: process.env.APP_SECRET,
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '8h',
+  // iss / aud of the admin console's tokens (src/middleware/auth.js).
+  ADMIN_TOKEN: { issuer: 'zodu-admin', audience: 'zodu-admin-console' },
 
   CORS_ORIGIN: process.env.CORS_ORIGIN || '*',
 

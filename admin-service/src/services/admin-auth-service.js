@@ -1,7 +1,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const repo = require('../repository/admin-user-repo');
-const { APP_SECRET, JWT_EXPIRES_IN } = require('../config');
+const { APP_SECRET, JWT_EXPIRES_IN, ADMIN_TOKEN } = require('../config');
 const { AuthorizeError, ValidationError } = require('../utils/error');
 
 exports.login = async (email, password) => {
@@ -18,7 +18,7 @@ exports.login = async (email, password) => {
   const token = jwt.sign(
     { sub: user.id, email: user.email, role: user.role },
     APP_SECRET,
-    { expiresIn: JWT_EXPIRES_IN }
+    { algorithm: 'HS256', expiresIn: JWT_EXPIRES_IN, issuer: ADMIN_TOKEN.issuer, audience: ADMIN_TOKEN.audience }
   );
 
   return {
