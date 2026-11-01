@@ -13,8 +13,13 @@ applySecurity(app, { express, cors: false, ipLimitPerMinute: 0, bodyLimit: '1mb'
 app.use(httpLogger);
 app.set('router options', { strict: false });
 
-// Service-to-service routes: auth-service only (its X-Internal-Token).
-app.use('/internal',        requireInternal('auth'), require('./api/internal-controller'));
+// Service-to-service routes: auth-service only (its X-Internal-Token), except the
+// user → employee lookup, which checklist-service also uses (own-task checks).
+const fromAuth = requireInternal('auth');
+const fromAuthOrChecklist = requireInternal('auth', 'checklist');
+app.use('/internal',
+  (req, res, next) => (req.method === 'GET' && req.path === '/employee/by-user' ? fromAuthOrChecklist : fromAuth)(req, res, next),
+  require('./api/internal-controller'));
 
 // Customer routes: access token, company/branch from the token, route permissions.
 app.use(security.middleware);

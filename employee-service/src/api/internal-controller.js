@@ -56,7 +56,6 @@ router.get('/employee/by-user', async (req, res) => {
   if (!user_id || !zodu_id) {
     return res.status(400).json({ success: false, error: 'user_id and zodu_id are required' });
   }
-  console.log('Received request to /internal/employee/by-user with params:', { user_id, zodu_id, branch_id });
   try {
     const { rows } = await db.query(
       `SELECT employee_id, branch_id, employee_code, name as employee_name, reporting_manager_id

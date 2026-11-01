@@ -14,6 +14,8 @@
 //   cashier   Cashier of Z001 B1 only: billing + expense read/create, attendance read own
 //   b2staff   Staff of Z001 B2 only: same as cashier, in B2
 //   other     Admin of Z002
+// Each user's employee record is E-<name> (owner → E-owner), answered at
+// /internal/employee/by-user too, so EMPLOYEE_SERVICE_URL may point here.
 // startFakeAuth() sets AUTH_SERVICE_URL (and AUTH_JWKS_URL) and the signing key in
 // process.env; run jest --runInBand so the tests see them.
 
@@ -34,6 +36,7 @@ const USERS = {
   other:   { userId: '55555555-5555-4555-8555-555555555555', zoduId: 'Z002', branchId: 'B1', role: 'Admin', branches: null, permissions: all({ read: true, create: true, edit: true, delete: true }) },
 };
 const COMPANIES = { Z001: ['B1', 'B2', 'B3'], Z002: ['B1'] };
+for (const [name, u] of Object.entries(USERS)) u.employeeId = `E-${name}`;
 
 const SLUG = {
   'Dashboard': 'dashboard', 'Billing': 'billing', 'Menu Items': 'menu', 'Purchase': 'purchase', 'Sales History': 'sales',
@@ -61,6 +64,14 @@ async function startFakeAuth() {
     const url = new URL(req.url, 'http://x');
     res.setHeader('Content-Type', 'application/json');
     if (url.pathname === '/.well-known/jwks.json') return res.end(JSON.stringify({ keys: [jwk] }));
+    if (url.pathname === '/internal/employee/by-user') {
+      const q = Object.fromEntries(url.searchParams);
+      const a = access(q);
+      const u = Object.values(USERS).find((x) => x.userId === q.user_id);
+      if (!req.headers['x-internal-token']) { res.statusCode = 401; return res.end('{}'); }
+      if (!a.is_member || !a.has_branch_access) { res.statusCode = 404; return res.end('{"success":false}'); }
+      return res.end(JSON.stringify({ success: true, data: { employee_id: u.employeeId, branch_id: q.branch_id } }));
+    }
     if (url.pathname === '/internal/user-branch-access') {
       if (!req.headers['x-internal-token']) { res.statusCode = 401; return res.end('{}'); }
       return res.end(JSON.stringify({ success: true, data: access(Object.fromEntries(url.searchParams)) }));

@@ -352,7 +352,8 @@ exports.uploadAttachments = async (checklist_id, uploads, { zodu_id, branch_id, 
 
 // Remove one file from the checklist attachments JSONB array by file id
 // file_id here is the attachment entry's own id (the route's name for it).
-exports.deleteAttachment = async (checklist_id, file_id) => {
+exports.deleteAttachment = async (checklist_id, file_id, { zodu_id, branch_id }) => {
+  if (!(await repo.findById(checklist_id, { zodu_id, branch_id }))) throw new Error('Attachment not found');
   const entry = (await repo.findAttachments(checklist_id)).find((a) => a.id === file_id);
   const result = await repo.deleteAttachment(file_id, checklist_id);
   if (!result) throw new Error('Attachment not found');
@@ -403,7 +404,9 @@ exports.getInstances = async ({ checklist_id, zodu_id, branch_id, status, page =
 
 // ── ITEM PROGRESS ─────────────────────────────────────────────────────────────
 
-exports.markItemProgress = async (d) => {
+// Only for an instance of the request's company / branch (null otherwise).
+exports.markItemProgress = async (d, { zodu_id, branch_id }) => {
+  if (!(await repo.findInstance(d.instance_id, { zodu_id, branch_id }))) return null;
   const progress = await repo.upsertItemProgress(d);
 
   // Re-compute instance status based on all employee completions
@@ -429,7 +432,8 @@ exports.markItemProgress = async (d) => {
   };
 };
 
-exports.getItemProgress = async (instance_id, employee_id) => {
+exports.getItemProgress = async (instance_id, employee_id, { zodu_id, branch_id }) => {
+  if (!(await repo.findInstance(instance_id, { zodu_id, branch_id }))) return null;
   const rows = await repo.getInstanceProgress(instance_id, employee_id);
   return { success: true, data: rows };
 };

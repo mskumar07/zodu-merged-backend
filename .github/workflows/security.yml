@@ -21,6 +21,7 @@ jobs:
           - api-gateway
           - auth-service
           - employee-service
+          - checklist-service
           - restaurant-service
           - retail-service
           - payroll-service
@@ -50,6 +51,7 @@ jobs:
           - api-gateway
           - file-service
           - employee-service
+          - checklist-service
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

@@ -485,6 +485,15 @@ exports.deleteAttachment = async (file_id, checklist_id) => {
 
 // ── INSTANCES ─────────────────────────────────────────────────────────────────
 
+// One instance, only within a company / branch.
+exports.findInstance = async (id, { zodu_id, branch_id }) => {
+  const { rows } = await db.query(
+    `SELECT id FROM tbl_checklist_instances WHERE id = $1 AND zodu_id = $2 AND branch_id = $3`,
+    [id, zodu_id, branch_id]
+  );
+  return rows[0] || null;
+};
+
 exports.findInstances = async ({ checklist_id, zodu_id, branch_id, status, limit, offset }) => {
   const conds = ['ci.zodu_id = $1', 'ci.branch_id = $2'];
   const vals  = [zodu_id, branch_id];
@@ -610,7 +619,7 @@ exports.getAssignedEmployeesSummary = async ({ zodu_id, branch_id, created_by, i
     vals.push(checklistStatus);
   }
 
-  if (search) { 
+  if (search) {
     conds.push(`(
       c.checklist_code ILIKE $${idx}
       OR c.title ILIKE $${idx}

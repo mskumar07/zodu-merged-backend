@@ -152,6 +152,8 @@ services:
       DB_PORT: 5432
       DB_NAME: checklist-service
       FILE_SERVICE_URL: http://file-service:4007
+      AUTH_SERVICE_URL: http://auth-service:4000
+      EMPLOYEE_SERVICE_URL: http://employee-service:4002
 
   # Admin Panel Service — staff-only console API. Reached only through the
   # gateway's /admin route. Its APP_SECRET is its own, never the customer services'.

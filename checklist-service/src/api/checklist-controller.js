@@ -5,6 +5,10 @@ const service  = require('../services/checklist-service');
 const validate = require('../utils/requestValidator');
 const schema   = require('../schema/checklist-schema');
 const files    = require('../utils/file-client');
+const security = require('../security');
+const { tenantOf, callerOf, mayActFor } = require('../security/request');
+
+security.protectParams(router);
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -30,18 +34,36 @@ const upload = multer({
 //   name:    req.headers['x-user-name'] || req.user?.name || 'Unknown',
 // });
 
+// zodu_id / branch_id come from the token (req.tenant); a branch is still required.
 const requireParams = (...keys) => (req, res, next) => {
   for (const key of keys) {
-    if (!req.query[key] && !req.body[key])
-      return res.status(400).json({ success: false, error: `${key} is required` });
+    if (key === 'zodu_id') continue;
+    const value = key === 'branch_id' ? req.tenant.branchId : (req.query[key] || req.body?.[key]);
+    if (!value) return res.status(400).json({ success: false, error: `${key} is required` });
   }
   next();
 };
 
+// Someone else's tasks / progress need `perm`; your own don't.
+const forEmployee = (perm, from = 'query') => async (req, res, next) => {
+  try {
+    const employeeId = req[from]?.employee_id;
+    if (employeeId && !(await mayActFor(req, employeeId, perm))) {
+      return res.status(403).json({ success: false, error: 'Permission denied' });
+    }
+    next();
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.status ? err.message : 'Internal error' });
+  }
+};
+
+// "Every task in the branch" (is_admin=true) is for those who manage checklists.
+const adminView = (req) => req.query.is_admin === 'true' && callerOf(req).can('checklist:edit');
+
 // ── CREATE  POST /api/checklists ──────────────────────────────────────────────
 router.post('/', async (req, res) => {
   try {
-    const { errors, input } = await validate(schema.checklist_create, req.body);
+    const { errors, input } = await validate(schema.checklist_create, { ...req.body, ...tenantOf(req) });
     if (errors) return res.status(400).json({ success: false, errors });
 
     const result = await service.createChecklist(input);
@@ -56,8 +78,9 @@ router.post('/', async (req, res) => {
 // Query: zodu_id, branch_id, created_by
 router.get('/assigned-employees-summary', requireParams('zodu_id', 'branch_id'), async (req, res) => {
   try {
-    const { zodu_id, branch_id, created_by, search, status } = req.query;
-    const is_admin = req.query.is_admin === 'true';
+    const { created_by, search, status } = req.query;
+    const { zodu_id, branch_id } = tenantOf(req);
+    const is_admin = adminView(req);
     if (!created_by) return res.status(400).json({ success: false, error: 'created_by is required' });
 
     const result = await service.getAssignedEmployeesSummary({ zodu_id, branch_id, created_by, is_admin, search, status });
@@ -70,9 +93,10 @@ router.get('/assigned-employees-summary', requireParams('zodu_id', 'branch_id'),
 // ── MY TASK SUMMARY  GET /api/checklists/my-summary ─────────────────────────
 // Top section: single employee's task count card
 // Query: zodu_id, branch_id, employee_id
-router.get('/my-summary', requireParams('zodu_id', 'branch_id'), async (req, res) => {
+router.get('/my-summary', requireParams('zodu_id', 'branch_id'), forEmployee('checklist:read'), async (req, res) => {
   try {
-    const { zodu_id, branch_id, employee_id, search, status } = req.query;
+    const { employee_id, search, status } = req.query;
+    const { zodu_id, branch_id } = tenantOf(req);
     if (!employee_id) return res.status(400).json({ success: false, error: 'employee_id is required' });
 
     const result = await service.getMyTaskSummary({ zodu_id, branch_id, employee_id, search, status });
@@ -85,9 +109,10 @@ router.get('/my-summary', requireParams('zodu_id', 'branch_id'), async (req, res
 // ── MY ASSIGNED TASKS  GET /api/checklists/my-tasks ──────────────────────────
 // Bottom table: all tasks assigned TO the employee
 // Query: zodu_id, branch_id, employee_id, status, page, limit
-router.get('/my-tasks', requireParams('zodu_id', 'branch_id'), async (req, res) => {
+router.get('/my-tasks', requireParams('zodu_id', 'branch_id'), forEmployee('checklist:read'), async (req, res) => {
   try {
-    const { zodu_id, branch_id, employee_id, status, search, page, limit } = req.query;
+    const { employee_id, status, search, page, limit } = req.query;
+    const { zodu_id, branch_id } = tenantOf(req);
     if (!employee_id) return res.status(400).json({ success: false, error: 'employee_id is required' });
 
     const result = await service.getMyAssignedTasks({
@@ -102,9 +127,10 @@ router.get('/my-tasks', requireParams('zodu_id', 'branch_id'), async (req, res) 
 // ── MY TASK DETAIL  GET /api/checklists/my-tasks/:id ──────────────────────────
 // Single checklist detail for the logged-in employee — items + their own progress
 // Query: zodu_id, branch_id, employee_id
-router.get('/my-tasks/:id', requireParams('zodu_id', 'branch_id', 'employee_id'), async (req, res) => {
+router.get('/my-tasks/:id', requireParams('zodu_id', 'branch_id', 'employee_id'), forEmployee('checklist:read'), async (req, res) => {
   try {
-    const { zodu_id, branch_id, employee_id } = req.query;
+    const { employee_id } = req.query;
+    const { zodu_id, branch_id } = tenantOf(req);
     const result = await service.getMyTaskDetail(req.params.id, { zodu_id, branch_id, employee_id });
     if (!result) return res.status(404).json({ success: false, error: 'Checklist not found' });
     return res.status(result.success === false ? 403 : 200).json(result);
@@ -118,9 +144,10 @@ router.get('/my-tasks/:id', requireParams('zodu_id', 'branch_id', 'employee_id')
 // Query: zodu_id, branch_id, created_by, search, page, limit
 router.get('/assigned-employees', requireParams('zodu_id', 'branch_id', 'created_by'), async (req, res) => {
   try {
-    const { zodu_id, branch_id, created_by, search, status, page, limit } = req.query;
-    // is_admin=true → return every task in the branch (no created_by filter)
-    const is_admin = req.query.is_admin === 'true';
+    const { created_by, search, status, page, limit } = req.query;
+    const { zodu_id, branch_id } = tenantOf(req);
+    // is_admin=true → every task in the branch (no created_by filter), for checklist managers
+    const is_admin = adminView(req);
     const result = await service.getAssignedEmployees({ zodu_id, branch_id, created_by, is_admin, search, status, page, limit });
     return res.status(200).json(result);
   } catch (err) {
@@ -131,7 +158,8 @@ router.get('/assigned-employees', requireParams('zodu_id', 'branch_id', 'created
 // ── LIST  GET /api/checklists?zodu_id=&branch_id=&status=&search=&page=&limit= ─
 router.get('/', requireParams('zodu_id', 'branch_id'), async (req, res) => {
   try {
-    const { zodu_id, branch_id, status, search, page, limit } = req.query;
+    const { status, search, page, limit } = req.query;
+    const { zodu_id, branch_id } = tenantOf(req);
     const result = await service.getChecklists({ zodu_id, branch_id, status, search, page, limit });
     return res.status(200).json(result);
   } catch (err) {
@@ -142,7 +170,7 @@ router.get('/', requireParams('zodu_id', 'branch_id'), async (req, res) => {
 // ── DETAIL  GET /api/checklists/:id?zodu_id=&branch_id= ──────────────────────
 router.get('/:id', requireParams('zodu_id', 'branch_id'), async (req, res) => {
   try {
-    const { zodu_id, branch_id } = req.query;
+    const { zodu_id, branch_id } = tenantOf(req);
     const result = await service.getChecklistById(req.params.id, { zodu_id, branch_id });
     if (!result) return res.status(404).json({ success: false, error: 'Checklist not found' });
     return res.status(200).json(result);
@@ -154,11 +182,11 @@ router.get('/:id', requireParams('zodu_id', 'branch_id'), async (req, res) => {
 // ── UPDATE  PUT /api/checklists/:id ──────────────────────────────────────────
 router.put('/:id', async (req, res) => {
   try {
-    const { errors, input } = await validate(schema.checklist_update, req.body);
+    const { errors, input } = await validate(schema.checklist_update, { ...req.body, ...tenantOf(req) });
     if (errors) return res.status(400).json({ success: false, errors });
 
     const result = await service.updateChecklist(req.params.id, input);
-    return res.status(200).json(result);  
+    return res.status(200).json(result);
   } catch (err) {
     const status = err.message === 'Checklist not found' ? 404 : 500;
     return res.status(status).json({ success: false, error: err.message });
@@ -171,7 +199,7 @@ router.put('/:id', async (req, res) => {
 // (ITEM-WISE, disabled: items: [{ item_id, status, remarks }])
 router.put('/:id/task-status', async (req, res) => {
   try {
-    const { errors, input } = await validate(schema.task_status_update, req.body);
+    const { errors, input } = await validate(schema.task_status_update, { ...req.body, ...tenantOf(req) });
     if (errors) return res.status(400).json({ success: false, errors });
 
     const result = await service.updateTaskStatus(req.params.id, input);
@@ -185,8 +213,7 @@ router.put('/:id/task-status', async (req, res) => {
 // ── DELETE  DELETE /api/checklists/:id ───────────────────────────────────────
 router.delete('/:id', async (req, res) => {
   try {
-    const { zodu_id, branch_id } = req.body;
-    if (!zodu_id)   return res.status(400).json({ success: false, error: 'zodu_id is required' });
+    const { zodu_id, branch_id } = tenantOf(req);
     if (!branch_id) return res.status(400).json({ success: false, error: 'branch_id is required' });
 
     const result = await service.deleteChecklist(req.params.id, { zodu_id, branch_id }, files.requestCtx(req));
@@ -200,10 +227,10 @@ router.delete('/:id', async (req, res) => {
 // ── UPLOAD ATTACHMENTS  POST /api/checklists/:id/attachments ─────────────────
 // Called at task creation time only — uploads up to 5 files at once
 // multipart/form-data: files[] + { zodu_id, branch_id }
-router.post('/:id/attachments', upload.array('files', 5), async (req, res) => {
+router.post('/:id/attachments', upload.array('files', 5), security.tenantBody, async (req, res) => {
   try {
-    const { zodu_id, branch_id, employee_id, employee_name } = req.body;
-    if (!zodu_id)        return res.status(400).json({ success: false, error: 'zodu_id is required' });
+    const { employee_id, employee_name } = req.body;
+    const { zodu_id, branch_id } = tenantOf(req);
     if (!branch_id)      return res.status(400).json({ success: false, error: 'branch_id is required' });
     if (!req.files?.length) return res.status(400).json({ success: false, error: 'At least one file is required' });
 
@@ -226,7 +253,7 @@ router.post('/:id/attachments', upload.array('files', 5), async (req, res) => {
 // ── DELETE ATTACHMENT FILE  DELETE /api/checklists/:id/attachments/:file_id ──
 router.delete('/:id/attachments/:file_id', async (req, res) => {
   try {
-    const result = await service.deleteAttachment(req.params.id, req.params.file_id);
+    const result = await service.deleteAttachment(req.params.id, req.params.file_id, tenantOf(req));
     return res.status(200).json(result);
   } catch (err) {
     const status = err.message.includes('not found') ? 404 : 500;
@@ -282,7 +309,8 @@ router.delete('/:id/attachments/:file_id', async (req, res) => {
 // ── LIST INSTANCES  GET /api/checklists/instances?zodu_id=&branch_id=&checklist_id=&status= ─
 router.get('/instances/list', requireParams('zodu_id', 'branch_id'), async (req, res) => {
   try {
-    const { zodu_id, branch_id, checklist_id, status, page, limit } = req.query;
+    const { checklist_id, status, page, limit } = req.query;
+    const { zodu_id, branch_id } = tenantOf(req);
     const result = await service.getInstances({ checklist_id, zodu_id, branch_id, status, page, limit });
     return res.status(200).json(result);
   } catch (err) {
@@ -292,12 +320,14 @@ router.get('/instances/list', requireParams('zodu_id', 'branch_id'), async (req,
 
 // ── MARK ITEM PROGRESS  POST /api/checklists/progress ────────────────────────
 // Body: { instance_id, item_id, employee_id, is_completed }
-router.post('/progress', async (req, res) => {
+router.post('/progress', forEmployee('checklist:edit', 'body'), async (req, res) => {
   try {
-    const { errors, input } = await validate(schema.item_progress, req.body);
+    const { zodu_id, branch_id, ...body } = req.body || {};
+    const { errors, input } = await validate(schema.item_progress, body);
     if (errors) return res.status(400).json({ success: false, errors });
 
-    const result = await service.markItemProgress(input);
+    const result = await service.markItemProgress(input, tenantOf(req));
+    if (!result) return res.status(404).json({ success: false, error: 'Not found' });
     return res.status(200).json(result);
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
@@ -305,12 +335,13 @@ router.post('/progress', async (req, res) => {
 });
 
 // ── GET ITEM PROGRESS  GET /api/checklists/progress/:instance_id?employee_id= ─
-router.get('/progress/:instance_id', async (req, res) => {
+router.get('/progress/:instance_id', forEmployee('checklist:read'), async (req, res) => {
   try {
     const { employee_id } = req.query;
     if (!employee_id) return res.status(400).json({ success: false, error: 'employee_id is required' });
 
-    const result = await service.getItemProgress(req.params.instance_id, employee_id);
+    const result = await service.getItemProgress(req.params.instance_id, employee_id, tenantOf(req));
+    if (!result) return res.status(404).json({ success: false, error: 'Not found' });
     return res.status(200).json(result);
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
