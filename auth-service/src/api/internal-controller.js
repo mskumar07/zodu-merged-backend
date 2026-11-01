@@ -14,7 +14,7 @@ const fromBusiness = requireInternal('restaurant', 'retail');
 const forReading   = requireInternal('restaurant', 'retail', 'admin');
 const fromAdmin    = requireInternal('admin');
 // The tenant guard of every customer-facing service (@zodu/security createAccessClient).
-const forAccess    = requireInternal('file', 'employee', 'checklist', 'payroll', 'retail', 'restaurant');
+const forAccess    = requireInternal('file', 'employee', 'checklist', 'retail', 'restaurant');
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const UUID    = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
