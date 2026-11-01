@@ -262,15 +262,16 @@ exports.updateRefundProgress = async (client, returnUuid, refundedAmount, refund
 
 // Restaurant stock lives in stock_qty. Locks every affected stock row in one query, in a fixed order so two returns
 // touching the same items can never deadlock each other.
-exports.findInventoriesForUpdate = async (client, itemUuids, branchId) => {
+exports.findInventoriesForUpdate = async (client, itemUuids, branchId, zoduId) => {
   const { rows } = await client.query(
     `SELECT inventory_uuid, item_uuid, item_id, item_name, stock_qty AS available_qty
      FROM tbl_inventory
      WHERE item_uuid = ANY($1::uuid[])
        AND branch_id = $2
+       AND zodu_id = $3
      ORDER BY item_uuid
      FOR UPDATE`,
-    [itemUuids, branchId]
+    [itemUuids, branchId, zoduId]
   );
   return rows;
 };

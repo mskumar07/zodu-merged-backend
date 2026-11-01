@@ -835,9 +835,9 @@ async function getInventorySummary(zodu_id, branch_id, filterType, start_date, e
 
 
 
-async function getVendorData(branch_id) {
+async function getVendorData(branch_id, zodu_id) {
   try {
-    const allVendorData = await repository.getVendor(branch_id);
+    const allVendorData = await repository.getVendor(branch_id, zodu_id);
     return {
       success: true,
       data: allVendorData,

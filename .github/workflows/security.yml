@@ -53,6 +53,7 @@ jobs:
           - checklist-service
           - payroll-service
           - retail-service
+          - restaurant-service
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

@@ -3,13 +3,17 @@ const router = express.Router();
 const RequestValidator = require("../utils/requestValidator");
 const schema = require("../schema/restaurant-schema");
 const service = require("../services/inventory-service");
-const conn = require("../database/connection");
+const security = require("../security");
+const owned = require("../security/owned");
 
+
+// zodu_id / branch_id in a path: the caller's company, a branch they may use.
+security.protectParams(router);
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 
-router.post("/api/add/inventory", async (req, res) => {
+router.post("/api/add/inventory", owned.inBody("category_id", "tbl_category", "id"), owned.inBody("item_unit", "tbl_units", "id"), async (req, res) => {
   try {
     const { errors, input } = await RequestValidator(schema.Inventory, req.body);
     if (errors) {
@@ -26,24 +30,19 @@ router.post("/api/add/inventory", async (req, res) => {
   }
 });
 
-router.put("/api/update/inventory", async (req, res) => {
+router.put("/api/update/inventory", owned.inBody("inventory_id", "tbl_inventory", "inventory_id"), async (req, res) => {
   try {
     const items = req.body;
-    await conn.query("BEGIN");
     const { errors, input } = await RequestValidator(schema.inventorySchema, items);
     if (errors) {
-      await conn.query("ROLLBACK");
       return res.status(400).json({ errors });
     }
     const data = await service.update_Inventory(input);
     if (!data.success) {
-      await conn.query("ROLLBACK");
       return res.status(400).json({ message: data.message });
     }
-    await conn.query("COMMIT");
     return res.status(201).json({ data });
   } catch (error) {
-    await conn.query("ROLLBACK");
     console.error(error);
     return res.status(500).json({ error: error.message });
   }
@@ -96,7 +95,7 @@ router.get('/summary', async (req, res) => {
   }
 });
 
-router.post('/adjust', async (req, res) => {
+router.post('/adjust', owned.inBody('inventory_uuid', 'tbl_inventory', 'inventory_uuid'), async (req, res) => {
   try {
     const {
       inventory_uuid,

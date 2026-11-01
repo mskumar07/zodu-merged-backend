@@ -3,8 +3,13 @@ const router = express.Router();
 const RequestValidator = require("../utils/requestValidator");
 const schema = require("../schema/orders-schema");
 const service = require("../services/orders-service");
+const security = require("../security");
+const owned = require("../security/owned");
 
-router.post("/add/orders", async (req, res) => {
+// zodu_id / branch_id in a path: the caller's company, a branch they may use.
+security.protectParams(router);
+
+router.post("/add/orders", owned.menuItems(), async (req, res) => {
   try {
     const { errors, input } = await RequestValidator(schema.order_create, req.body);
     if (errors) {
@@ -21,7 +26,8 @@ router.post("/add/orders", async (req, res) => {
   }
 });
 
-router.put("/update/orders", async (req, res) => {
+// An open order of the caller's; lines name the caller's menu items.
+router.put("/update/orders", owned.inBody("api_order_id", "tbl_tmp_orders", "api_order_id"), owned.menuItems(), async (req, res) => {
   try {
     const { errors, input } = await RequestValidator(schema.order_update, req.body);
     if (errors) {

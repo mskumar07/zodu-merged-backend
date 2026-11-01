@@ -2,10 +2,14 @@ const express = require("express");
 const RequestValidator = require("../utils/requestValidator");
 const schema = require("../schema/kot-schema");
 const service = require("../services/kot-service");
+const security = require("../security");
 
 // Mounted at "/", so paths read /restaurant/<path> through the gateway — the
 // same shape as the counter/assignment endpoints the web app already calls.
 const router = express.Router();
+
+// zodu_id / branch_id in a path: the caller's company, a branch they may use.
+security.protectParams(router);
 
 // Wraps a handler so validation, service failures and thrown errors all answer
 // in the one shape the web app's extractErrorMessage understands.

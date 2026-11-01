@@ -3,9 +3,12 @@ const router = express.Router();
 const RequestValidator = require("../utils/requestValidator");
 const schema = require("../schema/restaurant-schema");
 const service = require("../services/hold-item-service");
+const security = require("../security");
+const owned = require("../security/owned");
+
+security.protectParams(router);
 
 router.post("/add/hold_menu", async (req, res) => {
-  console.log(req.body)
   try {
     const { errors, input } = await RequestValidator(
       schema.holdSchema,
@@ -50,10 +53,11 @@ router.put("/update/hold-menu", async (req, res) => {
   }
 });
 
-router.delete("/delete/hold-menu/:id", async (req, res) => {
+// The apps send only the hold id: the hold's own branch, if the user may use it.
+router.delete("/delete/hold-menu/:id", owned.inPath("id", "tbl_hold", "hold_id", { code: true }), async (req, res) => {
   try {
-    const { id } = req.params;
-    const data = await service.deleteHoldMenu(id);
+    const { zodu_id, branch_id } = owned.recordOf(req, "tbl_hold");
+    const data = await service.deleteHoldMenu({ hold_id: req.params.id, zodu_id, branch_id });
     if (!data.success) {
       return res.status(400).json({ message: data.message });
     }

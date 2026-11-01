@@ -2942,14 +2942,14 @@ exports.deleteVendor = async (id) => {
 };
 
 
-exports.getVendor = async (branch_id) => {
+exports.getVendor = async (branch_id, zodu_id) => {
   try {
     const query = `
       SELECT *
       FROM tbl_vendor
-      WHERE branch_id = $1
+      WHERE branch_id = $1 AND zodu_id = $2
     `;
-    const result = await conn.query(query, [branch_id]);
+    const result = await conn.query(query, [branch_id, zodu_id]);
     return result.rows;
   } catch (err) {
     throw new Error("Unable to fetch vendor data: " + err.message);

@@ -63,7 +63,7 @@ function claimImage(row, { field, idField }) {
 // route never required it), and the client address for rate limiting.
 // An invalid token is an anonymous upload, as before.
 async function uploadCtx(req) {
-  const auth = await optionalAuth(req);
+  const auth = req.auth ?? await optionalAuth(req);
   return files.requestCtx(req, { zoduId: auth?.zoduId, userId: auth?.userId });
 }
 

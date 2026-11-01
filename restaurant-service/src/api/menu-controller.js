@@ -4,11 +4,20 @@ const multer = require("multer");
 const RequestValidator = require("../utils/requestValidator");
 const schema = require("../schema/restaurant-schema");
 const service = require("../services/menu-service");
-const conn = require("../database/connection");
+const security = require("../security");
+const owned = require("../security/owned");
 
 // The menu image is uploaded beforehand (POST /upload) and arrives here as a URL;
 // a file sent in menu_image is ignored. Keep the in-memory part small.
 const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } });
+
+// zodu_id / branch_id in a path: the caller's company, a branch they may use.
+security.protectParams(router);
+// Menu item ids (menu_id, unique across companies): the caller's company only.
+const menuItem = owned.param("tbl_menu_items", "menu_id");
+router.param("menu_id", menuItem);
+router.param("menuId", menuItem);
+router.param("id", menuItem);
 
 router.post(
   "/api/add/menu_item",
@@ -16,21 +25,16 @@ router.post(
   async (req, res) => {
     try {
       const menuData = req.body;
-      await conn.query("BEGIN");
       const { errors, input } = await RequestValidator(schema.menu_item_create, menuData);
       if (errors) {
-        await conn.query("ROLLBACK");
         return res.status(400).json({ errors });
       }
       const data = await service.createMenuItem(input);
       if (!data.success) {
-        await conn.query("ROLLBACK");
         return res.status(400).json({ message: data.message });
       }
-      await conn.query("COMMIT");
       return res.status(201).json({ data });
     } catch (error) {
-      await conn.query("ROLLBACK");
       console.error(error);
       return res.status(500).json({ error: error.message });
     }
@@ -44,21 +48,16 @@ router.put(
     const menuId = req.params.menu_id;
     const menuData = req.body;
     try {
-      await conn.query("BEGIN");
       const { errors, input } = await RequestValidator(schema.menu_item_update, menuData);
       if (errors) {
-        await conn.query("ROLLBACK");
         return res.status(400).json({ errors });
       }
       const result = await service.editMenuItem(menuId, input);
       if (!result.success) {
-        await conn.query("ROLLBACK");
         return res.status(400).json({ message: result.message });
       }
-      await conn.query("COMMIT");
       return res.status(200).json({ data: result.data });
     } catch (error) {
-      await conn.query("ROLLBACK");
       console.error("Edit Menu Error:", error);
       return res.status(500).json({ error: error.message });
     }
@@ -68,16 +67,12 @@ router.put(
 router.put("/update/menustatus/:menu_status/:menuId", async (req, res) => {
   try {
     const { menuId, menu_status } = req.params;
-    await conn.query("BEGIN");
     const data = await service.updateMenustaus(menuId, menu_status);
     if (!data.success) {
-      await conn.query("ROLLBACK");
       return res.status(400).json({ message: data.message });
     }
-    await conn.query("COMMIT");
     return res.status(200).json({ data });
   } catch (error) {
-    await conn.query("ROLLBACK");
     console.error(error);
     return res.status(500).json({ error: error.message });
   }
@@ -86,16 +81,12 @@ router.put("/update/menustatus/:menu_status/:menuId", async (req, res) => {
 router.put("/update/menusfav/:fav/:menuId", async (req, res) => {
   try {
     const { menuId, fav } = req.params;
-    await conn.query("BEGIN");
     const data = await service.updateMenusFav(menuId, fav);
     if (!data.success) {
-      await conn.query("ROLLBACK");
       return res.status(400).json({ message: data.message });
     }
-    await conn.query("COMMIT");
     return res.status(200).json({ data });
   } catch (error) {
-    await conn.query("ROLLBACK");
     console.error(error);
     return res.status(500).json({ error: error.message });
   }
