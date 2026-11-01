@@ -1,6 +1,9 @@
 const express = require("express");
 const router = express.Router();
 const service = require("../services/vendor-service");
+const owned = require("../security/owned");
+
+router.param("id", owned.param("tbl_vendor", "id"));
 
 router.post("/", async (req, res) => {
   try {

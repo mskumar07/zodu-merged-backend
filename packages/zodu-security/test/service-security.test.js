@@ -41,6 +41,8 @@ function makeApp({ access = fakeAccess(), events = [] } = {}) {
     rules: [
       { path: '/health', public: true },
       { method: 'GET', path: '/api/me', authenticated: true },
+      { method: 'GET', path: '/api/lookup', any: ['billing:read', 'expense:read'] },
+      { method: 'GET', path: '/api/both', perm: ['billing:read', 'expense:read'] },
       ...crud('/api/expense', 'expense'),
       { method: 'GET', path: /^\/api\/reports\/gst/, perm: ['report:read', 'gst:export'] },
     ],
@@ -59,9 +61,20 @@ function makeApp({ access = fakeAccess(), events = [] } = {}) {
   });
   router.get('/health', (req, res) => res.json({ ok: true }));
   router.get('/api/me', echo);
+  router.get('/api/lookup', echo);
+  router.get('/api/both', echo);
   router.get('/api/expense', echo);
   router.post('/api/expense', echo);
+  // E1 in Z001/B1, E2 in Z001/B2, E9 in Z002/B1
+  const RECORDS = { E1: { zodu_id: 'Z001', branch_id: 'B1' }, E2: { zodu_id: 'Z001', branch_id: 'B2' }, E9: { zodu_id: 'Z002', branch_id: 'B1' } };
+  router.param('expense_id', security.ownedParam(async (id) => {
+    if (id === 'bad') throw Object.assign(new Error('invalid uuid'), { code: '22P02' });
+    return RECORDS[id] ?? null;
+  }));
+  router.get('/api/expense/rec/:expense_id', echo);
+  router.delete('/api/expense/rec/:expense_id', echo);
   router.delete('/api/expense/:id', echo);
+  router.delete('/api/expense/:zodu_id/:branch_id/item', echo);
   router.get('/api/expense/:zodu_id/:branch_id/list', echo);
   router.post('/api/expense/upload', multer().none(), security.tenantBody, echo);
   router.get('/api/unmapped', echo);
@@ -93,6 +106,14 @@ test('permission per method: read and create allowed, delete refused', async () 
   expect((await request(app).post('/api/expense').set(h).send({})).status).toBe(200);
   expect((await request(app).delete('/api/expense/E1').set(h)).status).toBe(403);
   expect((await request(app).get('/api/reports/gst').set(h)).status).toBe(403);
+});
+
+test('any: one of the permissions is enough; perm: all of them', async () => {
+  const { app } = makeApp();
+  const h = await bearer();   // expense:read, expense:create
+  expect((await request(app).get('/api/lookup').set(h)).status).toBe(200);
+  expect((await request(app).get('/api/both').set(h)).status).toBe(403);
+  expect((await request(app).get('/api/lookup').set(await bearer({ perms: ['menu:read'] }))).status).toBe(403);
 });
 
 test('the Admin role passes every permission check', async () => {
@@ -183,6 +204,47 @@ test('multipart bodies are checked after multer (tenantBody)', async () => {
   expect((await request(app).post('/api/expense/upload').set(h).field('zodu_id', 'Z001').field('branch_id', 'B3')).status).toBe(404);
   const ok = await request(app).post('/api/expense/upload').set(h).field('zodu_id', 'Z001').field('branch_id', 'B1');
   expect(ok.status).toBe(200);
+});
+
+describe('a path param that changes the branch', () => {
+  test("is checked with that branch's permissions", async () => {
+    const { app } = makeApp();
+    // delete in B1: the token has no expense:delete anyway; with a manager token:
+    const h = await bearer({ perms: ['expense:read', 'expense:delete'] });
+    expect((await request(app).delete('/api/expense/Z001/B1/item').set(h)).status).toBe(200);
+    // B2 grants read only
+    expect((await request(app).delete('/api/expense/Z001/B2/item').set(h)).status).toBe(403);
+    expect((await request(app).get('/api/expense/Z001/B2/list').set(h)).status).toBe(200);
+  });
+});
+
+describe('record ids in the path (ownedParam)', () => {
+  test("a record of the token's company and branch passes", async () => {
+    const { app } = makeApp();
+    expect((await request(app).get('/api/expense/rec/E1').set(await bearer())).status).toBe(200);
+  });
+
+  test("another company's record, an unknown id or a malformed one → 404", async () => {
+    const { app, events } = makeApp();
+    const h = await bearer();
+    expect((await request(app).get('/api/expense/rec/E9').set(h)).status).toBe(404);
+    expect(events.some((e) => e.security_event === 'cross_tenant_attempt')).toBe(true);
+    expect((await request(app).get('/api/expense/rec/nope').set(h)).status).toBe(404);
+    expect((await request(app).get('/api/expense/rec/bad').set(h)).status).toBe(404);
+  });
+
+  test('a record of another branch: allowed only where the user may use it, with its permissions', async () => {
+    const { app } = makeApp();
+    const h = await bearer({ perms: ['expense:read', 'expense:delete'] });
+    expect((await request(app).get('/api/expense/rec/E2').set(h)).status).toBe(200);
+    expect((await request(app).delete('/api/expense/rec/E1').set(h)).status).toBe(200);
+    expect((await request(app).delete('/api/expense/rec/E2').set(h)).status).toBe(403);
+    // a user without B2
+    const access = fakeAccess();
+    access.getAccess = async () => ({ is_member: true, branch_exists: true, has_branch_access: false, permissions: {} });
+    const { app: app2 } = makeApp({ access });
+    expect((await request(app2).get('/api/expense/rec/E2').set(h)).status).toBe(404);
+  });
 });
 
 describe('list queries', () => {

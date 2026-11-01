@@ -187,7 +187,6 @@ async function getCategoryWiseSales(zodu_id, branch_id, from_date, to_date, page
     total_sales:   parseFloat(r.total_sales),
     growth:        r.growth !== null ? parseFloat(r.growth) : null,
   }));
-console.log(data)
   return {
     from_date: from,
     to_date:   to,
@@ -626,7 +625,6 @@ async function getBranchState(zodu_id, branch_id) {
   try {
     const branch = await authClient.getBranch(zodu_id, branch_id);
     state = branch?.data?.state;
-    console.log(`Branch state for zodu_id=${zodu_id}, branch_id=${branch_id}: ${state}`);
     if (!state) {
       const company = await authClient.getCompany(zodu_id);
       state = company?.data?.state;

@@ -59,11 +59,11 @@ function claimImage(row, { field, idField }) {
   ));
 }
 
-// Who is uploading to /upload: the token's company if one was sent (the
-// route never required it), and the client address for rate limiting.
-// An invalid token is an anonymous upload, as before.
+// Who is uploading to /upload: the caller's company (req.auth, checked by the
+// security middleware; else the token if one was sent), and the client address
+// for rate limiting.
 async function uploadCtx(req) {
-  const auth = await optionalAuth(req);
+  const auth = req.auth ?? await optionalAuth(req);
   return files.requestCtx(req, { zoduId: auth?.zoduId, userId: auth?.userId });
 }
 

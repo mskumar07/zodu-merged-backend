@@ -1,12 +1,13 @@
 const pinoHttp = require("pino-http");
 const pino = require("pino");
 const isDev = process.env.NODE_ENV !== "production";
+const pretty = isDev && process.env.NODE_ENV !== "test";
 
 const logger = pino({
   level: process.env.LOG_LEVEL || (isDev ? "debug" : "info"),
-  base: { service: "restaurant-service" },
+  base: { service: "retail-service" },
   timestamp: pino.stdTimeFunctions.isoTime,
-  transport: isDev
+  transport: pretty
     ? {
         target: "pino-pretty", // pretty logs only in dev
         options: { colorize: true },

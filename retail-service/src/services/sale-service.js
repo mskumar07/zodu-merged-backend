@@ -177,7 +177,7 @@ async function applyStockDelta(client, { zodu_id, branch_id, deltaByItem, nameBy
   const changed = [...deltaByItem].filter(([, delta]) => delta !== 0).map(([itemId]) => itemId);
   if (!changed.length) return;
 
-  const inventories = await repo.findInventoriesForUpdate(client, changed, branch_id);
+  const inventories = await repo.findInventoriesForUpdate(client, changed, branch_id, zodu_id);
   if (!inventories.length) return;
 
   const updates = [];
@@ -229,7 +229,7 @@ async function createSaleReturn(dto) {
   try {
     await client.query("BEGIN");
 
-    const sale = await repo.findSaleByUuidForUpdate(client, original_sale_uuid, branch_id);
+    const sale = await repo.findSaleByUuidForUpdate(client, original_sale_uuid, branch_id, zodu_id);
     if (!sale) {
       throw NotFoundError("Original sale not found");
     }
@@ -368,7 +368,7 @@ async function updateSaleReturn(dto) {
       throw NotFoundError("Sale return not found");
     }
 
-    const sale = await repo.findSaleByUuidForUpdate(client, saleUuid, branch_id);
+    const sale = await repo.findSaleByUuidForUpdate(client, saleUuid, branch_id, zodu_id);
     const ret = await repo.findReturnForUpdate(client, return_uuid, zodu_id, branch_id);
     if (!sale || !ret) {
       throw NotFoundError("Sale return not found");
@@ -522,7 +522,7 @@ async function deleteSaleReturn(dto) {
       throw NotFoundError("Sale return not found");
     }
 
-    const sale = await repo.findSaleByUuidForUpdate(client, saleUuid, branch_id);
+    const sale = await repo.findSaleByUuidForUpdate(client, saleUuid, branch_id, zodu_id);
     const ret = await repo.findReturnForUpdate(client, return_uuid, zodu_id, branch_id);
     if (!sale || !ret) {
       throw NotFoundError("Sale return not found");

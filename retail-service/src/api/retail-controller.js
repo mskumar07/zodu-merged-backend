@@ -1,112 +1,26 @@
 const express = require("express");
-// const restaurantService = require("../service/restaurant-service");
 const RequestValidator = require("../utils/requestValidator.js")
 const schema = require("../schema/retail-schema.js");
-const STATUS_CODES = require("../utils/error/status-codes.js");
 const service = require("../services/retail-service.js");
 const branchService = require("../services/branch-service.js");
-const conn = require("../database/connection.js");
 const multer = require("multer")
-const repository = require('../repository/retail-repo.js');
-const branchRepository = require('../repository/branch-repo.js');
-const XLSX = require("xlsx");
-// Memory storage. Files go on to file-service (10MB per file) or are parsed here
-// (Excel import); 25MB keeps a single request from holding hundreds of MB.
+const security = require("../security");
+const owned = require("../security/owned");
+// Memory storage. Files go on to file-service, which takes 10MB per file.
 const upload = multer({
-  limits: { fileSize: 25 * 1024 * 1024 },
+  limits: { fileSize: 10 * 1024 * 1024 },
 });
-const moment = require('moment/moment');
-const { validateDateFilter } = require("../utils/Date_Folder/valaidator.js");
-const { authenticate } = require("../utils/access-token");
 const files = require("../utils/file-client");
 const attachments = require("../utils/attachments");
 
 
 const router = express.Router();
+// :zodu_id / :branch_id are checked against the token; record ids must be the company's.
+security.protectParams(router);
+router.param("sale_uuid", owned.param("tbl_sales", "sale_uuid"));
+router.param("cust_uuid", owned.param("tbl_customer", "cust_uuid"));
+router.param("custUuid", owned.param("tbl_customer", "cust_uuid"));
 
-
-
-
-
-
-router.put("/api/company/:zodu_id", async (req, res) => {
-  const { zodu_id } = req.params;
-
-  try {
-    await conn.query('BEGIN');
-
-    // Validate using the update schema (all fields optional)
-    const { errors, input } = await RequestValidator(schema.update_company, req.body);
-    if (errors) {
-      await conn.query('ROLLBACK');
-      return res.status(400).json({ errors });
-    }
-
-    // Call service to update company
-    const data = await service.updateCompanyService(zodu_id, input);
-    if (!data.success) {
-      await conn.query('ROLLBACK');
-      return res.status(400).json({ message: data.message });
-    }
-
-    await conn.query('COMMIT');
-    return res.status(200).json({ success: true, data: data.data });
-
-  } catch (error) {
-    await conn.query('ROLLBACK');
-    console.error(error);
-    return res.status(STATUS_CODES.INTERNAL_ERROR).json({ error: error.message });
-  }
-});
-
-
-router.get("/get/company_details/:zudo_id", async (req, res) => {
-  try {
-    const { zudo_id } = req.params;
-    const getData = await service.getData(zudo_id);
-    if (!getData) return res.status(400).json({ message: data.message });
-    return res.status(201).json({ message: "Data Get Successfully", Data: getData.data });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-});
-
-// GET /get/my-companies
-// Returns all companies (with their branches) that the authenticated user belongs to.
-// Derives the user's zodu_id from the JWT bearer token — no URL param needed.
-router.get("/get/my-companies", authenticate, async (req, res) => {
-  try {
-    const zodu_id = req.auth.zoduId;
-
-    const [company, branches] = await Promise.all([
-      repository.getCompanyByZoduId(zodu_id),
-      branchRepository.getBranches(zodu_id),
-    ]);
-
-    if (!company) {
-      return res.status(404).json({ error: 'Company not found' });
-    }
-
-    // Fall back to company address fields when branch address fields are null
-    const mergedBranches = branches.map(branch => ({
-      ...branch,
-      address_line_1:   branch.address_line_1   ?? company.address_line_1   ?? null,
-      address_line_2:   branch.address_line_2   ?? company.address_line_2   ?? null,
-      city:             branch.city             ?? company.city             ?? null,
-      district:         branch.district         ?? company.district         ?? null,
-      state:            branch.state            ?? company.state            ?? null,
-      pincode:          branch.pincode          ?? company.pincode          ?? null,
-    }));
-
-    return res.status(200).json({
-      data: [{ ...company, branches: mergedBranches }],
-    });
-  } catch (error) {
-    console.error('[GET /get/my-companies]', error);
-    return res.status(500).json({ error: 'Internal server error' });
-  }
-});
 
 router.get("/get/branches/:zodu_id", async (req, res) => {
   try {
@@ -127,28 +41,6 @@ router.get("/get/branches/:zodu_id", async (req, res) => {
   }
 });
 
-router.post("/add/branch", async (req, res) => {
-  try {
-    await conn.query('BEGIN');
-    const { errors, input } = await RequestValidator(schema.branch_create, req.body);
-    if (errors) {
-      await conn.query('ROLLBACK');
-      return res.status(400).json({ errors });
-    }
-    const data = await service.createBranch(input);
-    if (!data.success) {
-      await conn.query('ROLLBACK');
-      return res.status(404).json({ message: data.message });
-    }
-    await conn.query('COMMIT');
-    return res.status(201).json({ message: "Data Inserted Successfully", Data: data });
-  } catch (error) {
-    await conn.query('ROLLBACK');
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-});
-
 
 // Upload first, save the record later: the file goes to file-service's staging
 // area and the URL returned is a file-service link. Saving an expense / purchase
@@ -158,7 +50,6 @@ router.post("/upload", upload.single("file"), async (req, res) => {
     const result = await service.uploadImg(req.file, await attachments.uploadCtx(req));
     return res.status(200).json({ data: result });
   } catch (err) {
-    console.log(err)
     res.status(500).json({ error: err.message });
   }
 });
@@ -179,250 +70,11 @@ router.post("/upload/multiple", upload.array("files", 20), async (req, res) => {
 });
 
 
-router.post(
-  "/api/add/product",
-  upload.single("product_image"),
-  async (req, res) => {
-    try {
-      const productData = req.body;
-
-      await conn.query("BEGIN");
-
-      const { errors, input } = await RequestValidator(
-        schema.product_create,
-        productData
-      );
-
-      if (errors) {
-        await conn.query("ROLLBACK");
-        return res.status(400).json({ errors });
-      }
-
-      const data = await service.createProduct(input);
-
-      if (!data.success) {
-        await conn.query("ROLLBACK");
-        return res.status(400).json({ message: data.message });
-      }
-
-      await conn.query("COMMIT");
-
-      return res.status(201).json(data);
-    } catch (error) {
-      await conn.query("ROLLBACK");
-      console.error(error);
-      return res.status(500).json({ error: error.message });
-    }
-  }
-);
-const BATCH_SIZE = 1000;
-
-router.post(
-  "/api/products/upload-excel",
-  upload.single("file"),
-  async (req, res) => {
-    const client = await conn.connect();
-
-    try {
-      if (!req.file) {
-        return res.status(400).json({ error: "No file uploaded" });
-      }
-
-      const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
-      const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      const data = XLSX.utils.sheet_to_json(sheet);
-
-      if (!data.length) {
-        return res.status(400).json({ error: "Excel is empty" });
-      }
-
-      await client.query("BEGIN");
-
-      let totalInserted = 0;
-      let totalInventoryProcessed = 0;
-
-      for (let i = 0; i < data.length; i += BATCH_SIZE) {
-        const batch = data.slice(i, i + BATCH_SIZE);
-
-        // ── 1. tbl_menu_items ──────────────────────────────────────────
-        const productValues = [];
-        const productPlaceholders = [];
-        let index = 1;
-        const validBatch = []; // track valid rows for inventory step
-
-        for (const item of batch) {
-          if (!item.item_name || !item.zodu_id) continue;
-
-          productValues.push(
-            item.item_id || null,
-            item.zodu_id || null,
-            item.branch_id || null,
-            item.item_type || "S",
-            item.item_name || null,
-            item.category_id || null,
-            item.sku || null,
-            item.barcode || null,
-            item.hsn_code || null,
-            item.unit || null,
-            item.mrp || 0,
-            item.sell_price || 0,
-            item.purchase_price || 0,
-            item.gst_type || 0,
-            item.tax_incl_type === true || item.tax_incl_type === 1 || String(item.tax_incl_type).toLowerCase() === "inclusive" || String(item.tax_incl_type).toLowerCase() === "true" || String(item.tax_incl_type).toLowerCase() === "yes",
-            item.item_img || null
-          );
-
-          productPlaceholders.push(
-            `(
-              gen_random_uuid(),
-              $${index++}, $${index++}, $${index++}, $${index++},
-              $${index++}, $${index++}, $${index++}, $${index++},
-              $${index++}, $${index++}, $${index++}, $${index++},
-              $${index++}, $${index++}, $${index++}, $${index++}
-            )`
-          );
-
-          validBatch.push(item); // collect for inventory insert
-        }
-
-        if (!productValues.length) continue;
-
-        const productQuery = `
-          INSERT INTO tbl_menu_items (
-            item_uuid,
-            item_id, zodu_id, branch_id, item_type,
-            item_name, category_id, sku, barcode,
-            hsn_code, unit, mrp, sell_price,
-            purchase_price, gst_type, tax_incl_type, item_img
-          )
-          VALUES ${productPlaceholders.join(",")}
-          ON CONFLICT DO NOTHING
-          RETURNING item_uuid, item_id, zodu_id, branch_id, item_name
-        `;
-
-        const productResult = await client.query(productQuery, productValues);
-        totalInserted += productPlaceholders.length;
-
-        // ── 2. tbl_inventory (using returned UUIDs) ────────────────────
-        if (!productResult.rows.length) continue;
-
-        const inventoryValues = [];
-        const inventoryPlaceholders = [];
-        let invIndex = 1;
-
-        for (const row of productResult.rows) {
-          inventoryValues.push(
-            row.item_uuid,
-            row.item_id,
-            row.zodu_id,
-            row.branch_id,
-            row.item_name,
-            // pull qty / reorder from original excel row if provided
-            validBatch.find(i => i.item_id === row.item_id)?.available_qty || 0,
-            validBatch.find(i => i.item_id === row.item_id)?.reorder_level || 0
-          );
-
-          inventoryPlaceholders.push(
-            `(
-              gen_random_uuid(),
-              $${invIndex++}, $${invIndex++}, $${invIndex++}, $${invIndex++},
-              $${invIndex++}, $${invIndex++}, $${invIndex++},
-              CURRENT_TIMESTAMP
-            )`
-          );
-        }
-
-        const inventoryQuery = `
-          INSERT INTO tbl_inventory (
-            inventory_uuid,
-            item_uuid, item_id, zodu_id, branch_id,
-            item_name, available_qty, reorder_level,
-            created_at
-          )
-          VALUES ${inventoryPlaceholders.join(",")}
-          ON CONFLICT (item_uuid, branch_id)
-          DO UPDATE SET
-            item_id         = EXCLUDED.item_id,
-            item_name       = EXCLUDED.item_name,
-            available_qty   = EXCLUDED.available_qty,
-            reorder_level   = EXCLUDED.reorder_level,
-            last_stock_update = CURRENT_TIMESTAMP
-        `;
-
-        await client.query(inventoryQuery, inventoryValues);
-        totalInventoryProcessed += inventoryPlaceholders.length;
-      }
-
-      await client.query("COMMIT");
-
-      res.json({
-        success: true,
-        message: "Products and inventory uploaded successfully",
-        inserted: totalInserted,
-        inventoryProcessed: totalInventoryProcessed,
-      });
-
-    } catch (error) {
-      await client.query("ROLLBACK");
-      console.log("Excel upload error:", error);
-      res.status(500).json({ error: error.message });
-    } finally {
-      client.release();
-    }
-  }
-);
-
-router.put(
-  "/api/edit/menu_item/:menu_id",
-  upload.single("menu_image"), // optional image
-  async (req, res) => {
-    const menuId = req.params.menu_id;
-    const menuData = req.body;
-
-    try {
-      await conn.query("BEGIN");
-
-      // If image uploaded, attach file buffer
-      // if (req.file) {
-      //   menuData.menu_image = req.file;
-      // }
-
-      // Validate input using Joi schema for edit (we can reuse or create a new schema)
-      const { errors, input } = await RequestValidator(
-        schema.menu_item_update, // separate schema for update
-        menuData
-      );
-
-      if (errors) {
-        await conn.query("ROLLBACK");
-        return res.status(400).json({ errors });
-      }
-
-      // Call service to handle business logic and DB update
-      const result = await service.editMenuItem(menuId, input);
-
-      if (!result.success) {
-        await conn.query("ROLLBACK");
-        return res.status(400).json({ message: result.message });
-      }
-
-      await conn.query("COMMIT");
-      return res.status(200).json({ data: result.data });
-
-    } catch (error) {
-      await conn.query("ROLLBACK");
-      console.error("Edit Menu Error:", error);
-      return res.status(500).json({ error: error.message });
-    }
-  }
-);
-
 
 router.post("/api/add/orders", async (req, res) => {
   try {
     const { errors, input } = await RequestValidator(schema.order_create, req.body);
     if (errors) {
-      console.log(errors)
       return res.status(400).json({ errors });
     }
  
@@ -440,16 +92,13 @@ router.post("/api/add/orders", async (req, res) => {
 });
 
 
-router.put("/api/update/orders", async (req, res) => {
+router.put("/api/update/orders", owned.inBody("sale_uuid", "tbl_sales", "sale_uuid"), async (req, res) => {
   try {
     const { errors, input } = await RequestValidator(schema.order_update, req.body);
 
-    console.log(req.body)
-    console.log("from update order",errors)
 
     if (errors) return res.status(400).json({ errors });
 
-    console.log(input)
 
     const data = await service.updateOrder(input);
 
@@ -606,7 +255,6 @@ router.post("/api/sales/:sale_uuid/payment", async (req, res) => {
       { abortEarly: false }
     );
     if (error) {
-      console.log(error)
       return res.status(400).json({ errors: error.details.map(d => d.message) });
     }
  
@@ -618,7 +266,6 @@ router.post("/api/sales/:sale_uuid/payment", async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
-
 
 
 router.post("/api/customers", async (req, res) => {
@@ -674,8 +321,8 @@ router.get("/api/customers/:cust_uuid", async (req, res) => {
     const { error, value } = schema.get_customer_by_id.validate(
       {
         cust_uuid: req.params.cust_uuid,
-        zodu_id:   req.user?.zodu_id   ?? req.query.zodu_id,
-        branch_id: req.user?.branch_id ?? req.query.branch_id,
+        zodu_id:   req.tenant.zoduId,
+        branch_id: req.tenant.branchId,
       },
       { abortEarly: false }
     );
@@ -712,11 +359,9 @@ router.get('/api/customers/:custUuid/ledger', async (req, res, next) => {
       });
     }
  
-    // ✅ FIX: branchId / zoduId were never extracted from anywhere.
-    //         Primary source is the JWT (set by auth middleware as req.user).
-    //         Fall back to query params for internal/admin calls without a JWT.
-    const branchId = req.user?.branch_id ?? req.query.branch_id;
-    const zoduId   = req.user?.zodu_id   ?? req.query.zodu_id;
+    // The checked company / branch (token, or the requested branch the user may use).
+    const branchId = req.tenant.branchId;
+    const zoduId   = req.tenant.zoduId;
  
     if (!branchId || !zoduId) {
       return res.status(400).json({
@@ -725,7 +370,6 @@ router.get('/api/customers/:custUuid/ledger', async (req, res, next) => {
       });
     }
 
-    console.log("test",branchId,zoduId,value)
  
     // ✅ FIX: was calling service.getCustomerById (wrong name) and passing
     //         no arguments — now calls getCustomerLedger with all needed params
@@ -753,8 +397,8 @@ router.get('/api/customers/:custUuid/ledger', async (req, res, next) => {
 // Feeds the "Mark Payment" modal — every unpaid/partially-paid invoice, oldest first.
 router.get("/api/customers/:cust_uuid/outstanding-bills", async (req, res) => {
   try {
-    const zodu_id   = req.user?.zodu_id   ?? req.query.zodu_id;
-    const branch_id = req.user?.branch_id ?? req.query.branch_id;
+    const zodu_id   = req.tenant.zoduId;
+    const branch_id = req.tenant.branchId;
     const { cust_uuid } = req.params;
 
     if (!zodu_id || !branch_id) {
@@ -778,6 +422,7 @@ router.get("/api/customers/:cust_uuid/outstanding-bills", async (req, res) => {
 router.post(
   "/api/customers/:cust_uuid/mark-payment",
   upload.array("attachments", 5),
+  security.tenantBody,
   async (req, res) => {
     try {
       const body = { ...req.body, cust_uuid: req.params.cust_uuid };
@@ -791,8 +436,8 @@ router.post(
         return res.status(400).json({ errors: error.details.map((d) => d.message) });
       }
 
-      value.zodu_id   = req.user?.zodu_id   ?? value.zodu_id;
-      value.branch_id = req.user?.branch_id ?? value.branch_id;
+      value.zodu_id   = req.tenant.zoduId;
+      value.branch_id = req.tenant.branchId;
 
       // Attachments go to file-service under the customer (module customer-payment,
       // private); the payment rows keep file refs and answer with fresh URLs.
@@ -833,39 +478,6 @@ router.post(
   }
 );
 
-router.post(
-  "/api/add/vendor",
-  async (req, res) => {
-    try {
-      const vendorData = req.body;
-
-      await conn.query("BEGIN");
-      const { errors, input } = await RequestValidator(
-        schema.vendor_create,
-        vendorData
-      );
-
-      if (errors) {
-        await conn.query("ROLLBACK");
-        return res.status(400).json({ errors });
-      }
-
-      const data = await service.createVendor(input);
-
-      if (!data.success) {
-        await conn.query("ROLLBACK");
-        return res.status(400).json({ message: data.message });
-      }
-
-      await conn.query("COMMIT");
-      return res.status(201).json({ data });
-    } catch (error) {
-      await conn.query("ROLLBACK");
-      console.error(error);
-      return res.status(500).json({ error: error.message });
-    }
-  }
-);
 
 router.put("/api/customers/:cust_uuid", async (req, res) => {
   try {
@@ -875,7 +487,6 @@ router.put("/api/customers/:cust_uuid", async (req, res) => {
     });
 
     if (error) {
-      console.log(error)
       return res.status(400).json({
         errors: error.details.map((d) => d.message),
       });
@@ -916,431 +527,6 @@ router.delete("/api/customers/:cust_uuid", async (req, res) => {
   }
 });
 
-router.put(
-  "/api/edit/vendor",
-  async (req, res) => {
-    try {
-      const vendorData = req.body;
-
-      await conn.query("BEGIN");
-      const { errors, input } = await RequestValidator(
-        schema.edit_vendor_create,
-        vendorData
-      );
-
-      if (errors) {
-        await conn.query("ROLLBACK");
-        return res.status(400).json({ errors });
-      }
-
-      const data = await service.editVendor(input);
-
-      if (!data.success) {
-        await conn.query("ROLLBACK");
-        return res.status(400).json({ message: data.message });
-      }
-
-      await conn.query("COMMIT");
-      return res.status(201).json({ data });
-    } catch (error) {
-      await conn.query("ROLLBACK");
-      console.error(error);
-      return res.status(500).json({ error: error.message });
-    }
-  }
-);
-
-
-router.delete("/api/delete/vendor/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    await conn.query("BEGIN");
-    const data = await service.deleteVendor(id);
-    if (!data.success) {
-      await conn.query("ROLLBACK");
-      return res.status(400).json({ message: data.message });
-    }
-    return res.status(201).json({ data });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-
-  }
-}
-);
-router.post(
-  "/api/add/purchase_orders", upload.array("attachment_url", 10),
-  async (req, res) => {
-    try {
-      const purchaseOrderData = req.body;
-
-      // if (req.files && req.files.length > 0) {
-      //   purchaseOrderData.attachment_url = req.files.map(file => ({
-      //     filename: file.originalname,
-      //     mimetype: file.mimetype,
-      //     path: file.path,
-      //     size: file.size
-      //   }));
-      // }
-      purchaseOrderData.items = typeof purchaseOrderData.items === "string" ? JSON.parse(purchaseOrderData.items) : purchaseOrderData.items;
-
-
-      await conn.query("BEGIN");
-      const { errors, input } = await RequestValidator(
-        schema.purchase_order_create,
-        purchaseOrderData
-      );
-
-      if (errors) {
-        await conn.query("ROLLBACK");
-        return res.status(400).json({ errors });
-      }
-
-
-      const data = await service.createPurchaseOrder(input);
-
-      if (!data.success) {
-        await conn.query("ROLLBACK");
-        return res.status(400).json({ message: data.message });
-      }
-
-      await conn.query("COMMIT");
-      return res.status(201).json({ data });
-    } catch (error) {
-      await conn.query("ROLLBACK");
-      console.error(error);
-      return res.status(500).json({ error: error.message });
-    }
-  }
-);
-
-
-router.post(
-  "/api/add/expense", upload.single("attachment_url"),
-  async (req, res) => {
-    try {
-      const expenseData = req.body;
-
-      await conn.query("BEGIN");
-      const { errors, input } = await RequestValidator(
-        schema.expense_data,
-        expenseData
-      );
-      console.log(input)
-
-      if (errors) {
-        await conn.query("ROLLBACK");
-        return res.status(400).json({ errors });
-      }
-
-      const data = await service.createExpense(input);
-
-      console.log(data)
-
-      if (!data.success) {
-        await conn.query("ROLLBACK");
-        return res.status(400).json({ data });
-      }
-
-      await conn.query("COMMIT");
-      return res.status(201).json({ data });
-    } catch (error) {
-      await conn.query("ROLLBACK");
-      console.error(error);
-      return res.status(500).json({ error: error.message });
-    }
-  }
-);
-
-router.put(
-  "/api/edit/expense", upload.single("attachment_url"),
-  async (req, res) => {
-    const expenseData = req.body;
-
-
-    try {
-      await conn.query("BEGIN");
-      // If attachment uploaded, attach file buffer
-      // if (req.file) {
-      //   expenseData.attachment_url = req.file;
-      // }
-
-      // Parse items if it's a string
-      expenseData.total_amount = Number(expenseData.total_amount);
-      expenseData.paid_amount = Number(expenseData.paid_amount);
-
-      if (expenseData.items && typeof expenseData.items === 'string') {
-        expenseData.items = JSON.parse(expenseData.items);
-      }
-
-
-      // Validate input using Joi schema for edit
-      const { errors, input } = await RequestValidator(
-        schema.expense_data_update,
-        expenseData
-      );
-
-      if (errors) {
-        await conn.query("ROLLBACK");
-        return res.status(400).json({ errors });
-      }
-
-      // Call service to handle business logic and DB update
-      const result = await service.editExpense(input);
-
-      if (!result.success) {
-        await conn.query("ROLLBACK");
-        return res.status(400).json({ message: result.message });
-      }
-
-      await conn.query("COMMIT");
-      return res.status(201).json({ data: result.data });
-
-    } catch (error) {
-      await conn.query("ROLLBACK");
-      console.error("Edit Expense Error:", error);
-      return res.status(500).json({ error: error.message });
-    }
-  }
-);
-
-router.put(
-  "/api/edit/purchase",
-  async (req, res) => {
-    const purchaseData = req.body;
-    console.log("purchase", purchaseData);
-
-    try {
-      await conn.query("BEGIN");
-
-      // If attachments uploaded, attach file buffers
-      // if (req.files && req.files.length > 0) {
-      //   purchaseData.attachment_url = req.files;
-      // }
-
-      // Parse items if it's a string
-      purchaseData.total_amount = Number(purchaseData.total_amount);
-      purchaseData.paid_amount = Number(purchaseData.paid_amount);
-
-      if (purchaseData.items && typeof purchaseData.items === 'string') {
-        purchaseData.items = JSON.parse(purchaseData.items);
-      }
-
-      // Validate input using Joi schema for edit
-      const { errors, input } = await RequestValidator(
-        schema.purchase_order_update,
-        purchaseData
-      );
-
-      if (errors) {
-        await conn.query("ROLLBACK");
-        return res.status(400).json({ errors });
-      }
-
-      // Call service to handle business logic and DB update
-      const result = await service.editPurchase(input);
-
-      if (!result.success) {
-        await conn.query("ROLLBACK");
-        return res.status(400).json({ message: result.message });
-      }
-
-      await conn.query("COMMIT");
-      return res.status(201).json({ data: result.data });
-
-    } catch (error) {
-      await conn.query("ROLLBACK");
-      console.error("Edit Purchase Error:", error);
-      return res.status(500).json({ error: error.message });
-    }
-  }
-);
-
-router.put("/update/favorite/:favorite/:menuId", async (req, res) => {
-  try {
-    const { menuId, favorite } = req.params;
-    await conn.query('BEGIN');
-    const data = await service.updateMenuFav(menuId, favorite);
-    if (!data.success) {
-      await conn.query('ROLLBACK');
-      return res.status(400).json({ message: data.message });
-    }
-    await conn.query('COMMIT');
-    return res.status(201).json({ data });
-  } catch (error) {
-    await conn.query('ROLLBACK');
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-})
-
-router.put("/update/menustatus/:menu_status/:menuId", async (req, res) => {
-  try {
-    const { menuId, menu_status } = req.params;
-    await conn.query('BEGIN');
-    const data = await service.updateMenustaus(menuId, menu_status);
-    if (!data.success) {
-      await conn.query('ROLLBACK');
-      return res.status(400).json({ message: data.message });
-    }
-    await conn.query('COMMIT');
-    return res.status(201).json({ data });
-  } catch (error) {
-    await conn.query('ROLLBACK');
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-})
-
-router.post("/add/expense-item", async (req, res) => {
-  try {
-    const edata = req.body;
-    await conn.query("BEGIN");
-    const { errors, input } = await RequestValidator(
-      schema.expense_item,
-      edata
-    );
-
-    if (errors) {
-      await conn.query("ROLLBACK");
-      return res.status(400).json({ errors });
-    }
-    const data = await service.createExpenseItem(input);
-    if (!data.success) {
-      await conn.query("ROLLBACK");
-      return res.status(400).json({ message: data.message });
-    }
-
-    await conn.query("COMMIT");
-    return res.status(201).json({ data });
-
-  } catch (error) {
-    await conn.query("ROLLBACK");
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-}
-)
-
-router.get("/get/expense-item/:branch_id", async (req, res) => {
-  try {
-    const { branch_id } = req.params;
-    const data = await service.getExpAllItems(branch_id);
-
-    if (!data.success) {
-      await conn.query("ROLLBACK");
-      return res.status(500).json({ message: data.message });
-    }
-    return res.status(201).json({ message: "Data Get Successfully", Data: data.data });
-  } catch (error) {
-    await conn.query("ROLLBACK");
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-});
-
-router.put("/update/expense-item/:id/:branch_id", async (req, res) => {
-  try {
-    const { id, branch_id } = req.params
-    const { name } = req.body
-    const data = await service.editExpItem(id, branch_id, name)
-    if (!data.success) {
-      await conn.query("ROLLBACK");
-      return res.status(400).json({ message: data.message });
-    }
-    return res.status(201).json({ data });
-
-  } catch (error) {
-    await conn.query("ROLLBACK");
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-})
-
-router.delete("/delete/expense-item/:id", async (req, res) => {
-  try {
-    const { id } = req.params
-    const data = await service.removeExpItem(id)
-    if (!data.success) {
-      await conn.query("ROLLBACK");
-      return res.status(500).json({ message: data.message });
-    }
-    return res.status(201).json({ data });
-
-  } catch (error) {
-    await conn.query("ROLLBACK");
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-
-  }
-})
-
-router.delete("/api/delete/expense/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    await conn.query("BEGIN");
-    const data = await service.deleteExpense(id);
-    if (!data.success) {
-      await conn.query("ROLLBACK");
-      return res.status(400).json({ message: data.message });
-    }
-    return res.status(201).json({ data });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-
-  }
-}
-);
-
-router.delete("/api/delete/purchase/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    await conn.query("BEGIN");
-    const data = await service.deletePurchase(id);
-    if (!data.success) {
-      await conn.query("ROLLBACK");
-      return res.status(400).json({ message: data.message });
-    }
-    return res.status(201).json({ data, message: "Purchase Deleted Successfully" });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-
-  }
-}
-);
-router.put("/api/update/inventory", async (req, res) => {
-  try {
-    console.log(req.body);
-    const items = req.body;
-
-    await conn.query("BEGIN");
-    const { errors, input } = await RequestValidator(
-      schema.inventorySchema,
-      items
-    );
-
-    if (errors) {
-      await conn.query("ROLLBACK");
-      return res.status(400).json({ errors });
-    }
-
-    const data = await service.update_Inventory(input);
-
-    if (!data.success) {
-      await conn.query("ROLLBACK");
-      return res.status(400).json({ message: data.message });
-    }
-
-    await conn.query("COMMIT");
-    return res.status(201).json({ data });
-  } catch (error) {
-    await conn.query("ROLLBACK");
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-})
 
 router.get("/get/category/:type/:branch_id/:zodu_id", async (req, res) => {
   try {
@@ -1433,11 +619,9 @@ router.post("/add/category", async (req, res) => {
   }
 });
 
-router.put("/update/category/:id", async (req, res) => {
+router.put("/update/category/:id", owned.inPath("id", "tbl_category", "id"), async (req, res) => {
   try {
-    console.log("update category", req.params.id, req.body)
     const { name, type, zodu_id, branch_id } = req.body;
-    console.log(req.params.id, name, type, zodu_id, branch_id,"----------")
     const data = await service.updateCategoryData(req.params.id, name, type, zodu_id, branch_id);
     if (!data.success) return res.status(400).json({ message: data.message });
     return res.status(201).json({ message: "Category updated successfully", data: data.data });
@@ -1447,7 +631,7 @@ router.put("/update/category/:id", async (req, res) => {
   }
 });
 
-router.put("/inactivate/category/:id", async (req, res) => {
+router.put("/inactivate/category/:id", owned.inPath("id", "tbl_category", "id"), async (req, res) => {
   try {
     const { zodu_id, branch_id, active, page_expense } = req.body;
     const data = await service.InactivateCategory(req.params.id, zodu_id, branch_id, active, page_expense);
@@ -1460,7 +644,7 @@ router.put("/inactivate/category/:id", async (req, res) => {
 });
 
 
-router.delete("/delete/category/:id/:branch_id/:zodu_id/:page_expense", async (req, res) => {
+router.delete("/delete/category/:id/:branch_id/:zodu_id/:page_expense", owned.inPath("id", "tbl_category", "id"), async (req, res) => {
   try {
     const { id, zodu_id, branch_id, page_expense } = req.params;
     const data = await service.deleteCategoryData(id, branch_id, zodu_id, page_expense);
@@ -1489,236 +673,6 @@ router.delete("/delete/file/:name", async (req, res) => {
 });
 
 
-router.get("/get/expense-category/:branch_id", async (req, res) => {
-
-  try {
-    const { branch_id } = req.params;
-    const getCategoryData = await service.getExpenseCategoryData(branch_id);
-    if (!getCategoryData.success) return res.status(400).json({ message: getCategoryData.message });
-    return res.status(201).json({ message: "Data Get Successfully", Data: getCategoryData.data });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-});
-
-router.put("/update/expense-category/:id", async (req, res) => {
-  try {
-    const { name, branch_id } = req.body;
-    const { id } = req.params
-    const data = await service.updateExpenseCategory(name, id, branch_id)
-    if (!data.success) return res.status(400).json({ message: data.message });
-    return res.status(201).json({ message: "Data updated Successfully", Data: data.data });
-
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-
-})
-
-router.delete("/delete/expense-category/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    console.log("delete", id)
-    const data = await service.deleteExpenseCategory(id);
-    if (!data.success) return res.status(400).json({ message: data.message });
-    return res.status(201).json({ message: "Data deleted Successfully", Data: data.data });
-
-  } catch (error) {
-    console.log(error);
-    return res.status(500).json({ error: error.message });
-  }
-})
-
-
-
-router.get("/get/purchase-category/:branch_id", async (req, res) => {
-
-  try {
-    const { branch_id } = req.params;
-    const getCategoryData = await service.getPurchaseCategoryData(branch_id);
-    if (!getCategoryData.success) return res.status(400).json({ message: getCategoryData.message });
-    return res.status(201).json({ message: "Data Get Successfully", Data: getCategoryData.data });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-});
-
-router.post("/add/expense-category", async (req, res) => {
-  try {
-    const { zodu_id, branch_id, name } = req.body;
-    const data = await service.addExpenseCategory(zodu_id, branch_id, name);
-    if (!data.success) return res.status(400).json({ message: data.message });
-    return res.status(201).json({ message: "Data Get Successfully", Data: data.data });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-});
-
-
-router.get("/get/inventory-list/:branch_id", async (req, res) => {
-
-  try {
-
-    const { branch_id } = req.params;
-    const { type, category } = req.query
-    const getInventoryListData = await service.getInventoryListData(branch_id, type, category);
-    if (!getInventoryListData.success) return res.status(400).json({ message: getInventoryListData.message });
-    return res.status(201).json({ message: "Data Get Successfully", Data: getInventoryListData.data });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-});
-
-router.get("/get/purchase-list/:branch_id", async (req, res) => {
-  try {
-    const { branch_id } = req.params;
-
-    const {
-      page = 1,
-      limit = 10,
-      search = "",
-      status = "all",
-      start_date = "",
-      end_date = "",
-      category_id = ""
-    } = req.query;
-
-    console.log(status)
-    const getPurchaseListData = await service.getPurchaseListData(
-      branch_id,
-      page,
-      limit,
-      search,
-      status,
-      start_date,
-      end_date,
-      category_id
-    );
-
-    if (!getPurchaseListData.success)
-      return res.status(400).json({ message: getPurchaseListData.message });
-
-    return res.status(201).json({
-      message: "Data Get Successfully",
-      Data: getPurchaseListData.data,
-    });
-
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-});
-
-router.get("/get/expense-list/:branch_id", async (req, res) => {
-  try {
-    const { branch_id } = req.params;
-    const {
-      page = 1,
-      limit = 10,
-      search = "",
-      filter = "All",          // All | Paid | Unpaid
-      start_date,
-      end_date,
-      category_id
-    } = req.query;
-
-    const data = await service.getExpenseListData({
-      branch_id,
-      page,
-      limit,
-      search,
-      filter,
-      start_date,
-      end_date,
-      category_id
-    });
-
-    if (!data.success)
-      return res.status(400).json({ message: data.message });
-
-    return res.status(200).json(data.data);
-
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-});
-
-router.get("/get/purchase/:purchase_id", async (req, res) => {
-  try {
-    const { purchase_id } = req.params;
-    const data = await service.getPurchaseById(purchase_id);
-    if (!data.success)
-      return res.status(400).json({ message: data.message });
-    return res.status(200).json({ message: "Data Get Successfully", Data: data.data });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-});
-
-router.get("/get/expense-details/:expense_id", async (req, res) => {
-  try {
-    const { expense_id } = req.params;
-    const data = await service.getExpenseDetails(expense_id);
-
-    if (!data.success)
-      return res.status(400).json({ message: data.message });
-    return res.status(200).json({ message: "Data Get Successfully", Data: data.data });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-});
-
-
-
-router.get("/get/vendor/:branch_id", async (req, res) => {
-
-  try {
-    const { branch_id } = req.params;
-    const getVendorData = await service.getVendorData(branch_id);
-    if (!getVendorData.success) return res.status(400).json({ message: getVendorData.message });
-    return res.status(201).json({ message: "Data Get Successfully", Data: getVendorData.data });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-});
-
-router.get("/get/menu_item/:branch_id", async (req, res) => {
-  try {
-    const { branch_id } = req.params;
-    const { page = 1, limit = 10, search = "" } = req.query;
-
-    const result = await service.get_menuItem_data(
-      branch_id,
-      page,
-      limit,
-      search
-    );
-
-    if (!result.success) {
-      return res.status(400).json({ message: result.message });
-    }
-
-    return res.status(200).json({
-      message: "Data Get Successfully",
-      pagination: result.pagination,   // <-- ADD THIS
-      data: result.data                // <-- ADD THIS
-    });
-
-  } catch (error) {
-    console.error("Get Menu API Error =>", error);
-    return res.status(500).json({ error: error.message });
-  }
-});
-
 router.get("/get/pos_data/:branch_id/:zodu_id", async (req, res) => {
   try {
     const { branch_id, zodu_id } = req.params;
@@ -1730,71 +684,6 @@ router.get("/get/pos_data/:branch_id/:zodu_id", async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 });
-
-
-router.delete("/delete/menu_item/:id", async (req, res) => {
-  try {
-    const data = await service.deleteMenuItem(req.params.id);
-    if (!data.success) return res.status(400).json({ message: data.message });
-    return res.status(201).json({ message: "Menu item deleted successfully", data: data.data });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-});
-
-router.put("/update/menu_item/:id", async (req, res) => {
-  try {
-    const menuData = req.body;
-    console.log("con", menuData)
-
-    const data = await service.updateMenuItem(req.params.id, menuData);
-    if (!data.success) return res.status(400).json({ message: data.message });
-    console.log(data)
-    return res.status(201).json({ message: "Menu item updated successfully", data: data.data });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-});
-
-router.get("/get/orders/:branch_id", async (req, res) => {
-
-  try {
-
-    const { branch_id } = req.params
-    const getMenuItemData = await service.get_ordered_data(branch_id);
-    if (!getMenuItemData.success) return res.status(400).json({ message: getMenuItemData.message });
-    return res.status(201).json({ message: "Data Get Successfully", Data: getMenuItemData.data });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-});
-
-router.get(
-  "/api/order/:zodu_id/:branch_id/:api_order_id",
-  async (req, res) => {
-    try {
-      const { zodu_id, branch_id, api_order_id } = req.params;
-      console.log("test",req.params)
-
-      const result = await service.getSingleOrder(
-        zodu_id,
-        branch_id,
-        api_order_id
-      );
-
-      return res.status(200).json({
-        message: "Order fetched successfully",
-        data: result
-      });
-    } catch (error) {
-      console.error(error);
-      return res.status(500).json({ error: error.message });
-    }
-  }
-);
 
 
 router.get("/get/units/:branch_id/:zodu_id", async (req, res) => {
@@ -1809,66 +698,6 @@ router.get("/get/units/:branch_id/:zodu_id", async (req, res) => {
   }
 });
 
-// ➤ ADD UNIT
-router.post("/add/unit", async (req, res) => {
-  try {
-    const { zodu_id, branch_id, name, short_name } = req.body;
-    const data = await service.addUnit(zodu_id, branch_id, name, short_name);
-    if (!data.success) return res.status(400).json({ message: data.message });
-    return res.status(201).json({ message: "Unit added successfully", data: data.data });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-});
-
-// ➤ UPDATE UNIT
-router.put("/update/unit/:id", async (req, res) => {
-  try {
-    const { name, short_name } = req.body;
-    const data = await service.updateUnit(req.params.id, name, short_name);
-    return success(res, "Unit updated successfully", data);
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-});
-
-// ➤ DELETE UNIT
-router.delete("/delete/unit/:id/:branch_id", async (req, res) => {
-  try {
-    console.log(req.params)
-    const result = await service.deleteUnit(req.params.id, req.params.branch_id);
-
-    if (!result.success && result.used) {
-      return res.status(200).json(result);  // Return usage info
-    }
-
-    return res.status(200).json(result);
-
-  } catch (error) {
-    return res.status(500).json({ error: error.message });
-  }
-});
-
-router.post("/replace/unit", async (req, res) => {
-  try {
-    const { old_unit_id, new_unit_id, branch_id } = req.body;
-    const result = await service.replaceUnit(old_unit_id, new_unit_id, branch_id);
-
-    if (!result.success)
-      return res.status(400).json({ message: result.message });
-
-    return res.status(201).json({
-      message: "Unit replaced successfully",
-      data: result.data,
-    });
-
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-});
 
 // GST rates are one common list shared by every branch, so there are no tenant params.
 router.get("/get/gst", async (req, res) => {
@@ -1885,87 +714,6 @@ router.get("/get/gst", async (req, res) => {
 
   } catch (error) {
     console.error("GST GET Error", error);
-    return res.status(500).json({ error: error.message });
-  }
-});
-
-router.post("/api/completeorder", async (req, res) => {
-  try {
-    const data = req.body
-
-    console.log("complete",req.body)
-    const orderData = await service.update_Final_payment(data);
-
-    if (!orderData.success) {
-      await conn.query("ROLLBACK");
-      return res.status(400).json({ message: orderData.message });
-    }
-
-    await conn.query("COMMIT");
-    return res.status(201).json({ orderData });
-  } catch (err) {
-    console.error(err)
-    return res.status(500).json({ error: err.message })
-  }
-})
-
-
-
-
-router.post("/api/add/inventory", async (req, res) => {
-
-  try {
-    const { errors, input } = await RequestValidator(
-      schema.Inventory,
-      req.body
-    );
-    console.log(req.body)
-    if (errors) {
-      return res.status(400).json({ success: false, error: errors });
-    }
-    const data = await service.addin_Inventory(input);
-
-    if (!data.success) {
-      return res.status(400).json({ message: data.message });
-    }
-
-    return res.status(201).json({ data });
-
-  } catch (err) {
-    console.error("Inventory Update Failed", err.message)
-    return res.status(500).json({
-      success: false,
-      message: err.message || "Internal server error",
-    })
-  }
-
-});
-
-
-
-router.get("/get/purchase/:purchase_id", async (req, res) => {
-  try {
-    const { purchase_id } = req.params;
-    const data = await service.getPurchaseById(purchase_id);
-    if (!data.success)
-      return res.status(400).json({ message: data.message });
-    return res.status(200).json({ message: "Data Get Successfully", Data: data.data });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: error.message });
-  }
-});
-
-router.get("/get/expense/:expense_id", async (req, res) => {
-  try {
-    const { expense_id } = req.params;
-    const data = await service.getExpenseById(expense_id);
-
-    if (!data.success)
-      return res.status(400).json({ message: data.message });
-    return res.status(200).json({ message: "Data Get Successfully", Data: data.data });
-  } catch (error) {
-    console.error(error);
     return res.status(500).json({ error: error.message });
   }
 });
@@ -1987,7 +735,7 @@ router.post("/add/hold_menu", async (req, res) => {
 });
 
 // ✅ :id is now hold_uuid
-router.delete("/delete/hold-menu/:id", async (req, res) => {
+router.delete("/delete/hold-menu/:id", owned.inPath("id", "tbl_hold", "hold_uuid"), async (req, res) => {
   try {
     const { id } = req.params;
     const data = await service.deleteHoldMenu(id);
@@ -2004,7 +752,6 @@ router.delete("/delete/hold-menu/:id", async (req, res) => {
 router.get("/get/hold_menu/:zodu_id/:branch_id", async (req, res) => {
   try {
     const { zodu_id, branch_id } = req.params;
-    console.log(zodu_id,branch_id)
     const data = await service.getHoldData(zodu_id, branch_id);
     return res.status(200).json({ data });
   } catch (error) {
@@ -2013,32 +760,5 @@ router.get("/get/hold_menu/:zodu_id/:branch_id", async (req, res) => {
   }
 });
 
-// POST /api/payment/pay
-router.post("/api/payment/pay", async (req, res) => {
-  try {
-    const result = await service.makePayment(req.body);
-    return res.status(200).json(result);
-  } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-router.post("/api/payments/add", async (req, res) => {
-  try {
-
-    const result = await service.markSalePayment(req.body);
-
-    return res.status(200).json(result);
-
-  } catch (error) {
-
-    console.error("Payment Error:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Failed to add payment",
-    });
-  }
-});
 
 module.exports = router;

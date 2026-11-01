@@ -52,7 +52,6 @@ router.get("/sales/monthly-breakdown", async (req, res) => {
 router.get("/sales/historical", async (req, res) => {
   const { zodu_id, branch_id } = req.query;
   if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"])) return;
-console.log(zodu_id,branch_id)
   try {
     const data = await service.getHistoricalPerformance(zodu_id, branch_id);
     res.json({ success: true, data });
@@ -132,7 +131,6 @@ router.get("/sales/datewise/summary", async (req, res) => {
     const data = await service.getDatewiseSummary(zodu_id, branch_id, from_date, to_date);
     res.json({ success: true, data });
   } catch (err) {
-    console.log(err)
     console.error("[report] getDatewiseSummary:", err.message);
     res.status(500).json({ success: false, error: err.message });
   }

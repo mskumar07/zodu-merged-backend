@@ -6,7 +6,8 @@
 //     { path: '/api/health', public: true },
 //     { path: '/api/attendance/my', authenticated: true },     // checked in the handler
 //     ...crud('/api/employees', 'employee'),                    // GET read, POST create, PUT/PATCH edit, DELETE delete
-//     { method: 'GET', path: /^\/api\/reports\/gst/, perm: ['report:read', 'gst:export'] },
+//     { method: 'GET', path: /^\/api\/reports\/gst/, perm: ['report:read', 'gst:export'] },   all of them
+//     { method: 'GET', path: '/api/customers', any: ['customer:read', 'billing:read'] },        one of them
 //   ], { authenticate, tenantGuard, respond });
 //   app.use(policy.middleware);
 //
@@ -46,6 +47,7 @@ function createRoutePolicy(rules, {
   const allowed = (rule, auth) => {
     if (rule.authenticated) return true;
     if (auth.role === OWNER_ROLE) return true;   // inside the token's company only (tenantGuard)
+    if (rule.any) return rule.any.some((p) => auth.perms.includes(p));
     const perms = Array.isArray(rule.perm) ? rule.perm : [rule.perm];
     return perms.every((p) => auth.perms.includes(p));
   };
@@ -68,7 +70,10 @@ function createRoutePolicy(rules, {
     }));
   }
 
-  return { middleware, rules, find };
+    // The route already matched (req.routeRule) with the request's current permissions.
+  const recheck = (req) => !req.routeRule || allowed(req.routeRule, req.auth);
+
+  return { middleware, rules, find, recheck };
 }
 
 module.exports = { createRoutePolicy, crud, ACTION_BY_METHOD };

@@ -15,6 +15,11 @@
 //              is on (old app builds that don't call switch-context yet) and
 //              auth-service confirms the user may use it; the request then gets
 //              that branch's permissions. Otherwise 404.
+//
+//   router.param('purchase_id', ownedParam(lookup))   a record id in the path
+//              lookup(id) → { zodu_id, branch_id } | null. Another company's
+//              record, or none → 404; a record of another branch only if the
+//              user may use that branch (with that branch's permissions).
 
 const { OWNER_ROLE, permsFromAccessRows } = require('./permissions');
 
@@ -43,6 +48,9 @@ function createTenantGuard({
   allowRequestedBranch = process.env.AUTH_ALLOW_REQUESTED_BRANCH !== 'false',
   respond = defaultRespond,
   onEvent = () => {},
+  // After a path param moved the request to another branch: may the route still
+  // be called with that branch's permissions? (createServiceSecurity: the route policy)
+  recheck = () => true,
 } = {}) {
   class Refused extends Error {}
 
@@ -92,8 +100,19 @@ function createTenantGuard({
     return obj;
   }
 
+  class Forbidden extends Error {}
+
+  // A path param named another branch than the one the route policy checked.
+  async function switchBranch(req, value) {
+    const before = req.auth.perms;
+    const branch = await resolveBranch(req, value);
+    if (req.auth.perms !== before && !recheck(req)) throw new Forbidden();
+    return branch;
+  }
+
   const fail = (req, res, err, next) => {
     if (err instanceof Refused) return respond(req, res, 404, 'Not found');
+    if (err instanceof Forbidden) return respond(req, res, 403, 'Permission denied');
     if (err.status === 503) return respond(req, res, 503, 'Access check unavailable, try again');
     return next(err);
   };
@@ -131,7 +150,7 @@ function createTenantGuard({
       if (ZODU_KEYS.includes(name)) {
         checkCompany(req, value);
       } else {
-        const branch = await resolveBranch(req, value);
+        const branch = await switchBranch(req, value);
         req.tenant = { zoduId: req.auth.zoduId, branchId: branch };
       }
       next();
@@ -140,13 +159,39 @@ function createTenantGuard({
     }
   }
 
+  // A record id in the path must belong to the token's company (and a branch the user may use).
+  // Ids that aren't even well formed for the column (pg 22P02) count as not found.
+  function ownedParam(lookup) {
+    return async function ownedRecord(req, res, next, value, name) {
+      if (!req.auth) return respond(req, res, 401, 'Authorization token missing');
+      try {
+        let row;
+        try {
+          row = await lookup(String(value), req);
+        } catch (err) {
+          if (err.code === '22P02') row = null;
+          else throw err;
+        }
+        if (!row || String(row.zodu_id) !== req.auth.zoduId) {
+          if (row) onEvent(req, 'cross_tenant_attempt', { param: name, reason: 'record_of_other_company' });
+          throw new Refused();
+        }
+        const branch = row.branch_id == null ? null : String(row.branch_id);
+        if (branch && branch !== req.tenant?.branchId) await switchBranch(req, branch);
+        next();
+      } catch (err) {
+        fail(req, res, err, next);
+      }
+    };
+  }
+
   // Attach tenantParam to every tenant param name of a router.
   function protectParams(router) {
     for (const name of [...ZODU_KEYS, ...BRANCH_KEYS]) router.param(name, tenantParam);
     return router;
   }
 
-  return { tenantGuard, tenantBody, tenantParam, protectParams };
+  return { tenantGuard, tenantBody, tenantParam, protectParams, ownedParam };
 }
 
 // Cached client for auth-service's /internal/user-branch-access (60s by default:

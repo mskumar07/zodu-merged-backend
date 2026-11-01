@@ -4,7 +4,7 @@ class SaleReturnRepository {
 
   // ── Original sale ─────────────────────────────────────────
 
-  async findSaleByUuidForUpdate(client, saleUuid, branchId) {
+  async findSaleByUuidForUpdate(client, saleUuid, branchId, zoduId) {
     const { rows } = await client.query(
       `SELECT
           sale_uuid, sale_id, branch_id, zodu_id,
@@ -16,8 +16,9 @@ class SaleReturnRepository {
        FROM tbl_sales
        WHERE sale_uuid = $1
          AND branch_id = $2
+         AND zodu_id = $3
        FOR UPDATE`,
-      [saleUuid, branchId]
+      [saleUuid, branchId, zoduId]
     );
     return rows[0] ?? null;
   }
@@ -172,7 +173,8 @@ class SaleReturnRepository {
 
   // Locks every affected stock row in one query. Ordered by item_id so two
   // concurrent returns touching the same items always lock in the same order.
-  async findInventoriesForUpdate(client, itemIds, branchId) {
+  // item_id is unique per company and branch only.
+  async findInventoriesForUpdate(client, itemIds, branchId, zoduId) {
     const { rows } = await client.query(
       `SELECT
           inventory_uuid, item_uuid, item_id,
@@ -180,9 +182,10 @@ class SaleReturnRepository {
        FROM tbl_inventory
        WHERE item_id   = ANY($1::text[])
          AND branch_id = $2
+         AND zodu_id   = $3
        ORDER BY item_id
        FOR UPDATE`,
-      [itemIds, branchId]
+      [itemIds, branchId, zoduId]
     );
     return rows;
   }

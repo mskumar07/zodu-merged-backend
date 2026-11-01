@@ -5,6 +5,7 @@
 //   app.use(security.middleware);              // limits, auth, tenant, route policy
 //   security.protectParams(router);            // in each controller with :zodu_id / :branch_id
 //   router.post('/x', upload.single('file'), security.tenantBody, handler);
+//   router.param('purchase_id', security.ownedParam((id) => repo.ownerOf(id)));
 //
 // respond(req, res, status, message) keeps the service's error body.
 
@@ -83,8 +84,11 @@ function createServiceSecurity({
   });
   const { authenticate } = createAuthenticate({ verifier: v, respond });
   const access = accessClient ?? createAccessClient({ baseUrl: authServiceUrl });
-  const tenant = createTenantGuard({ accessClient: access, respond, onEvent: event });
-  const policy = createRoutePolicy(rules, {
+  let policy;
+  const tenant = createTenantGuard({
+    accessClient: access, respond, onEvent: event, recheck: (req) => policy.recheck(req),
+  });
+  policy = createRoutePolicy(rules, {
     authenticate,
     tenantGuard: tenant.tenantGuard,
     respond,
@@ -98,6 +102,7 @@ function createServiceSecurity({
     tenantBody: tenant.tenantBody,
     tenantParam: tenant.tenantParam,
     protectParams: tenant.protectParams,
+    ownedParam: tenant.ownedParam,
     policy,
     verifier: v,
   };

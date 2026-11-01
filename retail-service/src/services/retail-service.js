@@ -527,7 +527,6 @@ async function updateExpenseCategory(name,id,branch_id) {
 }
 async function deleteExpenseCategory(id) {
   try {
-    console.log("fromserv",id)
     const deletedCategory = await repository.deleteExpenseCategory(id);
     return {
       success: true,
@@ -1177,18 +1176,14 @@ async function createBranch(branchData) {
   try {
     // Generate branch_id if not provided
     let BranchId = await repository.findMaxBranchID(branchData.zodu_id);
-    console.log("BranchId", BranchId.rows);
     if (BranchId.rows[0].max === null || BranchId.rows[0].max === undefined) {
       branchData.branch_id = branchData.zodu_id + "B1";
-      console.log("first branch id", branchData.branch_id);
     }
     else if (BranchId.rows[0].max) {
-      console.log("Not first branch id", BranchId.rows[0].max);
       const maxBranchId = BranchId.rows[0].max;
       const match = maxBranchId.match(/B(\d+)$/);
       const nextNum = match ? parseInt(match[1], 10) + 1 : 1;
       branchData.branch_id = maxBranchId.replace(/B\d+$/, "B" + nextNum);
-      console.log("New Branch ID:", branchData.branch_id);
     }
 
     const createQr = await repository.createQRCode(branchData.branch_id);
@@ -1235,7 +1230,6 @@ async function createDefaultBranchService({ zodu_id, branch_name, branch_mobile_
       branch_mobile_no: branch_mobile_no || null,
       branch_mail_id:   branch_mail_id   || null,
     });
-    console.log("vv",branch)
 
     return { success: true, branch_id, data: branch };
   } catch (err) {
@@ -1283,7 +1277,6 @@ async function createOrder(orderData) {
       orderData.discount_value,
       orderData.discount_gst_mode || "after"
     );
-    console.log("totals", totals)
 
     // ✅ PAYMENT LOGIC
  const finalTotal = totals.final_amount;
@@ -1301,12 +1294,10 @@ const balanceAmount = round(finalTotal - paidAmount);
 orderData.balance_amount=balanceAmount;
 
    let paymentStatus = "unpaid";
-  console.log("paidAmount", paidAmount, "finalTotal", finalTotal, "balanceAmount", balanceAmount);
 if (!isQuotation) {
   if (paidAmount <= 0) {
     paymentStatus = "unpaid";
   } else if (paidAmount < finalTotal) {
-    console.log("paidAmount is less than finalTotal");
     paymentStatus = "partially_paid";
   } else {
     paymentStatus = "fully_paid";
@@ -1341,9 +1332,11 @@ if (!isQuotation) {
           throw new Error(`Invalid quantity for ${item.item_name}`);
         }
 
+        // item_uuid comes from the request: only this branch's stock.
         const inv = await client.query(
-          `SELECT available_qty FROM tbl_inventory WHERE item_uuid = $1 FOR UPDATE`,
-          [item.item_uuid]
+          `SELECT available_qty FROM tbl_inventory
+           WHERE item_uuid = $1 AND zodu_id = $2 AND branch_id = $3 FOR UPDATE`,
+          [item.item_uuid, orderData.zodu_id, orderData.branch_id]
         );
 
         if (!inv.rows.length) {
@@ -1365,8 +1358,9 @@ if (!isQuotation) {
         const stock_after = stock_before - qty;
 
         await client.query(
-          `UPDATE tbl_inventory SET available_qty = $1 WHERE item_uuid = $2`,
-          [stock_after, item.item_uuid]
+          `UPDATE tbl_inventory SET available_qty = $1
+           WHERE item_uuid = $2 AND zodu_id = $3 AND branch_id = $4`,
+          [stock_after, item.item_uuid, orderData.zodu_id, orderData.branch_id]
         );
 
         await stockRepository.createStockLedger(client, {
@@ -1435,12 +1429,13 @@ async function applyStockAdjustments(client, {
 
   const itemUuids = adjustments.map(a => a.item_uuid);
 
+  // item_uuid comes from the request: only this branch's stock moves.
   const invRes = await client.query(
     `SELECT item_uuid, available_qty
      FROM tbl_inventory
-     WHERE item_uuid = ANY($1::uuid[])
+     WHERE item_uuid = ANY($1::uuid[]) AND zodu_id = $2 AND branch_id = $3
      FOR UPDATE`,
-    [itemUuids]
+    [itemUuids, zodu_id, branch_id]
   );
 
   const stockBeforeMap = new Map(
@@ -1487,8 +1482,8 @@ async function applyStockAdjustments(client, {
        FROM jsonb_to_recordset($1::jsonb) AS t(item_uuid uuid, qty_change numeric)
        GROUP BY item_uuid
      ) v
-     WHERE inv.item_uuid = v.item_uuid`,
-    [JSON.stringify(adjustments.map(a => ({ item_uuid: a.item_uuid, qty_change: a.qty_change })))]
+     WHERE inv.item_uuid = v.item_uuid AND inv.zodu_id = $2 AND inv.branch_id = $3`,
+    [JSON.stringify(adjustments.map(a => ({ item_uuid: a.item_uuid, qty_change: a.qty_change }))), zodu_id, branch_id]
   );
 
   await client.query(
@@ -1514,7 +1509,6 @@ async function applyStockAdjustments(client, {
 
 async function updateOrder(orderData) {
   const client = await conn.connect();
- console.log("test",orderData)
   try {
     await client.query('BEGIN');
  
@@ -1523,12 +1517,13 @@ async function updateOrder(orderData) {
     // =========================================================
     // 0️⃣  LOCK & FETCH CURRENT SALE
     // =========================================================
+    // In the request's (checked) company and branch only.
     const saleRes = await client.query(
       `SELECT sale_uuid, sale_id, sale_type, zodu_id, branch_id
        FROM tbl_sales
-       WHERE sale_uuid = $1
+       WHERE sale_uuid = $1 AND zodu_id = $2 AND branch_id = $3
        FOR UPDATE`,
-      [saleId]
+      [saleId, orderData.zodu_id, orderData.branch_id]
     );
  
     if (!saleRes.rows.length) throw new Error('Sale not found');
@@ -1558,9 +1553,10 @@ async function updateOrder(orderData) {
     const oldItemsRes = await client.query(
       `SELECT si.*, m.item_uuid
        FROM tbl_sale_items si
-       LEFT JOIN tbl_menu_items m ON m.item_id::text = si.item_id
+       LEFT JOIN tbl_menu_items m
+              ON m.item_id::text = si.item_id AND m.zodu_id = $2 AND m.branch_id = $3
        WHERE si.sale_uuid = $1`,
-      [saleId]
+      [saleId, sale.zodu_id, sale.branch_id]
     );
  
     const normalizedOldItems = oldItemsRes.rows.map(i => ({
@@ -1785,8 +1781,8 @@ async function updateOrder(orderData) {
       //         and conversion; for conversions, old quotation id had no payments
       //         but is still the correct key to clean up).
       await client.query(
-        `DELETE FROM tbl_sale_payment WHERE sale_id = $1`,
-        [sale.sale_id]
+        `DELETE FROM tbl_sale_payment WHERE sale_id = $1 AND zodu_id = $2 AND branch_id = $3`,
+        [sale.sale_id, sale.zodu_id, sale.branch_id]
       );
  
       if (paidAmount > 0) {
@@ -2433,7 +2429,6 @@ async function getPurchaseSummary(
   options = {}
 ) {
   try {
-    console.log(start_date,end_date,filterType);
     const { startDate, endDate } = await getDateRange(
       filterType,
       start_date,

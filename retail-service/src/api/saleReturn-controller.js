@@ -2,6 +2,9 @@ const express = require("express");
 const { createSaleReturnSchema, getSaleReturnSchema, updateSaleReturnSchema, refundSaleReturnSchema, deleteSaleReturnSchema } = require("../schema/saleReturn-schema");
 const router = express.Router();
 const sale = require("../services/sale-service");
+const owned = require("../security/owned");
+
+router.param("return_uuid", owned.param("tbl_sale_returns", "return_uuid"));
 const { successResponse } = require("../utils/responseFormatter/successResponse");
 
 

@@ -25,9 +25,6 @@ jobs:
           - payroll-service
           - restaurant-service
           - retail-service
-          - payroll-service
-          - checklist-service
-          - payroll-service
           - admin-service
           - file-service
           - packages/zodu-security
@@ -55,6 +52,7 @@ jobs:
           - employee-service
           - checklist-service
           - payroll-service
+          - retail-service
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
