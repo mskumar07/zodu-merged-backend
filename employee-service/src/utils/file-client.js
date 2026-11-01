@@ -271,7 +271,7 @@ function requestCtx(req, { zoduId, branchId, userId } = {}) {
   return {
     zoduId: zoduId ?? null,
     branchId: branchId ?? null,
-    userId: userId ?? req.user?.user_id ?? null,
+    userId: userId ?? req.auth?.userId ?? null,
     clientIp: req.ip,
   };
 }

@@ -7,6 +7,7 @@
   "type": "commonjs",
   "files": [
     "index.js",
+    "testing.js",
     "src/"
   ],
   "engines": {
@@ -27,6 +28,7 @@
   "devDependencies": {
     "express": "^5.1.0",
     "jest": "^30.5.2",
+    "multer": "^2.5.0",
     "supertest": "^7.3.0"
   },
   "jest": {

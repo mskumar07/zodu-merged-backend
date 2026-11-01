@@ -5,6 +5,11 @@ const RequestValidator = require('../utils/requestValidator');
 const schema  = require('../schema/attendance-schema');
 const faceService = require('../services/face-service');
 const faceUpload  = require('../utils/face-upload');
+const security    = require('../security');
+const { tenantOf, callerOf } = require('../security/request');
+const employeeRepo = require('../repository/employee-repo');
+
+security.protectParams(router);
 
 const currentMonthYear = () => {
   const now = new Date();
@@ -16,7 +21,7 @@ const currentMonthYear = () => {
 //         records: [{ employee_id, status, check_in_time, check_out_time, remarks }] }
 router.post('/', async (req, res) => {
   try {
-    const { errors, input } = await RequestValidator(schema.attendance_mark_save, req.body);
+    const { errors, input } = await RequestValidator(schema.attendance_mark_save, { ...req.body, ...tenantOf(req) });
     if (errors) return res.status(400).json({ success: false, errors });
 
     const result = await service.markAttendance(input);
@@ -31,7 +36,7 @@ router.post('/', async (req, res) => {
 // already marked) so the modal can prefill check-in/check-out/status.
 router.get('/mark', async (req, res) => {
   try {
-    const { errors, input } = await RequestValidator(schema.attendance_mark_list, req.query);
+    const { errors, input } = await RequestValidator(schema.attendance_mark_list, { ...req.query, ...tenantOf(req) });
     if (errors) return res.status(400).json({ success: false, errors });
 
     const result = await service.getEmployeesForMarking(input);
@@ -47,7 +52,7 @@ router.get('/mark', async (req, res) => {
 // month/year default to current.
 router.get('/team', async (req, res) => {
   try {
-    const { errors, input } = await RequestValidator(schema.attendance_team, req.query);
+    const { errors, input } = await RequestValidator(schema.attendance_team, { ...req.query, ...tenantOf(req) });
     if (errors) return res.status(400).json({ success: false, errors });
 
     const { month: defMonth, year: defYear } = currentMonthYear();
@@ -65,8 +70,15 @@ router.get('/team', async (req, res) => {
 // "My Attendance" personal daily view + summary cards.
 router.get('/my', async (req, res) => {
   try {
-    const { errors, input } = await RequestValidator(schema.attendance_my, req.query);
+    const { errors, input } = await RequestValidator(schema.attendance_my, { ...req.query, ...tenantOf(req) });
     if (errors) return res.status(400).json({ success: false, errors });
+    // Someone else's attendance needs attendance:read.
+    if (!callerOf(req).can('attendance:read')) {
+      const own = await employeeRepo.findByUser(req.auth.userId, input);
+      if (!own || own.employee_id !== input.employee_id) {
+        return res.status(403).json({ success: false, error: 'Permission denied' });
+      }
+    }
 
     const { month: defMonth, year: defYear } = currentMonthYear();
     const month = input.month || defMonth;
@@ -83,9 +95,9 @@ router.get('/my', async (req, res) => {
 // multipart: image (photo) + { zodu_id, branch_id, employee_id?, marked_by?,
 // marked_by_name? }. Without employee_id the face is identified among the
 // branch's registered staff. Checks in, or out if already in today.
-router.post('/face', faceUpload('image'), async (req, res) => {
+router.post('/face', faceUpload('image'), security.tenantBody, async (req, res) => {
   try {
-    const { errors, input } = await RequestValidator(schema.attendance_face, req.body);
+    const { errors, input } = await RequestValidator(schema.attendance_face, { ...req.body, ...tenantOf(req) });
     if (errors) return res.status(400).json({ success: false, message: errors });
     if (!req.file) return res.status(400).json({ success: false, message: 'image is required' });
 

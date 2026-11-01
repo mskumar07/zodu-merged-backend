@@ -152,9 +152,20 @@ exports.getEmployeeById = async (employee_id, { zodu_id, branch_id }) => {
 // creates the tbl_users row with that id (from the employee's email / phone),
 // plus the company link and role. Later calls only update role / password.
 
-exports.setLoginDetails = async (employee_id, { zodu_id, branch_id, role_id, password, login_user }) => {
+// The owner's login (the first employee, EMP001) is changed by the owner only:
+// otherwise anyone with employee:edit could take the account over.
+function assertMayChangeLogin(employee, caller) {
+  if (employee.employee_code === 'EMP001' && !caller?.isOwner) {
+    const e = new Error("Only the owner can change the owner's login");
+    e.status = 403;
+    throw e;
+  }
+}
+
+exports.setLoginDetails = async (employee_id, { zodu_id, branch_id, role_id, password, login_user }, caller) => {
   const employee = await repo.findById(employee_id, { zodu_id, branch_id });
   if (!employee) throw new Error('Employee not found');
+  assertMayChangeLogin(employee, caller);
 
   try {
     await internalHttp.put(
@@ -190,7 +201,7 @@ exports.setLoginDetails = async (employee_id, { zodu_id, branch_id, role_id, pas
 
 // ── UPDATE ────────────────────────────────────────────────────────────────────
 
-exports.updateEmployee = async (employee_id, data, updated_by) => {
+exports.updateEmployee = async (employee_id, data, updated_by, caller) => {
   const client = await db.connect();
   try {
     await client.query('BEGIN');
@@ -198,6 +209,8 @@ exports.updateEmployee = async (employee_id, data, updated_by) => {
     // Get current employee to find user_id for exclude check
     const current = await repo.findById(employee_id, { zodu_id: data.zodu_id, branch_id: data.branch_id });
     if (!current) throw new Error('Employee not found');
+    // email / phone are the owner's sign-in identifiers
+    if (data.email !== undefined || data.phone !== undefined || data.status !== undefined) assertMayChangeLogin(current, caller);
 
     // Check email + phone duplicate in tbl_users (auth-service) excluding current user
     const emailToCheck = data.email || null;
@@ -273,10 +286,10 @@ exports.updateEmployee = async (employee_id, data, updated_by) => {
 
 // ── DELETE ────────────────────────────────────────────────────────────────────
 
-exports.deleteEmployee = async (employee_id, { zodu_id, branch_id, status }) => {
+exports.deleteEmployee = async (employee_id, { zodu_id, branch_id, status }, caller) => {
   const employee = await repo.findById(employee_id, { zodu_id, branch_id });
-  console.log('Deleting employee:', employee_id, 'zodu_id:', zodu_id, 'branch_id:', branch_id, 'status:', status);
   if (!employee) throw new Error('Employee not found');
+  assertMayChangeLogin(employee, caller);
 
   await repo.softDelete(employee_id, { zodu_id, branch_id, status });
 

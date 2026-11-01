@@ -9,19 +9,21 @@ const { requireInternal } = require('@zodu/security');
 //   company / branches / settings writes  restaurant-service, retail-service
 //   company / branch reads                 + admin-service
 //   /admin/*                               admin-service
-//   /user-branch-access                    file-service
+//   /user-branch-access                    every service that serves customer routes
 const fromBusiness = requireInternal('restaurant', 'retail');
 const forReading   = requireInternal('restaurant', 'retail', 'admin');
 const fromAdmin    = requireInternal('admin');
-const fromFiles    = requireInternal('file');
+// The tenant guard of every customer-facing service (@zodu/security createAccessClient).
+const forAccess    = requireInternal('file', 'employee', 'checklist', 'payroll', 'retail', 'restaurant');
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const UUID    = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // GET /internal/user-branch-access?user_id=&zodu_id=[&branch_id=]
-// file-service's tenant / branch / module-permission check. Unlike the routes
+// The tenant / branch / module-permission check of file-service and of the
+// tenant guard in every customer-facing service.
 // → { is_member, branch_exists, has_branch_access, is_admin, permissions: { [module_name]: {read, create, edit, delete} } }
-router.get('/user-branch-access', fromFiles, async (req, res) => {
+router.get('/user-branch-access', forAccess, async (req, res) => {
   try {
     const { user_id, zodu_id, branch_id } = req.query;
     if (!UUID.test(String(user_id || '')) || !SAFE_ID.test(String(zodu_id || ''))

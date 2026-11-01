@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --runInBand",
     "start": "set NODE_ENV=production&& nodemon src/server.js",
     "dev": "set NODE_ENV=local&& nodemon src/server.js"
   },
@@ -32,6 +32,15 @@
     "uuid": "^13.0.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.11"
+    "jest": "^30.5.2",
+    "nodemon": "^3.1.11",
+    "supertest": "^7.3.1"
+  },
+  "jest": {
+    "globalSetup": "./test/global-setup.js",
+    "setupFiles": [
+      "./test/env.js"
+    ],
+    "testEnvironment": "node"
   }
 }

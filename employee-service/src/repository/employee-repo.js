@@ -170,6 +170,16 @@ exports.findById = async (employee_id, { zodu_id, branch_id }) => {
   return rows[0] || null;
 };
 
+// The signed-in user's own employee record in a company / branch.
+exports.findByUser = async (user_id, { zodu_id, branch_id }) => {
+  const { rows } = await db.query(
+    `SELECT employee_id, employee_code FROM tbl_employees
+     WHERE user_id = $1 AND zodu_id = $2 AND branch_id = $3 LIMIT 1`,
+    [user_id, zodu_id, branch_id]
+  );
+  return rows[0] || null;
+};
+
 exports.findDocuments = async (employee_id) => {
   const { rows } = await db.query(
     `SELECT * FROM tbl_employee_documents

@@ -49,6 +49,7 @@ jobs:
           - packages/zodu-security
           - api-gateway
           - file-service
+          - employee-service
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

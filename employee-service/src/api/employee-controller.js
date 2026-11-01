@@ -7,6 +7,10 @@ const schema   = require('../schema/employee-schema');
 const files    = require('../utils/file-client');
 const faceService = require('../services/face-service');
 const faceUpload  = require('../utils/face-upload');
+const security    = require('../security');
+const { tenantOf, callerOf } = require('../security/request');
+
+security.protectParams(router);
 
 // multer — keep file in memory, hand it to file-service
 const upload = multer({
@@ -24,10 +28,10 @@ const upload = multer({
 // Body: { zodu_id, branch_id, name, phone, email, ... }
 router.post('/', async (req, res) => {
   try {
-    const { errors, input } = await RequestValidator(schema.employee_create, req.body);
+    const { errors, input } = await RequestValidator(schema.employee_create, { ...req.body, ...tenantOf(req) });
     if (errors) return res.status(400).json({ success: false, errors });
 
-    const result = await service.createEmployee(input, req.user?.user_id);
+    const result = await service.createEmployee(input, req.auth.userId);
     return res.status(result.success ? 201 : 400).json(result);
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
@@ -37,8 +41,8 @@ router.post('/', async (req, res) => {
 // ── LIST  GET /api/employees?zodu_id=&branch_id=&status=&page=&limit= ─────────
 router.get('/', async (req, res) => {
   try {
-    const { zodu_id, branch_id, status, page, limit, search } = req.query;
-    if (!zodu_id)   return res.status(400).json({ success: false, error: 'zodu_id is required' });
+    const { status, page, limit, search } = req.query;
+    const { zodu_id, branch_id } = tenantOf(req);
     if (!branch_id) return res.status(400).json({ success: false, error: 'branch_id is required' });
 
     const result = await service.getEmployees({ zodu_id, branch_id, status, page, limit, search });
@@ -51,8 +55,7 @@ router.get('/', async (req, res) => {
 // ── DETAIL  GET /api/employees/:id?zodu_id=&branch_id= ───────────────────────
 router.get('/:id', async (req, res) => {
   try {
-    const { zodu_id, branch_id } = req.query;
-    if (!zodu_id)   return res.status(400).json({ success: false, error: 'zodu_id is required' });
+    const { zodu_id, branch_id } = tenantOf(req);
     if (!branch_id) return res.status(400).json({ success: false, error: 'branch_id is required' });
 
     const result = await service.getEmployeeById(req.params.id, { zodu_id, branch_id });
@@ -67,12 +70,15 @@ router.get('/:id', async (req, res) => {
 // Body: { zodu_id, branch_id, ...fields }
 router.put('/:id', async (req, res) => {
   try {
-    const { errors, input } = await RequestValidator(schema.employee_update, req.body);
+    const { errors, input } = await RequestValidator(schema.employee_update, { ...req.body, ...tenantOf(req) });
     if (errors) return res.status(400).json({ success: false, errors });
 
-    const result = await service.updateEmployee(req.params.id, input, req.user?.user_id);
+    const result = await service.updateEmployee(req.params.id, input, req.auth.userId, callerOf(req));
     return res.status(result.success ? 200 : 400).json(result);
   } catch (err) {
+    if (err.status === 403 || err.message === 'Employee not found') {
+      return res.status(err.status || 404).json({ success: false, error: err.message });
+    }
     return res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -82,10 +88,15 @@ router.put('/:id', async (req, res) => {
 // fields the employee is missing (see has_role / has_password on the list API)
 router.put('/:id/login-details', async (req, res) => {
   try {
-    const { errors, input } = await RequestValidator(schema.employee_login_details, req.body);
+    const { errors, input } = await RequestValidator(schema.employee_login_details, { ...req.body, ...tenantOf(req) });
     if (errors) return res.status(400).json({ success: false, errors });
+    // Choosing a role decides the user's permissions: role:edit (the owner, for now).
+    const caller = callerOf(req);
+    if (input.role_id && !caller.canAssignRoles) {
+      return res.status(403).json({ success: false, error: 'Permission denied' });
+    }
 
-    const result = await service.setLoginDetails(req.params.id, input);
+    const result = await service.setLoginDetails(req.params.id, input, caller);
     return res.status(200).json(result);
   } catch (err) {
     const status = err.message === 'Employee not found' ? 404 : (err.status || 500);
@@ -97,25 +108,25 @@ router.put('/:id/login-details', async (req, res) => {
 // Body: { zodu_id, branch_id, status }
 router.put('/active-inactive/:id', async (req, res) => {
   try {
-    const { zodu_id, branch_id, status } = req.body;
-    if (!zodu_id)   return res.status(400).json({ success: false, error: 'zodu_id is required' });
+    const { status } = req.body || {};
+    const { zodu_id, branch_id } = tenantOf(req);
     if (!branch_id) return res.status(400).json({ success: false, error: 'branch_id is required' });
     if (!status) return res.status(400).json({ success: false, error: 'status is required' });
-    
-    const result = await service.deleteEmployee(req.params.id, { zodu_id, branch_id, status });
+
+    const result = await service.deleteEmployee(req.params.id, { zodu_id, branch_id, status }, callerOf(req));
     return res.status(result.success ? 200 : 400).json(result);
   } catch (err) {
-    const status = err.message === 'Employee not found' ? 404 : 500;
+    const status = err.status === 403 ? 403 : err.message === 'Employee not found' ? 404 : 500;
     return res.status(status).json({ success: false, error: err.message });
   }
 });
 
 // ── UPLOAD DOCUMENT  POST /api/employees/:id/documents ───────────────────────
 // multipart/form-data: file + { zodu_id, branch_id, document_type }
-router.post('/:id/documents', upload.single('file'), async (req, res) => {
+router.post('/:id/documents', upload.single('file'), security.tenantBody, async (req, res) => {
   try {
-    const { zodu_id, branch_id, document_type } = req.body;
-    if (!zodu_id)        return res.status(400).json({ success: false, error: 'zodu_id is required' });
+    const { document_type } = req.body;
+    const { zodu_id, branch_id } = tenantOf(req);
     if (!branch_id)      return res.status(400).json({ success: false, error: 'branch_id is required' });
     if (!document_type)  return res.status(400).json({ success: false, error: 'document_type is required' });
     if (!req.file)       return res.status(400).json({ success: false, error: 'file is required' });
@@ -127,7 +138,7 @@ router.post('/:id/documents', upload.single('file'), async (req, res) => {
       branch_id,
       document_type,
       file: req.file,
-    }, req.user?.user_id, files.requestCtx(req, { zoduId: zodu_id, branchId: branch_id }));
+    }, req.auth.userId, files.requestCtx(req, { zoduId: zodu_id, branchId: branch_id, userId: req.auth.userId }));
 
     return res.status(result.success ? 201 : 400).json(result);
   } catch (err) {
@@ -145,12 +156,11 @@ router.post('/:id/documents', upload.single('file'), async (req, res) => {
 // Body: { zodu_id, branch_id }
 router.delete('/:id/documents/:doc_id', async (req, res) => {
   try {
-    const { zodu_id, branch_id } = req.body;
-    if (!zodu_id)   return res.status(400).json({ success: false, error: 'zodu_id is required' });
+    const { zodu_id, branch_id } = tenantOf(req);
     if (!branch_id) return res.status(400).json({ success: false, error: 'branch_id is required' });
 
     const result = await service.deleteDocument(req.params.doc_id, req.params.id, { zodu_id, branch_id },
-      files.requestCtx(req, { zoduId: zodu_id, branchId: branch_id }));
+      files.requestCtx(req, { zoduId: zodu_id, branchId: branch_id, userId: req.auth.userId }));
     return res.status(result.success ? 200 : 400).json(result);
   } catch (err) {
     const status = err.message === 'Document not found' ? 404 : 500;
@@ -162,10 +172,9 @@ router.delete('/:id/documents/:doc_id', async (req, res) => {
 // POST   multipart: face (photo) + { zodu_id, branch_id } — register / replace
 // GET    → { registered, updated_at }
 // DELETE → removes the registered face
-router.post('/:id/face', faceUpload('face'), async (req, res) => {
+router.post('/:id/face', faceUpload('face'), security.tenantBody, async (req, res) => {
   try {
-    const { zodu_id, branch_id } = req.body;
-    if (!zodu_id)   return res.status(400).json({ success: false, message: 'zodu_id is required' });
+    const { zodu_id, branch_id } = tenantOf(req);
     if (!branch_id) return res.status(400).json({ success: false, message: 'branch_id is required' });
     if (!req.file)  return res.status(400).json({ success: false, message: 'face photo is required' });
 
@@ -180,7 +189,7 @@ router.post('/:id/face', faceUpload('face'), async (req, res) => {
 
 router.get('/:id/face', async (req, res) => {
   try {
-    return res.status(200).json(await faceService.getFaceStatus(req.params.id));
+    return res.status(200).json(await faceService.getFaceStatus(req.params.id, tenantOf(req)));
   } catch (err) {
     return faceUpload.sendError(res, err);
   }
@@ -188,7 +197,7 @@ router.get('/:id/face', async (req, res) => {
 
 router.delete('/:id/face', async (req, res) => {
   try {
-    return res.status(200).json(await faceService.deleteFace(req.params.id));
+    return res.status(200).json(await faceService.deleteFace(req.params.id, tenantOf(req)));
   } catch (err) {
     return faceUpload.sendError(res, err);
   }

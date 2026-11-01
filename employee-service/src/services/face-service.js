@@ -36,7 +36,8 @@ exports.registerFace = async ({ employee_id, zodu_id, branch_id, file }) => {
   };
 };
 
-exports.getFaceStatus = async (employee_id) => {
+exports.getFaceStatus = async (employee_id, { zodu_id, branch_id }) => {
+  if (!(await repo.findEmployee({ employee_id, zodu_id, branch_id }))) throw BaseError('not found', 404, 'Employee not found');
   const row = await repo.findFaceStatus(employee_id);
   return {
     success: true,
@@ -44,7 +45,8 @@ exports.getFaceStatus = async (employee_id) => {
   };
 };
 
-exports.deleteFace = async (employee_id) => {
+exports.deleteFace = async (employee_id, { zodu_id, branch_id }) => {
+  if (!(await repo.findEmployee({ employee_id, zodu_id, branch_id }))) throw BaseError('not found', 404, 'Employee not found');
   await repo.deleteFace(employee_id);
   return { success: true, message: 'Face removed', data: { registered: false } };
 };

@@ -30,11 +30,11 @@ MASTER="env/secrets.${ENV_NAME}.env"
 touch "$MASTER"
 
 # Services that call other services' /internal routes, each with its own token.
-CALLERS=(auth employee restaurant retail checklist admin file)
+CALLERS=(auth employee restaurant retail checklist admin file payroll)
 
 # Who accepts calls from whom (mirrors the requireInternal(...) lists in the code).
 declare -A ACCEPTS=(
-  [auth-service]="restaurant retail admin employee file"
+  [auth-service]="restaurant retail admin employee file checklist payroll"
   [employee-service]="auth"
   [restaurant-service]="auth"
   [retail-service]="auth admin"
@@ -49,7 +49,7 @@ declare -A ACCEPTS=(
 declare -A SENDS=(
   [auth-service]=auth [employee-service]=employee [restaurant-service]=restaurant
   [retail-service]=retail [checklist-service]=checklist [admin-service]=admin
-  [file-service]=file [payroll-service]="" [face-service]="" [api-gateway]=""
+  [file-service]=file [payroll-service]=payroll [face-service]="" [api-gateway]=""
 )
 USES_REDIS=(api-gateway auth-service file-service)
 

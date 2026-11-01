@@ -9,4 +9,7 @@ module.exports = {
   ...require('./src/access-token'),
   ...require('./src/authenticate'),
   ...require('./src/permissions'),
+  ...require('./src/tenant'),
+  ...require('./src/route-policy'),
+  ...require('./src/service-security'),
 };
