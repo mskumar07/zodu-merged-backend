@@ -125,7 +125,10 @@ describe('sessions are revoked when access changes', () => {
     const e = await employee();
     const { refresh_token } = (await login(e)).body.data;
     const { rows: [m] } = await conn.query("SELECT module_id FROM tbl_modules WHERE module_name = 'Billing'");
-    const res = await api().put(`/api/roles/${e.role_id}`)
+    // The company's Admin changes the role.
+    const admin = await user({ memberships: [{ zodu_id: e.zodu_id, primary: true, roles: [{ role_id: await role(e.zodu_id, { name: 'Admin' }) }] }] });
+    const { access_token } = (await login(admin)).body.data;
+    const res = await api().put(`/api/roles/${e.role_id}`).set(bearer(access_token))
       .send({ zodu_id: e.zodu_id, branch_id: 'B1', role_name: 'Billing Team', permissions: [{ module_id: m.module_id, can_read: false }] });
     expect(res.status).toBe(200);
     expect((await refresh(refresh_token)).status).toBe(401);

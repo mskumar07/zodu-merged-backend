@@ -1,7 +1,7 @@
+// Token, company/branch and permissions: src/security/rules.js.
 const roleService      = require('../services/role-service');
 const RequestValidator = require('../utils/requestValidator');
 const schema           = require('../schema/role-schema');
-// const { ValidateSignature } = require('../utils');
 
 const router = require('express').Router();
 const { requireInternal } = require('@zodu/security');
@@ -10,7 +10,7 @@ const fromEmployee = requireInternal('employee');
 // ── CREATE ROLE ───────────────────────────────────────────────────────────────
 // POST /api/roles
 // Body: { zodu_id, branch_id, role_name, description, permissions[] }
-router.post('/api/roles', /* ValidateSignature, */ async (req, res) => {
+router.post('/api/roles', async (req, res) => {
   try {
     const { errors, input } = await RequestValidator(schema.createRole, req.body);
     if (errors) return res.status(400).json({ success: false, errors });
@@ -25,7 +25,7 @@ router.post('/api/roles', /* ValidateSignature, */ async (req, res) => {
 
 // ── GET ALL ROLES ─────────────────────────────────────────────────────────────
 // GET /api/roles?zodu_id=Z001&branch_id=B001
-router.get('/api/roles', /* ValidateSignature, */ async (req, res) => {
+router.get('/api/roles', async (req, res) => {
   try {
     const { zodu_id, branch_id } = req.query;
     if (!zodu_id)   return res.status(400).json({ success: false, error: 'zodu_id is required' });
@@ -40,7 +40,7 @@ router.get('/api/roles', /* ValidateSignature, */ async (req, res) => {
 
 // ── GET SINGLE ROLE WITH PERMISSIONS ─────────────────────────────────────────
 // GET /api/roles/:role_id?zodu_id=Z001&branch_id=B001
-router.get('/api/roles/:role_id', /* ValidateSignature, */ async (req, res) => {
+router.get('/api/roles/:role_id', async (req, res) => {
   try {
     const { zodu_id, branch_id } = req.query;
     if (!zodu_id)   return res.status(400).json({ success: false, error: 'zodu_id is required' });
@@ -56,7 +56,7 @@ router.get('/api/roles/:role_id', /* ValidateSignature, */ async (req, res) => {
 // ── UPDATE ROLE ───────────────────────────────────────────────────────────────
 // PUT /api/roles/:role_id
 // Body: { zodu_id, branch_id, role_name?, description?, permissions[]? }
-router.put('/api/roles/:role_id', /* ValidateSignature, */ async (req, res) => {
+router.put('/api/roles/:role_id', async (req, res) => {
   try {
     const { errors, input } = await RequestValidator(schema.updateRole, req.body);
     if (errors) return res.status(400).json({ success: false, errors });
@@ -72,7 +72,7 @@ router.put('/api/roles/:role_id', /* ValidateSignature, */ async (req, res) => {
 // ── DELETE ROLE ───────────────────────────────────────────────────────────────
 // DELETE /api/roles/:role_id
 // Body: { zodu_id, branch_id }
-router.delete('/api/roles/:role_id', /* ValidateSignature, */ async (req, res) => {
+router.delete('/api/roles/:role_id', async (req, res) => {
   try {
     const { zodu_id, branch_id } = req.body;
     if (!zodu_id)   return res.status(400).json({ success: false, error: 'zodu_id is required' });
@@ -88,7 +88,7 @@ router.delete('/api/roles/:role_id', /* ValidateSignature, */ async (req, res) =
 
 // ── GET ALL MODULES ───────────────────────────────────────────────────────────
 // GET /api/modules
-router.get('/api/modules', /* ValidateSignature, */ async (req, res) => {
+router.get('/api/modules', async (req, res) => {
   try {
     const result = await roleService.getModules();
     return res.status(200).json(result);

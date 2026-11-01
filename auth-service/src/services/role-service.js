@@ -8,6 +8,13 @@ const { revokeAllForUser, revokeAllForUsers } = require('./session-service');
 // permissions, so a role change must force a fresh token): password change,
 // login disabled, deactivation, role or access change.
 
+// The company's Admin role (created with the company) passes every permission
+// check. Through the roles API it can't be created, renamed to or from, or
+// deleted: anyone holding a role of that name would be an owner, and a company
+// without it has no one with full access.
+const ADMIN_ROLE = 'Admin';
+const isAdminName = (name) => typeof name === 'string' && name.trim().toLowerCase() === ADMIN_ROLE.toLowerCase();
+
 // Owner / Admin passwords need 12 characters, everyone else's 8.
 async function isOwnerLogin({ role_id, zodu_id, branch_id, is_first_employee }) {
   if (is_first_employee) return true;
@@ -19,8 +26,8 @@ async function isOwnerLogin({ role_id, zodu_id, branch_id, is_first_employee }) 
 // ── CREATE ROLE ───────────────────────────────────────────────────────────────
 
 exports.createRole = async ({ zodu_id, branch_id, role_name, description, permissions }) => {
-  // Admin role is always global — never scope it (or its permissions) to a branch
-  const roleBranchId = role_name === 'Admin' ? null : branch_id;
+  if (isAdminName(role_name)) return { success: false, message: `"${ADMIN_ROLE}" is reserved for the company's owner role` };
+  const roleBranchId = branch_id;
 
   const role = await withTransaction(async (client) => {
     const newRole = await repo.createRole(client, { zodu_id, branch_id: roleBranchId, role_name, description });
@@ -80,6 +87,11 @@ exports.getRoleWithPermissions = async (role_id, { zodu_id, branch_id }) => {
 // ── UPDATE ROLE ───────────────────────────────────────────────────────────────
 
 exports.updateRole = async (role_id, { zodu_id, branch_id, role_name, description, permissions }) => {
+  const current = await repo.findRoleById(role_id, { zodu_id, branch_id });
+  if (!current) throw new Error('Role not found');
+  if (role_name !== undefined && isAdminName(current.role_name) !== isAdminName(role_name)) {
+    return { success: false, message: `The ${ADMIN_ROLE} role cannot be renamed, and no role can be renamed to it` };
+  }
   const updated = await withTransaction(async (client) => {
     const role = await repo.updateRole(client, role_id, { zodu_id, branch_id, role_name, description });
     if (!role) throw new Error('Role not found');
@@ -114,6 +126,9 @@ exports.updateRole = async (role_id, { zodu_id, branch_id, role_name, descriptio
 // ── DELETE ROLE ───────────────────────────────────────────────────────────────
 
 exports.deleteRole = async (role_id, { zodu_id, branch_id }) => {
+  const current = await repo.findRoleById(role_id, { zodu_id, branch_id });
+  if (!current) throw new Error('Role not found');
+  if (isAdminName(current.role_name)) return { success: false, message: `The ${ADMIN_ROLE} role cannot be deleted` };
   const affected = await authRepo.getRoleUserIds({ role_id });
   await withTransaction(async (client) => {
     await repo.deleteAccessByRole(client, role_id);

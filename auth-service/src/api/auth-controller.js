@@ -13,12 +13,16 @@ const {
   readPlatform, setRefreshCookie, clearRefreshCookie, RequestError,
 } = require('../auth/request');
 
+const security = require('../security');
+
 const router = express.Router();
+
+// zodu_id / branch_id in a path: the token's company, a branch the user may use.
+// Route permissions: src/security/rules.js.
+security.protectParams(router);
 
 // Signed-in routes: the ES256 access token (authenticate), plus req.user in
 // the shape these handlers used before (user_id / zodu_id / user_type).
-// Tenant checks on the :zodu_id / :branch_id routes come with the per-service
-// rollout (Phase 3); until then they keep their current ownership checks.
 const withLegacyUser = (req, res, next) => {
   req.user = { user_id: req.auth.userId, zodu_id: req.auth.zoduId, user_type: req.auth.userType };
   next();

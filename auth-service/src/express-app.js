@@ -6,6 +6,7 @@ const { HandleErrorWithLogger } = require('./utils/error/handler');
 const { auth } = require('./auth');
 const authRouter = require('./api/auth-controller');
 const roleRouter = require('./api/role-controller');
+const security = require('./security');
 
 const app = express();
 
@@ -34,6 +35,10 @@ app.get('/health', (req, res) => res.json({ status: 'ok' }));
 // Service-to-service routes (here and /internal/employee/* in role-controller):
 // a known service token first; each route then names the services it accepts.
 app.use('/internal', requireInternal());
+
+// Customer routes: access token, company/branch from the token, route
+// permissions (src/security/rules.js; the token endpoints are public there).
+app.use(security.middleware);
 
 app.use('/', authRouter);
 app.use('/', roleRouter);
