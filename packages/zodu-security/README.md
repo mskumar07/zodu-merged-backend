@@ -12,9 +12,34 @@ Shared security middleware for the Zodu Node services. CommonJS, Node 24.
 | `createRateLimit({ name, limit, windowMs, redis, key })` | Fixed-window limit shared through Redis; 429 with `Retry-After`. Lets requests through if Redis is down. |
 | `requestId()` / `currentRequestId()` | `X-Request-Id` in and out, available to internal calls made while handling the request. |
 | `setServerTimeouts(server)` | `headersTimeout`, `requestTimeout`, `keepAliveTimeout` (slowloris). |
+| `createAccessTokenVerifier(opts)` | Checks customer access tokens: ES256 only, `typ: at+jwt`, `iss` / `aud` / `exp` / `nbf` (30s tolerance), key by `kid` from auth-service's JWKS (cached, refetched for an unknown kid). `verify(token)` → `req.auth` shape; rejects with `TokenError` 401, or 503 when the keys can't be fetched. |
+| `createAuthenticate({ verifier?, respond, ...opts })` | Express middleware on top: `Authorization: Bearer` only, sets `req.auth = { userId, zoduId, branchId, role, perms, userType, platform, sessionId, tokenId, expiresAt }`, 401 with `WWW-Authenticate`, 503. `respond(req, res, status, message)` keeps the service's error body. |
+| `createAuthorize({ respond })` | `requirePermission(...perms)` (all required), `requireRole(...roles)`, `allowAuthenticated()`. The `Admin` role passes permission checks inside its own company. |
+| `MODULE_SLUGS`, `EXTRA_PERMISSIONS`, `permsFromAccessRows()` | Permission names `<slug>:<read\|create\|edit\|delete>` from `tbl_modules` (see `docs/security/auth.md`). |
 
-Still to come: `authenticate()` (ES256 access tokens via JWKS, auth phase),
-`requirePermission()`, the error handler and validation helpers (per-service rollout).
+Still to come: the error handler and validation helpers (per-service rollout).
+
+## Access tokens
+
+```js
+const { createAuthenticate, createAuthorize } = require('@zodu/security');
+const respond = (req, res, status, message) => res.status(status).json({ error: message });
+const { authenticate } = createAuthenticate({ respond });   // JWKS from AUTH_SERVICE_URL
+const { requirePermission } = createAuthorize({ respond });
+
+router.post('/api/purchase', authenticate, requirePermission('purchase:create'), handler);
+// handler: company and branch from req.auth.zoduId / req.auth.branchId, never from the request
+```
+
+| Env var | Meaning |
+|---|---|
+| `AUTH_SERVICE_URL` | JWKS at `<url>/.well-known/jwks.json` (internal network) |
+| `AUTH_JWKS_URL` | overrides that URL |
+| `AUTH_CHECK_REVOKED_SESSIONS` | `true`: also refuse sessions revoked in the last 15 min (pass `redis`, same Redis as auth-service) |
+| `JWT_ISSUER` / `JWT_AUDIENCE` | defaults `zodu-auth` / `zodu-api` |
+
+`jose` is ESM-only; Node 24 loads it with `require()`. Jest needs
+`node --experimental-vm-modules node_modules/jest/bin/jest.js` for that.
 
 ## Service-to-service tokens
 

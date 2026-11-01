@@ -1,21 +1,13 @@
-const {
-  FormateData,
-  GeneratePassword,
-  GenerateSalt,
-  GenerateSignature,
-  ValidatePassword,
-} = require('../utils');
+const { FormateData } = require('../utils');
+const { hashPassword, passwordProblem } = require('../auth/password');
+const { revokeAllForUsers } = require('./session-service');
 
 const repository = require('../repository/auth-repo');
 const businessRepo = require('../repository/business-repo');
 const files = require('../utils/file-client');
 const axios = require('axios');
 const { createInternalHttp } = require('@zodu/security');
-const jwt = require('jsonwebtoken');
-const { APP_SECRET, EMPLOYEE_SERVICE_URL, RESTAURANT_SERVICE_URL, RETAIL_SERVICE_URL } = require('../config');
-
-const REFRESH_SECRET  = APP_SECRET;
-const REFRESH_EXPIRY_DAYS = 7;
+const { EMPLOYEE_SERVICE_URL, RESTAURANT_SERVICE_URL, RETAIL_SERVICE_URL } = require('../config');
 
 // business_type → which service owns that company's units/GST/menu/inventory data
 // Calls to the other services' /internal routes carry this service's token.
@@ -31,30 +23,15 @@ function seedBranchDefaults(business_type, zodu_id, branch_id) {
     .catch(err => console.error('[seed-defaults] failed (non-fatal):', err.message));
 }
 
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-function generateRefreshToken(user_id) {
-  if (!REFRESH_SECRET) {
-    throw new Error('JWT refresh secret is not configured');
-  }
-  return jwt.sign(
-    { sub: user_id },
-    REFRESH_SECRET,
-    { expiresIn: `${REFRESH_EXPIRY_DAYS}d` }
-  );
-}
-
-function refreshTokenExpiresAt() {
-  const d = new Date();
-  d.setDate(d.getDate() + REFRESH_EXPIRY_DAYS);
-  return d;
-}
-
 // ── CreateAccount ─────────────────────────────────────────────────────────────
 
 async function CreateAccount(userInputs) {
   const email = userInputs.email?.toLowerCase() || null;
   const { restaurant_name, phone_number, password, same_for_branch, business_type } = userInputs;
+
+  // The account created here owns the company (Admin role): 12 characters minimum.
+  const weak = passwordProblem(password, { owner: true });
+  if (weak) return FormateData({ error: weak });
 
   if (phone_number) {
     const phoneCheck = await repository.findPhnExist({ phone_number });
@@ -70,8 +47,7 @@ async function CreateAccount(userInputs) {
     }
   }
 
-  const salt          = await GenerateSalt();
-  const password_hash = await GeneratePassword(password, salt);
+  const password_hash = await hashPassword(password);
   const zodu_id       = await repository.getNextZoduId();
 
   // Whole signup (user, roles, access, company, default branch) is one
@@ -130,203 +106,6 @@ async function CreateAccount(userInputs) {
   }
 
   return FormateData({ insertData: { user_id: createdData.user_id } });
-}
-
-// ── AccountLogin ──────────────────────────────────────────────────────────────
-
-async function AccountLogin(userInputs, meta = {}) {
-  const { phone_number, password } = userInputs;
-  const email = userInputs.email?.toLowerCase() || null;
-  // meta = { ip_address, user_agent } — passed in from the route
-
-  if ((!email && !phone_number) || !password) {
-    return FormateData({ error: 'Email/Phone and password are required' });
-  }
-
-  // 1. Fetch user — NOW includes password_hash, zodu_id, user_id, is_active
-  let result;
-  if (email) {
-    result = await repository.findEmailExist({ email });
-  } else {
-    result = await repository.findPhnExist({ phone_number });
-  }
-
-  const dummyHash = '$2b$12$invalidhashusedtopreventtimingattack0000000000000000';
-  const user      = result?.rows?.[0];
-  const isValid   = await ValidatePassword(password, user?.password_hash || dummyHash);
-
-  if (!user || !isValid) {
-    return FormateData({ error: 'Invalid credentials' });
-  }
-  if (user.is_deleted) {
-    return FormateData({ error: 'Account has been deactivated' });
-  }
-  if (!user.is_active) {
-    return FormateData({ error: 'Account is inactive' });
-  }
-
-  // 2. Issue access token (short-lived)
-  const accessToken = await GenerateSignature({
-    user_id:   user.user_id,
-    zodu_id:   user.zodu_id,
-    user_type: user.user_type,
-    email:     user.email,
-    phone:     user.phone,
-  });
-
-  // 3. Issue refresh token + persist session to tbl_user_sessions
-  const refreshToken = generateRefreshToken(user.user_id);
-  const expiresAt    = refreshTokenExpiresAt();
-
-  await repository.createSession({
-    user_id:       user.user_id,
-    refresh_token: refreshToken,
-    ip_address:    meta.ip_address,
-    user_agent:    meta.user_agent,
-    expires_at:    expiresAt,
-  });
-
-  // 4. Update last_login_at
-  await repository.updateLastLogin({ user_id: user.user_id });
-
-  // 5. Fetch all companies the user belongs to
-  const userCompanies = await repository.getUserCompanies({ user_id: user.user_id });
-
-  // 5a. Fetch employee_id + employee_code from employee-service (non-fatal)
-  let employeeInfo = null;
-  try {
-    const primaryCompany = userCompanies.find(c => c.is_primary) || userCompanies[0];
-    if (primaryCompany) {
-      const { data: empRes } = await internalHttp.get(
-        `${EMPLOYEE_SERVICE_URL}/internal/employee/by-user`,
-        { params: { user_id: user.user_id, zodu_id: primaryCompany.zodu_id, branch_id: 'B1' } }
-      );
-      if (empRes.success) employeeInfo = empRes.data;
-    }
-  } catch (_) {}
-
-  // 6. For each company, fetch company details + branches from own DB
-  const companies = await Promise.all(
-    userCompanies.map(async (uc) => {
-      const [companyInfo, branches] = await Promise.all([
-        businessRepo.getCompany(uc.zodu_id).catch(() => null),
-        businessRepo.getBranches(uc.zodu_id).catch(() => []),
-      ]);
-
-      return {
-        zodu_id:          uc.zodu_id,
-        is_primary:       uc.is_primary,
-        store_name:       companyInfo?.business_name    ?? null,
-        company_name:     companyInfo?.business_name    ?? null,
-        owner_admin_name: companyInfo?.owner_admin_name ?? null,
-        gst_no:           companyInfo?.gst_no           ?? null,
-        address_line_1:   companyInfo?.address_line_1   ?? null,
-        address_line_2:   companyInfo?.address_line_2   ?? null,
-        city:             companyInfo?.city              ?? null,
-        district:         companyInfo?.district          ?? null,
-        state:            companyInfo?.state             ?? null,
-        pincode:          companyInfo?.pincode           ?? null,
-        account_number:   companyInfo?.account_number   ?? null,
-        account_type:     companyInfo?.account_type     ?? null,
-        ifsc_code: companyInfo?.ifsc_code ?? null,
-        business_type: companyInfo?.type ?? null,
-        branches, // each branch carries its own subscription_status / subscription_effective_status
-      };
-    })
-  );
-
-  return FormateData({
-    message: 'Login successful',
-    access_token:  accessToken,
-    refresh_token: refreshToken,
-    user: {
-      user_id:       user.user_id,
-      zodu_id:       user.zodu_id,
-      email:         user.email,
-      phone:         user.phone,
-      user_type: user.user_type,
-      login_user: user.login_user,
-      reporting_manager_id: employeeInfo?.reporting_manager_id ?? null,
-      employee_id:   employeeInfo?.employee_id   ?? null,
-      employee_code: employeeInfo?.employee_code ?? null,
-      employee_name: employeeInfo?.employee_name ?? null,
-      employee_branch : employeeInfo?.branch_id ?? null,
-    },
-    companies,
-  });
-}
-
-// ── RefreshToken ──────────────────────────────────────────────────────────────
-
-async function RefreshToken({ refresh_token }) {
-  if (!refresh_token) {
-    return FormateData({ error: 'Refresh token required' });
-  }
-
-  if (!REFRESH_SECRET) {
-    throw new Error('JWT refresh secret is not configured');
-  }
-
-  // 1. Verify JWT signature + expiry first (cheap, no DB hit)
-  let decoded;
-  try {
-    decoded = jwt.verify(refresh_token, REFRESH_SECRET);
-  } catch (err) {
-    return FormateData({ error: 'Invalid or expired refresh token' });
-  }
-
-  // 2. Check it exists in DB and is not revoked
-  const session = await repository.findSessionByRefreshToken({ refresh_token });
-  if (!session) {
-    return FormateData({ error: 'Session not found' });
-  }
-  if (session.is_revoked) {
-    return FormateData({ error: 'Session has been revoked' });
-  }
-  if (new Date(session.expires_at) < new Date()) {
-    return FormateData({ error: 'Session expired' });
-  }
-  if (!session.is_active || session.is_deleted) {
-    return FormateData({ error: 'Account inactive' });
-  }
-
-  // 3. Rotate — revoke old session, issue new tokens
-  await repository.revokeSession({ session_id: session.session_id });
-
-  const newAccessToken  = await GenerateSignature({
-    user_id:   session.user_id,
-    zodu_id:   session.zodu_id,
-    user_type: session.user_type,
-  });
-  const newRefreshToken = generateRefreshToken(session.user_id);
-  const expiresAt       = refreshTokenExpiresAt();
-
-  await repository.createSession({
-    user_id:       session.user_id,
-    refresh_token: newRefreshToken,
-    expires_at:    expiresAt,
-  });
-
-  return FormateData({
-    access_token:  newAccessToken,
-    refresh_token: newRefreshToken,
-  });
-}
-
-// ── Logout ────────────────────────────────────────────────────────────────────
-
-async function Logout({ refresh_token }) {
-  if (!refresh_token) {
-    return FormateData({ error: 'Refresh token required' });
-  }
-
-  const session = await repository.findSessionByRefreshToken({ refresh_token });
-  if (!session || session.is_revoked) {
-    return FormateData({ message: 'Already logged out' });
-  }
-
-  await repository.revokeSession({ session_id: session.session_id });
-  return FormateData({ message: 'Logged out successfully' });
 }
 
 // ── AddCompany ────────────────────────────────────────────────────────────────
@@ -689,7 +468,10 @@ async function DeleteBranch({ zodu_id, branch_id, user_id }) {
   }
 
   try {
+    // Members' tokens may name the deleted branch: every member signs in again.
+    const members = await repository.getCompanyUserIds({ zodu_id });
     const authResults = await businessRepo.purgeBranch(zodu_id, branch_id);
+    await revokeAllForUsers(members, 'branch_deleted');
     return FormateData({
       message: 'Branch deleted successfully',
       results: [...outcome.results, { service: 'auth-service', data: authResults }],
@@ -738,7 +520,10 @@ async function DeleteCompany({ zodu_id, user_id }) {
   }
 
   try {
+    // Collected before the purge removes tbl_user_companies.
+    const members = await repository.getCompanyUserIds({ zodu_id });
     const authResults = await businessRepo.purgeCompany(zodu_id);
+    await revokeAllForUsers(members, 'company_deleted');
     return FormateData({
       message: 'Company deleted successfully',
       results: [...outcome.results, { service: 'auth-service', data: authResults }],
@@ -1024,9 +809,6 @@ async function GetRoleAccess({ user_id, zodu_id, branch_id }) {
 
 module.exports = {
   CreateAccount,
-  AccountLogin,
-  RefreshToken,
-  Logout,
   AddCompany,
   AddBranch,
   EditCompany,

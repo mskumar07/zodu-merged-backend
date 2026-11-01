@@ -1,5 +1,5 @@
 const dotEnv = require('dotenv');
-const { callerTokensFromEnv } = require('@zodu/security');
+const { callerTokensFromEnv, jwksUrlFromEnv } = require('@zodu/security');
 
 if (process.env.NODE_ENV !== 'production') {
   const configFile = process.env.NODE_ENV ? `./.env.${process.env.NODE_ENV}` : './.env';
@@ -19,8 +19,6 @@ module.exports = {
   DB_PORT: int(process.env.DB_PORT, 5432),
   DB_HOSTNAME: process.env.DB_HOSTNAME,
   DB_NAME: process.env.DB_NAME || 'file_service',
-  // Same secret auth-service signs access tokens with (GenerateSignature).
-  APP_SECRET: process.env.APP_SECRET,
 
   // "internal" client: private network, does put/get/stat/remove.
   MINIO_INTERNAL_URL: process.env.MINIO_INTERNAL_URL || 'http://localhost:9000',
@@ -40,6 +38,10 @@ module.exports = {
   PUBLIC_FILE_BASE_URL: (process.env.PUBLIC_FILE_BASE_URL || 'http://localhost:5001').replace(/\/+$/, ''),
 
   AUTH_SERVICE_URL: process.env.AUTH_SERVICE_URL || 'http://auth-service:4000',
+  // Access tokens are checked against auth-service's public keys (ES256).
+  AUTH_JWKS_URL: jwksUrlFromEnv({ AUTH_SERVICE_URL: 'http://auth-service:4000', ...process.env }),
+  // Refuse tokens of sessions revoked in the last 15 minutes (Redis deny-list).
+  AUTH_CHECK_REVOKED_SESSIONS: process.env.AUTH_CHECK_REVOKED_SESSIONS === 'true',
   ACCESS_CACHE_TTL_MS: int(process.env.ACCESS_CACHE_TTL_MS, 60_000),
   // This service's own token, sent to auth-service's /internal/user-branch-access.
   INTERNAL_TOKEN: process.env.INTERNAL_TOKEN,

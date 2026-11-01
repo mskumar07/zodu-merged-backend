@@ -10,9 +10,11 @@ const { createFileRouter } = require('./api/file-controller');
 const { createInternalRouter } = require('./api/internal-controller');
 const { createLegacyRouter } = require('./api/legacy-controller');
 
-// deps: { config, repo, storage, authClient, rateLimitStore }. Built in server.js
-// from the real database / MinIO / Redis; tests pass fakes.
-function createApp({ config, repo, storage, authClient, rateLimitStore }) {
+// deps: { config, repo, storage, authClient, tokenVerifier, rateLimitStore }. Built
+// in server.js from the real database / MinIO / Redis / JWKS; tests pass fakes.
+function createApp({
+  config, repo, storage, authClient, tokenVerifier, rateLimitStore,
+}) {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', config.TRUST_PROXY);
@@ -37,7 +39,7 @@ function createApp({ config, repo, storage, authClient, rateLimitStore }) {
         res.setHeader('Access-Control-Allow-Origin', origin);
         res.setHeader('Vary', 'Origin');
         res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Branch-Id, X-Request-Id');
+        res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Request-Id');
         res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Retry-After, RateLimit-Remaining, X-Request-Id');
         if (req.method === 'OPTIONS') return res.sendStatus(204);
       }
@@ -65,7 +67,7 @@ function createApp({ config, repo, storage, authClient, rateLimitStore }) {
   });
 
   const files = createFileService({ repo, storage, config });
-  const { requireUser } = createContext({ appSecret: config.APP_SECRET, authClient });
+  const { requireUser } = createContext({ verifier: tokenVerifier, authClient });
   const requireInternal = createRequireInternal(config.INTERNAL_TOKENS);
 
   app.get('/health', (_req, res) => res.json({ success: true, status: 'ok' }));

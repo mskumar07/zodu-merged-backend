@@ -2,12 +2,13 @@
 // whole HTTP surface can be tested without infrastructure.
 process.env.NODE_ENV = 'test';
 
+const crypto = require('crypto');
 const { Readable } = require('stream');
-const jwt = require('jsonwebtoken');
+const jose = require('jose');
+const { createAccessTokenVerifier } = require('@zodu/security');
 const { createApp } = require('../src/express-app');
 const { createMemoryStore } = require('../src/middleware/rate-limit');
 
-const SECRET = 'test-app-secret';
 const INTERNAL_TOKEN = 'i'.repeat(40);
 const USERS = {
   admin:   '11111111-1111-4111-8111-111111111111',
@@ -15,8 +16,26 @@ const USERS = {
   other:   '33333333-3333-4333-8333-333333333333',
 };
 
-const token = (userId = USERS.admin, zoduId = 'Z001', secret = SECRET) =>
-  jwt.sign({ user_id: userId, zodu_id: zoduId, user_type: 'owner' }, secret, { expiresIn: '1h' });
+// auth-service's signing key, as published in its JWKS.
+const KEY = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+const KID = 'test-key';
+const keySet = jose.createLocalJWKSet({ keys: [{ ...KEY.publicKey.export({ format: 'jwk' }), kid: KID, alg: 'ES256', use: 'sig' }] });
+const verifier = createAccessTokenVerifier({ keySet });
+
+// An ES256 access token like auth-service issues (sync, so tests can build
+// headers inline). branchId null: a token without a branch.
+function token(userId = USERS.admin, zoduId = 'Z001', branchId = 'B1', { key = KEY.privateKey, claims = {} } = {}) {
+  const now = Math.floor(Date.now() / 1000);
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const head = b64({ alg: 'ES256', typ: 'at+jwt', kid: KID });
+  const body = b64({
+    sub: userId, zid: zoduId, ...(branchId && { bid: branchId }), role: 'Admin', perms: [], utype: 'super_admin',
+    plt: 'web', sid: crypto.randomUUID(), jti: crypto.randomUUID(),
+    iss: 'zodu-auth', aud: 'zodu-api', iat: now, nbf: now, exp: now + 900, ...claims,
+  });
+  const sig = crypto.sign('sha256', Buffer.from(`${head}.${body}`), { key, dsaEncoding: 'ieee-p1363' });
+  return `${head}.${body}.${sig.toString('base64url')}`;
+}
 
 function fakeRepo() {
   const rows = new Map();
@@ -138,7 +157,6 @@ function makeApp(overrides = {}) {
   const storage = fakeStorage();
   const authClient = fakeAuth();
   const config = {
-    APP_SECRET: SECRET,
     PRESIGNED_URL_TTL: 900,
     PUBLIC_FILE_BASE_URL: 'https://api.test',
     INTERNAL_TOKENS: { restaurant: INTERNAL_TOKEN },
@@ -149,7 +167,11 @@ function makeApp(overrides = {}) {
     LEGACY_BUCKET_NAME: 'zodu',
     ...overrides.config,
   };
-  const app = createApp({ config, repo, storage, authClient, rateLimitStore: overrides.store || createMemoryStore() });
+  const app = createApp({
+    config, repo, storage, authClient,
+    tokenVerifier: overrides.tokenVerifier || verifier,
+    rateLimitStore: overrides.store || createMemoryStore(),
+  });
   return { app, repo, storage, authClient };
 }
 
@@ -190,4 +212,6 @@ function zip(files) {
 const DOCX_CT = '<?xml version="1.0"?><Types><Override PartName="/x" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>';
 const docx = (extra = {}) => zip({ '[Content_Types].xml': DOCX_CT, 'word/document.xml': '<w:document/>', ...extra });
 
-module.exports = { SECRET, INTERNAL_TOKEN, USERS, token, makeApp, PNG, pdf, docx };
+module.exports = {
+  INTERNAL_TOKEN, USERS, token, verifier, makeApp, PNG, pdf, docx,
+};

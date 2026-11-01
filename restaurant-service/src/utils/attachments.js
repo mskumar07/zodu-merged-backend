@@ -11,9 +11,8 @@
 // If file-service can't be reached while saving, the entries are stored as
 // sent: the staged links keep working, and the save never fails because of it.
 
-const jwt = require('jsonwebtoken');
 const files = require('./file-client');
-const { APP_SECRET } = require('../config');
+const { optionalAuth } = require('./access-token');
 
 // file-service ids are [A-Za-z0-9_-]{1,64}; record ids like "PUR/24-25/001" are mapped onto that.
 const entityKey = (id) => String(id).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64);
@@ -62,15 +61,10 @@ function claimImage(row, { field, idField }) {
 
 // Who is uploading to /upload: the token's company if one was sent (the
 // route never required it), and the client address for rate limiting.
-function uploadCtx(req) {
-  const header = req.get('Authorization') || '';
-  let payload = null;
-  if (header.startsWith('Bearer ') && APP_SECRET) {
-    try {
-      payload = jwt.verify(header.slice(7), APP_SECRET, { algorithms: ['HS256'] });
-    } catch { /* anonymous upload, as before */ }
-  }
-  return files.requestCtx(req, { zoduId: payload?.zodu_id, userId: payload?.user_id });
+// An invalid token is an anonymous upload, as before.
+async function uploadCtx(req) {
+  const auth = await optionalAuth(req);
+  return files.requestCtx(req, { zoduId: auth?.zoduId, userId: auth?.userId });
 }
 
 module.exports = { storedAttachments, removeStored, claimImage, uploadCtx, entityKey };

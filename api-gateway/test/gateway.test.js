@@ -6,6 +6,8 @@ const seen = [];
 const stub = http.createServer((req, res) => {
   seen.push({ url: req.url, method: req.method, headers: req.headers });
   res.setHeader('Content-Type', 'application/json');
+  // A service still answering CORS itself, the way cors() does by default.
+  if (req.url.includes('cors-star')) res.setHeader('Access-Control-Allow-Origin', '*');
   res.end(JSON.stringify({ reached: req.url }));
 });
 
@@ -20,6 +22,7 @@ beforeAll(async () => {
   process.env.CORS_ORIGINS = 'https://app.myzodu.com,https://myzodu.com';
   process.env.AUTH_RATE_LIMIT_PER_MIN = '3';
   process.env.MAX_BODY_BYTES = '1000';
+  process.env.REDIS_URL = '';   // in-memory limits; a local .env must not point the tests at Redis
   ({ app, isBlockedPath } = require('../gateway'));
 });
 afterAll(() => stub.close());
@@ -141,6 +144,14 @@ describe('CORS', () => {
     const res = await request(app).get('/auth/api/my-companies').set('Origin', 'https://evil.example');
     expect(res.headers['access-control-allow-origin']).toBeUndefined();
   });
+
+  test('CORS headers set by a service never reach the browser', async () => {
+    const evil = await request(app).get('/retail/api/cors-star').set('Origin', 'https://evil.example');
+    expect(evil.status).toBe(200);
+    expect(evil.headers['access-control-allow-origin']).toBeUndefined();
+    const listed = await request(app).get('/retail/api/cors-star').set('Origin', 'https://app.myzodu.com');
+    expect(listed.headers['access-control-allow-origin']).toBe('https://app.myzodu.com');
+  });
 });
 
 test('security headers on API responses', async () => {
@@ -167,6 +178,12 @@ test('login, sign-up and refresh share a tight per-IP limit with Retry-After', a
   expect(Number(res.headers['retry-after'])).toBeGreaterThan(0);
   // other auth routes are not affected
   expect((await request(app).get('/auth/api/my-companies')).status).toBe(200);
+});
+
+test('the auth-service public keys are reachable at /auth/.well-known/jwks.json', async () => {
+  const res = await request(app).get('/auth/.well-known/jwks.json');
+  expect(res.status).toBe(200);
+  expect(res.body.reached).toBe('/.well-known/jwks.json');
 });
 
 test('payroll is not proxied', async () => {

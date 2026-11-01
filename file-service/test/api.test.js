@@ -9,9 +9,10 @@ const {
 const { MODULES } = require('../src/storage/modules');
 
 const auth = (t = token()) => ({ Authorization: `Bearer ${t}` });
-const asAdmin = (branch = 'B1') => ({ ...auth(), ...(branch && { 'X-Branch-Id': branch }) });
-const asCashier = (branch = 'B1') => ({ ...auth(token(USERS.cashier)), 'X-Branch-Id': branch });
-const asOtherTenant = () => ({ ...auth(token(USERS.other, 'Z002')), 'X-Branch-Id': 'B1' });
+// The branch comes from the token (auth-service's switch-context).
+const asAdmin = (branch = 'B1') => auth(token(USERS.admin, 'Z001', branch));
+const asCashier = (branch = 'B1') => auth(token(USERS.cashier, 'Z001', branch));
+const asOtherTenant = () => auth(token(USERS.other, 'Z002', 'B1'));
 
 async function upload(app, { module, entity = 'E1', files, headers = asAdmin(), category }) {
   const req = request(app).post(`/${module}/${entity}${category ? `?category=${category}` : ''}`).set(headers);
@@ -61,7 +62,7 @@ test('unknown module and invalid category are 400', async () => {
   assert.equal((await upload(app, { module: 'expense', entity: 'a.b', files: [[PNG, 'a.png']] })).status, 400);
 });
 
-test('branch module without X-Branch-Id is 400; tenant module goes to _shared', async () => {
+test('branch module with a token without a branch is 400; tenant module goes to _shared', async () => {
   const { app, repo } = makeApp();
   assert.equal((await upload(app, { module: 'expense', headers: asAdmin(null), files: [[PNG, 'a.png']] })).status, 400);
   const res = await upload(app, { module: 'branding', category: 'logo', headers: asAdmin(null), files: [[PNG, 'logo.png']] });
@@ -255,10 +256,19 @@ test('no token or invalid token is 401', async () => {
   const id = await seed(app);
   assert.equal((await request(app).get(`/${id}/url`)).status, 401);
   assert.equal((await request(app).get(`/${id}/url`).set(auth('garbage'))).status, 401);
-  assert.equal((await request(app).get(`/${id}/url`).set(auth(token(USERS.admin, 'Z001', 'wrong-secret')))).status, 401);
+  // signed by another key
+  const otherKey = require('crypto').generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey;
+  assert.equal((await request(app).get(`/${id}/url`).set(auth(token(USERS.admin, 'Z001', 'B1', { key: otherKey })))).status, 401);
+  // expired
+  const past = Math.floor(Date.now() / 1000) - 3600;
+  const expired = token(USERS.admin, 'Z001', 'B1', { claims: { iat: past, nbf: past, exp: past + 60 } });
+  assert.equal((await request(app).get(`/${id}/url`).set(auth(expired))).status, 401);
   // alg "none" must not pass
-  const unsigned = `${Buffer.from('{"alg":"none","typ":"JWT"}').toString('base64url')}.${Buffer.from(JSON.stringify({ user_id: USERS.admin, zodu_id: 'Z001' })).toString('base64url')}.`;
+  const unsigned = `${Buffer.from('{"alg":"none","typ":"at+jwt"}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: USERS.admin, zid: 'Z001' })).toString('base64url')}.`;
   assert.equal((await request(app).get(`/${id}/url`).set(auth(unsigned))).status, 401);
+  // the old HS256 tokens signed with APP_SECRET
+  const legacy = require('jsonwebtoken').sign({ user_id: USERS.admin, zodu_id: 'Z001' }, 'test-app-secret', { expiresIn: '1h' });
+  assert.equal((await request(app).get(`/${id}/url`).set(auth(legacy))).status, 401);
   assert.equal((await upload(app, { module: 'expense', headers: { 'X-Branch-Id': 'B1' }, files: [[PNG, 'a.png']] })).status, 401);
 });
 
@@ -280,12 +290,29 @@ test('another branch gets 404', async () => {
   assert.equal((await request(app).get(`/${id}/url`).set(asAdmin(null))).status, 404);
 });
 
-test('X-Branch-Id the user is not assigned to (or that does not exist) is 404', async () => {
+test('a token branch the user is no longer assigned to (or that does not exist) is 404', async () => {
   const { app } = makeApp();
   const id = await seed(app, { headers: asAdmin('B1') });
   assert.equal((await request(app).get(`/${id}/url`).set(asCashier('B2'))).status, 404);
   assert.equal((await request(app).get(`/${id}/url`).set(asAdmin('B9'))).status, 404);
-  assert.equal((await request(app).get(`/${id}/url`).set({ ...auth(), 'X-Branch-Id': '_shared' })).status, 400);
+  // "_shared" is a storage folder, never a branch
+  assert.equal((await request(app).get(`/${id}/url`).set(asAdmin('_shared'))).status, 401);
+});
+
+test('the X-Branch-Id header is ignored: the token decides the branch', async () => {
+  const { app, repo } = makeApp();
+  const id = await seed(app, { headers: asAdmin('B1') });
+  assert.equal((await request(app).get(`/${id}/url`).set({ ...asAdmin('B2'), 'X-Branch-Id': 'B1' })).status, 404);
+  const res = await upload(app, { module: 'expense', headers: { ...asCashier('B1'), 'X-Branch-Id': 'B2' }, files: [[PNG, 'a.png']] });
+  assert.equal(res.status, 201);
+  assert.equal(repo.rows.get(res.body.data[0].file_id).branch_id, 'B1');
+});
+
+test('auth-service keys unreachable: 503, not 401', async () => {
+  const { createAccessTokenVerifier } = require('@zodu/security');
+  const down = createAccessTokenVerifier({ jwksUrl: 'http://127.0.0.1:9/.well-known/jwks.json' });
+  const { app } = makeApp({ tokenVerifier: down });
+  assert.equal((await request(app).get('/expense/E1').set(asAdmin())).status, 503);
 });
 
 test('missing module permission is 403; ownership is checked first', async () => {
@@ -311,7 +338,7 @@ test('_shared files are readable from any of the tenant branches', async () => {
 
 test('a user removed from the company is refused even with a valid token', async () => {
   const { app } = makeApp();
-  const res = await request(app).get('/expense/E1').set({ ...auth(token(USERS.other, 'Z001')), 'X-Branch-Id': 'B1' });
+  const res = await request(app).get('/expense/E1').set(auth(token(USERS.other, 'Z001', 'B1')));
   assert.equal(res.status, 403);
 });
 

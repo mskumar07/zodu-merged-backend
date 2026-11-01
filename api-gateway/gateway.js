@@ -103,7 +103,7 @@ app.use((req, res, next) => {
 });
 
 // Sign-up and token routes: much tighter than the global per-IP limit.
-// auth-service adds per-account lockout on top (Phase 2).
+// auth-service adds per-account lockout and its own per-IP limits on top.
 const authLimit = createRateLimit({
   name: 'auth',
   limit: Number(process.env.AUTH_RATE_LIMIT_PER_MIN) || 30,
@@ -134,6 +134,14 @@ const proxyError = (serviceName) => (err, req, res) => {
   if (!res.headersSent) res.status(502).json({ error: `${serviceName} unavailable` });
 };
 
+// CORS is answered here only. Several services still run cors() with '*';
+// their Access-Control-* headers would override the allowlist above.
+function dropUpstreamCors(proxyRes) {
+  for (const name of Object.keys(proxyRes.headers)) {
+    if (name.startsWith('access-control-')) delete proxyRes.headers[name];
+  }
+}
+
 // xfwd passes the client IP on (X-Forwarded-For), so services see real clients.
 const proxy = (target, serviceName, extra = {}) => createProxyMiddleware({
   target,
@@ -141,7 +149,7 @@ const proxy = (target, serviceName, extra = {}) => createProxyMiddleware({
   xfwd: true,
   proxyTimeout: PROXY_TIMEOUT_MS,
   timeout: PROXY_TIMEOUT_MS,
-  on: { error: proxyError(serviceName) },
+  on: { error: proxyError(serviceName), proxyRes: dropUpstreamCors },
   ...extra,
 });
 

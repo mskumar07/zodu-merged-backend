@@ -28,6 +28,10 @@ services:
       PAYROLL_SERVICE_URL: http://payroll-service:4004
       CHECKLIST_SERVICE_URL: http://checklist-service:4005
       FILE_SERVICE_URL: http://file-service:4007
+    # Refresh-token sessions, login lockout and rate limits (REDIS_URL, JWT_PRIVATE_KEY
+    # and JWT_KID come from the env file: scripts/gen-secrets.sh).
+    depends_on:
+      - redis
 
   # Retail Service
   retail-service:
@@ -208,9 +212,9 @@ services:
       - redis
       - auth-service
 
-  # Shared state: rate-limit counters (gateway, file-service) and, from the
-  # auth phase on, refresh-token sessions — so it is persisted (AOF) and never
-  # evicts keys. Internal only, password from ./env/redis.uat.env (REDIS_PASSWORD).
+  # Shared state: rate-limit counters (gateway, file-service, auth-service) and
+  # auth-service's refresh-token sessions, so it is persisted (AOF) and never
+  # evicts keys: losing it signs every user out. Internal only, password from ./env/redis.uat.env (REDIS_PASSWORD).
   redis:
     image: redis:7.4-alpine
     container_name: uat-redis

@@ -1,57 +1,46 @@
-// Who is calling, for which company and branch. The one place that decides it:
-// when tokens gain branch_id / company switching (JWT upgrade), only
-// getRequestContext changes.
+// Who is calling, for which company and branch. The one place that decides it.
 //
-//   userId, zoduId  only from the verified token
-//   branchId        X-Branch-Id header, checked against tbl_user_roles via auth-service
+//   userId, zoduId, branchId   only from the verified access token (ES256, via
+//                              auth-service's JWKS); a user changes company or
+//                              branch with auth-service's /api/switch-context
 //
-// zodu_id / branch_id / user_id are never read from the body, query or path.
+// The X-Branch-Id header is not read on user routes, and zodu_id / branch_id /
+// user_id are never read from the body, query or path. Membership and module
+// permissions are still checked live with auth-service, so a role removed in
+// the last 15 minutes takes effect here at once.
 
-const jwt = require('jsonwebtoken');
 const { createInternalAuth } = require('@zodu/security');
 const {
-  AuthenticationError, ForbiddenError, NotFoundError, ValidationError,
+  AuthenticationError, ForbiddenError, NotFoundError, UnavailableError, ValidationError,
 } = require('../utils/error/errors');
 const { getModule } = require('../storage/modules');
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const BRANCH_ID = /^[A-Za-z0-9-][A-Za-z0-9_-]{0,63}$/;   // "_" prefix is reserved for _shared
+const BEARER = /^Bearer ([A-Za-z0-9._~+/-]+=*)$/;
 
 const ACTIONS = { read: 'read', create: 'create', delete: 'delete' };
 
-function createContext({ appSecret, authClient }) {
-  function verifyToken(req) {
-    const header = req.get('Authorization') || '';
-    const token = header.startsWith('Bearer ') ? header.slice(7).trim() : null;
-    if (!token) throw AuthenticationError('Authorization token missing');
-    let payload;
+// verifier: createAccessTokenVerifier() from @zodu/security
+function createContext({ verifier, authClient }) {
+  async function verifyToken(req) {
+    const match = BEARER.exec(req.get('Authorization') || '');
+    if (!match) throw AuthenticationError('Authorization token missing');
     try {
-      // Same check as auth-service's ValidateSignature, pinned to HS256.
-      payload = jwt.verify(token, appSecret, { algorithms: ['HS256'] });
-    } catch {
+      return await verifier.verify(match[1]);
+    } catch (err) {
+      if (err.status === 503) throw UnavailableError('Authentication is temporarily unavailable');
       throw AuthenticationError('Unauthorized: Invalid token');
     }
-    if (typeof payload.user_id !== 'string' || !SAFE_ID.test(String(payload.zodu_id || ''))) {
-      throw AuthenticationError('Unauthorized: Invalid token');
-    }
-    return payload;
   }
 
   async function getRequestContext(req) {
-    const payload = verifyToken(req);
-    const userId = payload.user_id;
-    const zoduId = payload.zodu_id;
-
-    const branchHeader = req.get('X-Branch-Id');
-    let branchId = null;
-    if (branchHeader !== undefined && branchHeader !== '') {
-      if (!BRANCH_ID.test(branchHeader)) throw ValidationError('Invalid X-Branch-Id header');
-      branchId = branchHeader;
-    }
+    const { userId, zoduId, branchId } = await verifyToken(req);
+    if (branchId && !BRANCH_ID.test(branchId)) throw AuthenticationError('Unauthorized: Invalid token');
 
     const access = await authClient.getAccess({ userId, zoduId, branchId });
     if (!access?.is_member) throw ForbiddenError('You no longer have access to this company');
-    // A branch the user isn't assigned to looks exactly like one that doesn't exist.
+    // A branch the user lost access to looks exactly like one that doesn't exist.
     if (branchId && !(access.branch_exists && access.has_branch_access)) throw NotFoundError('Not found');
 
     return { userId, zoduId, branchId, access };

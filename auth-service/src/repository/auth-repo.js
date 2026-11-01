@@ -100,42 +100,6 @@ async function AccountCreationQuery(client, { zodu_id, phone_number, email, pass
   return { user_id, role_id };
 }
 
-// ── session management ────────────────────────────────────────────────────────
-
-async function createSession({ user_id, refresh_token, ip_address, user_agent, expires_at }) {
-  const result = await conn.query(
-    `INSERT INTO tbl_user_sessions
-       (user_id, refresh_token, ip_address, user_agent, expires_at, is_revoked)
-     VALUES ($1, $2, $3, $4, $5, false)
-     RETURNING session_id, expires_at`,
-    [user_id, refresh_token, ip_address || null, user_agent || null, expires_at]
-  );
-  return result.rows[0];
-}
-
-async function findSessionByRefreshToken({ refresh_token }) {
-  const result = await conn.query(
-    `SELECT s.session_id, s.user_id, s.expires_at, s.is_revoked,
-            u.user_type, u.is_active, u.is_deleted,
-            uc.zodu_id
-     FROM tbl_user_sessions s
-     JOIN tbl_users u ON u.user_id = s.user_id
-     LEFT JOIN tbl_user_companies uc ON uc.user_id = s.user_id AND uc.is_primary = true
-     WHERE s.refresh_token = $1`,
-    [refresh_token]
-  );
-  return result.rows[0] || null;
-}
-
-async function revokeSession({ session_id }) {
-  await conn.query(
-    `UPDATE tbl_user_sessions
-     SET is_revoked = true, updated_at = now()
-     WHERE session_id = $1`,
-    [session_id]
-  );
-}
-
 async function updateLastLogin({ user_id }) {
   await conn.query(
     `UPDATE tbl_users SET last_login_at = now() WHERE user_id = $1`,
@@ -225,6 +189,80 @@ async function getUserBranchAccess({ user_id, zodu_id, branch_id }) {
   return { ...flags, permissions };
 }
 
+// ── login / token context ─────────────────────────────────────────────────────
+
+// The account behind a login identifier, whatever its state: the caller logs
+// why a login was refused (inactive, deleted, login_user=false) and answers
+// every case with the same generic error.
+async function findUserForLogin({ email, phone_number }) {
+  const [column, value] = email ? ['email', email] : ['phone', phone_number];
+  const { rows } = await conn.query(
+    `SELECT user_id, email, phone, password_hash, user_type, is_active, is_deleted, login_user
+       FROM tbl_users
+      WHERE ${column} = $1
+      ORDER BY login_user DESC, created_at ASC
+      LIMIT 1`,
+    [value]
+  );
+  return rows[0] || null;
+}
+
+async function findUserState({ user_id }) {
+  const { rows } = await conn.query(
+    `SELECT user_id, email, phone, user_type, is_active, is_deleted, login_user
+       FROM tbl_users WHERE user_id = $1`,
+    [user_id]
+  );
+  return rows[0] || null;
+}
+
+async function updatePasswordHash({ user_id, password_hash }) {
+  await conn.query(
+    `UPDATE tbl_users SET password_hash = $2, updated_at = now() WHERE user_id = $1`,
+    [user_id, password_hash]
+  );
+}
+
+// The user's roles in one company: { role_name, branch_id } (branch_id NULL = company-wide).
+async function getUserRolesInCompany({ user_id, zodu_id }) {
+  const { rows } = await conn.query(
+    `SELECT r.role_name, ur.branch_id
+       FROM tbl_user_roles ur
+       JOIN tbl_roles r ON r.role_id = ur.role_id
+      WHERE ur.user_id = $1 AND ur.zodu_id = $2 AND r.zodu_id = $2
+      ORDER BY (r.role_name = 'Admin') DESC, ur.created_at ASC`,
+    [user_id, zodu_id]
+  );
+  return rows;
+}
+
+async function getActiveBranchIds({ zodu_id }) {
+  const { rows } = await conn.query(
+    `SELECT branch_id FROM tbl_branch
+      WHERE zodu_id = $1 AND COALESCE(active, true) = true
+      ORDER BY branch_id ASC`,
+    [zodu_id]
+  );
+  return rows.map((r) => r.branch_id);
+}
+
+// Users whose permissions change with this role (session revocation).
+async function getRoleUserIds({ role_id }) {
+  const { rows } = await conn.query(
+    `SELECT DISTINCT user_id FROM tbl_user_roles WHERE role_id = $1`,
+    [role_id]
+  );
+  return rows.map((r) => r.user_id);
+}
+
+async function getCompanyUserIds({ zodu_id }) {
+  const { rows } = await conn.query(
+    `SELECT DISTINCT user_id FROM tbl_user_companies WHERE zodu_id = $1`,
+    [zodu_id]
+  );
+  return rows.map((r) => r.user_id);
+}
+
 async function createDefaultRoleForCompany({ user_id, zodu_id }) {
   const client = await conn.connect();
   try {
@@ -283,13 +321,17 @@ module.exports = {
   findPhnExist,
   findUserById,
   getNextZoduId,
-  createSession,
-  findSessionByRefreshToken,
-  revokeSession,
   updateLastLogin,
   addUserCompany,
   getUserCompanies,
   createDefaultRoleForCompany,
   getUserRoleAccess,
   getUserBranchAccess,
+  findUserForLogin,
+  findUserState,
+  updatePasswordHash,
+  getUserRolesInCompany,
+  getActiveBranchIds,
+  getRoleUserIds,
+  getCompanyUserIds,
 };

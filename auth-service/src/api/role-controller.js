@@ -107,7 +107,7 @@ router.post('/internal/employee/create-user', fromEmployee, async (req, res) => 
     const result = await roleService.createEmployeeUser(input);
     return res.status(result.success ? 201 : 400).json(result);
   } catch (err) {
-    const status = err.message.includes('already registered') ? 409 : 500;
+    const status = err.status || (err.message.includes('already registered') ? 409 : 500);
     return res.status(status).json({ success: false, error: err.message });
   }
 });
@@ -151,7 +151,7 @@ router.put('/internal/employee/:user_id/update-user', fromEmployee, async (req, 
     const result = await roleService.updateEmployeeUser(req.params.user_id, req.body);
     return res.status(200).json(result);
   } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(err.status || 500).json({ success: false, error: err.message });
   }
 });
 
@@ -183,7 +183,7 @@ router.put('/internal/employee/login-details', fromEmployee, async (req, res) =>
     const result = await roleService.setEmployeeLogin(input);
     return res.status(200).json(result);
   } catch (err) {
-    const status = err.message === 'Role not found' ? 404 : err.message.includes('already registered') ? 409 : (err.message.includes('phone is required') || err.message.includes('Password is required')) ? 400 : 500;
+    const status = err.status || (err.message === 'Role not found' ? 404 : err.message.includes('already registered') ? 409 : (err.message.includes('phone is required') || err.message.includes('Password is required')) ? 400 : 500);
     return res.status(status).json({ success: false, error: err.message });
   }
 });

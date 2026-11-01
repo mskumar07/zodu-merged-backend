@@ -213,6 +213,10 @@ apply "$AUTH_DB" auth-service/migrations/bank_details_account_number_nullable.sq
 # auth-service — file-service ids for the company logo and invoice images (Phase 2).
 apply "$AUTH_DB" auth-service/migrations/file_service_file_ids.sql
 
+# auth-service — refresh-token families (session rows without the token) and
+# tbl_security_events (security Phase 2). Apply before the new image serves traffic.
+apply "$AUTH_DB" auth-service/migrations/auth_sessions_security_events.sql
+
 # retail-service / restaurant-service — item description
 apply "$RETAIL_DB"     retail-service/migrations/item_description.sql
 apply "$RESTAURANT_DB" restaurant-service/migrations/item_description.sql

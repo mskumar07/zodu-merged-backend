@@ -38,7 +38,7 @@ test('staging needs no tenant, every other internal call does', async () => {
 
 test('users cannot reach the staging module through the public API', async () => {
   const { app } = makeApp();
-  const res = await request(app).post('/uploads/E1').set({ Authorization: `Bearer ${token()}`, 'X-Branch-Id': 'B1' })
+  const res = await request(app).post('/uploads/E1').set({ Authorization: `Bearer ${token()}` })
     .attach('files', PNG, 'a.png');
   assert.equal(res.status, 400);
 });

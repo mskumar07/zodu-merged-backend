@@ -6,31 +6,36 @@ const storage = require('./storage/minio-client');
 const { createAuthClient } = require('./clients/auth-client');
 const { createMemoryStore, createRedisStore } = require('./middleware/rate-limit');
 const { createPurgeJob } = require('./jobs/purge-deleted');
+const { createAccessTokenVerifier } = require('@zodu/security');
 
 function checkConfig() {
-  const missing = ['APP_SECRET', 'MINIO_ACCESSKEY', 'MINIO_SECRETKEY', 'INTERNAL_TOKEN', 'DB_HOSTNAME']
+  const missing = ['MINIO_ACCESSKEY', 'MINIO_SECRETKEY', 'INTERNAL_TOKEN', 'DB_HOSTNAME']
     .filter((k) => !config[k]);
-  if (config.NODE_ENV === 'production' && !config.REDIS_URL) missing.push('REDIS_URL');
+  if ((config.NODE_ENV === 'production' || config.AUTH_CHECK_REVOKED_SESSIONS) && !config.REDIS_URL) missing.push('REDIS_URL');
   if (missing.length) throw new Error(`Missing configuration: ${missing.join(', ')}`);
   if (!Object.keys(config.INTERNAL_TOKENS).length) {
     logger.warn('No INTERNAL_TOKEN_<CALLER> configured (min 32 chars): /internal/* will refuse every call');
   }
 }
 
-function rateLimitStore() {
-  if (!config.REDIS_URL) {
-    logger.warn('REDIS_URL not set: rate limits are per instance (local use only)');
-    return createMemoryStore();
-  }
+function connectRedis() {
+  if (!config.REDIS_URL) return null;
   const Redis = require('ioredis');
   const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: 1, enableOfflineQueue: false });
   redis.on('error', (err) => logger.warn({ err: err.message }, 'Redis error'));
-  return createRedisStore(redis);
+  return redis;
+}
+
+function rateLimitStore(redis) {
+  if (redis) return createRedisStore(redis);
+  logger.warn('REDIS_URL not set: rate limits are per instance (local use only)');
+  return createMemoryStore();
 }
 
 async function StartServer() {
   checkConfig();
   await storage.assertBucket();
+  const redis = connectRedis();
 
   const app = createApp({
     config,
@@ -39,7 +44,13 @@ async function StartServer() {
     authClient: createAuthClient({
       baseUrl: config.AUTH_SERVICE_URL, token: config.INTERNAL_TOKEN, ttlMs: config.ACCESS_CACHE_TTL_MS,
     }),
-    rateLimitStore: rateLimitStore(),
+    tokenVerifier: createAccessTokenVerifier({
+      jwksUrl: config.AUTH_JWKS_URL,
+      redis,
+      checkRevoked: config.AUTH_CHECK_REVOKED_SESSIONS,
+      onError: (err) => logger.warn({ err: err.message }, 'access token check: keys or Redis unavailable'),
+    }),
+    rateLimitStore: rateLimitStore(redis),
   });
 
   if (config.PURGE_JOB_ENABLED) {

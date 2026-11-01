@@ -16,9 +16,8 @@ const upload = multer({
   limits: { fileSize: 25 * 1024 * 1024 },
 });
 const moment = require('moment/moment');
-const jwt = require("jsonwebtoken");
 const { validateDateFilter } = require("../utils/Date_Folder/valaidator.js");
-const { APP_SECRET } = require("../config/index.js");
+const { authenticate } = require("../utils/access-token");
 const files = require("../utils/file-client");
 const attachments = require("../utils/attachments");
 
@@ -76,25 +75,9 @@ router.get("/get/company_details/:zudo_id", async (req, res) => {
 // GET /get/my-companies
 // Returns all companies (with their branches) that the authenticated user belongs to.
 // Derives the user's zodu_id from the JWT bearer token — no URL param needed.
-router.get("/get/my-companies", async (req, res) => {
+router.get("/get/my-companies", authenticate, async (req, res) => {
   try {
-    const authHeader = req.headers.authorization || '';
-    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-    if (!token) {
-      return res.status(401).json({ error: 'Authorization token missing' });
-    }
-
-    let decoded;
-    try {
-      decoded = jwt.verify(token, APP_SECRET);
-    } catch {
-      return res.status(401).json({ error: 'Invalid or expired token' });
-    }
-
-    const { zodu_id } = decoded;
-    if (!zodu_id) {
-      return res.status(400).json({ error: 'Token missing zodu_id' });
-    }
+    const zodu_id = req.auth.zoduId;
 
     const [company, branches] = await Promise.all([
       repository.getCompanyByZoduId(zodu_id),
@@ -121,7 +104,7 @@ router.get("/get/my-companies", async (req, res) => {
     });
   } catch (error) {
     console.error('[GET /get/my-companies]', error);
-    return res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -172,7 +155,7 @@ router.post("/add/branch", async (req, res) => {
 // / item with that link moves the file into the record (utils/attachments.js).
 router.post("/upload", upload.single("file"), async (req, res) => {
   try {
-    const result = await service.uploadImg(req.file, attachments.uploadCtx(req));
+    const result = await service.uploadImg(req.file, await attachments.uploadCtx(req));
     return res.status(200).json({ data: result });
   } catch (err) {
     console.log(err)
@@ -186,7 +169,7 @@ router.post("/upload/multiple", upload.array("files", 20), async (req, res) => {
       return res.status(400).json({ error: "No files uploaded" });
     }
 
-    const result = await service.uploadMultiple(req.files, attachments.uploadCtx(req));
+    const result = await service.uploadMultiple(req.files, await attachments.uploadCtx(req));
 
 
     return res.status(200).json({ success: true, files: result });
@@ -1493,7 +1476,7 @@ router.delete("/delete/file/:name", async (req, res) => {
   try {
     const fileName = req.params.name;
 
-    const result = await service.deleteFileFromMinIO(fileName, attachments.uploadCtx(req));
+    const result = await service.deleteFileFromMinIO(fileName, await attachments.uploadCtx(req));
 
     if (!result.success) {
       return res.status(400).json(result);

@@ -27,7 +27,7 @@ function createFileService({ repo, storage, config }) {
   // Branch modules need a branch; tenant modules live in _shared (branch null).
   function scopeFor(ctx, mod) {
     if (mod.scope === 'tenant' || mod.scope === 'staging') return null;
-    if (!ctx.branchId) throw ValidationError('X-Branch-Id header is required for this module');
+    if (!ctx.branchId) throw ValidationError('A branch is required for this module');
     return ctx.branchId;
   }
 

@@ -6,4 +6,7 @@ module.exports = {
   ...require('./src/request-id'),
   ...require('./src/rate-limit'),
   ...require('./src/security'),
+  ...require('./src/access-token'),
+  ...require('./src/authenticate'),
+  ...require('./src/permissions'),
 };

@@ -1,7 +1,5 @@
 const joi = require("joi");
 
-const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,30}$/;
-
 // Payment types offered at POS checkout. Same vocabulary as the CHECK
 // constraint on tbl_invoice_settings.payment_types — keep the two in step.
 const PAYMENT_TYPES = ['Cash', 'UPI', 'Cheque', 'Bank Transfer', 'Others'];
@@ -46,7 +44,9 @@ const schema = {
 
     email: joi.string().email().required(),
 
-    password: joi.string().pattern(passwordRegex).required(),
+    // Length (12+ for the owner) and the common-password list: the password
+    // policy in src/auth/password.js. No composition rules (NIST SP 800-63B).
+    password: joi.string().max(128).required(),
     business_type: joi.string().max(50).allow(null, ''),
 
     gst_no: joi.string().allow(null, ''),
@@ -62,12 +62,18 @@ const schema = {
     same_for_branch: joi.boolean().default(true),
   }),
 
+  // No pattern on the password here: it only has to match the stored hash.
   login: joi.object({
     phone_number: joi.string().length(10).pattern(/^[0-9]+$/),
 
-    email: joi.string().email(),
+    email: joi.string().email().max(254),
 
-    password: joi.string().pattern(passwordRegex).required()
+    password: joi.string().min(1).max(128).required()
+  }).xor('email', 'phone_number'),
+
+  switch_context: joi.object({
+    zodu_id:   joi.string().pattern(/^[A-Za-z0-9_-]{1,64}$/).required(),
+    branch_id: joi.string().pattern(/^[A-Za-z0-9_-]{1,64}$/).allow(null, ''),
   }),
 
   add_business: joi.object({

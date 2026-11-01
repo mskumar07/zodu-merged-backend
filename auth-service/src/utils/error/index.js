@@ -1,55 +1,6 @@
-const bcrypt = require("bcrypt");
-const jwt = require("jsonwebtoken");
 const amqplib = require("amqplib");
 
-const {
-  APP_SECRET,
-} = require("../../config/index");
-const { logger } = require("../logger");
-
-//Utility functions
-module.exports.GenerateSalt = async () => {
-  return await bcrypt.genSalt();
-};
-
-module.exports.GeneratePassword = async (password, salt) => {
-  return await bcrypt.hash(password, salt);
-};
-
-module.exports.ValidatePassword = async (enteredPassword, savedHashedPassword) => {
-  return await bcrypt.compare(enteredPassword, savedHashedPassword);
-};
-
-module.exports.GenerateSignature = async (payload) => {
-  try {
-    return await jwt.sign(payload, APP_SECRET, { expiresIn: "30d" });
-  } catch (error) {
-    console.log(error);
-    return error;
-  }
-};
-
-module.exports.ValidateSignature = async (req, res, next) => {
-  try {
-    const signature = req.get("Authorization");
-    if (!signature) {
-      return res.status(401).json({ message: "Authorization token missing" });
-    }
-
-    const token = signature.startsWith("Bearer ") ? signature.split(" ")[1] : null;
-    if (!token) {
-      return res.status(401).json({ message: "Authorization token missing" });
-    }
-
-    const payload = await jwt.verify(token, APP_SECRET);
-    req.user = payload; 
-    next();
-  } catch (error) {
-    logger.error("JWT validation error:", error);
-    console.error("JWT validation error:", error.message);
-    return res.status(401).json({ message: "Unauthorized: Invalid token" });
-  }
-};
+// Tokens: src/auth (ES256, @zodu/security). Passwords: src/auth/password.js.
 
 module.exports.FormateData = (data) => {
   if (data) {

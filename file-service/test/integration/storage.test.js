@@ -24,7 +24,9 @@ Object.assign(process.env, {
 
 test('upload → presigned GET → stream → delete → purge, on real MinIO and Postgres', { skip: !enabled && 'set FILE_IT=1' }, async () => {
   const request = require('supertest');
-  const { makeApp, token, PNG } = require('../helpers');
+  const {
+    makeApp, token, verifier, PNG,
+  } = require('../helpers');
   const { createApp } = require('../../src/express-app');
   const { createMemoryStore } = require('../../src/middleware/rate-limit');
   const { createPurgeJob } = require('../../src/jobs/purge-deleted');
@@ -40,12 +42,12 @@ test('upload → presigned GET → stream → delete → purge, on real MinIO an
   const { authClient } = makeApp();   // fake auth-service, real everything else
   const app = createApp({
     config: {
-      APP_SECRET: 'test-app-secret', PRESIGNED_URL_TTL: 900, PUBLIC_FILE_BASE_URL: 'http://gw',
+      PRESIGNED_URL_TTL: 900, PUBLIC_FILE_BASE_URL: 'http://gw',
       INTERNAL_TOKENS: {}, MAX_CONCURRENT_UPLOADS: 2, UPLOAD_QUEUE_TIMEOUT_MS: 5000, CORS_ORIGINS: [], TRUST_PROXY: false,
     },
-    repo, storage, authClient, rateLimitStore: createMemoryStore(),
+    repo, storage, authClient, tokenVerifier: verifier, rateLimitStore: createMemoryStore(),
   });
-  const headers = { Authorization: `Bearer ${token()}`, 'X-Branch-Id': 'B1' };
+  const headers = { Authorization: `Bearer ${token()}` };   // branch B1 from the token
 
   const up = await request(app).post('/checklist/CHK1?category=attachments').set(headers).attach('files', PNG, 'proof.png');
   assert.equal(up.status, 201, JSON.stringify(up.body));
