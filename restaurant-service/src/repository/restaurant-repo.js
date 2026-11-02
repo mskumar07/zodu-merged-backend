@@ -1850,6 +1850,7 @@ FROM purchase_data;
 
 
 exports.get_Expense = async ({
+  zodu_id,
   branch_id,
   page = 1,
   limit = 10,
@@ -1862,6 +1863,17 @@ exports.get_Expense = async ({
   try {
     const offset = (page - 1) * limit;
     const searchQuery = `%${search}%`;
+    // Every value is a parameter ($1 branch, $2 search, $3 filter, $4 company, $5 limit, $6 offset).
+    const values = [branch_id, searchQuery, filter, zodu_id, limit, offset];
+    let extra = "";
+    if (category_id) {
+      values.push(category_id);
+      extra += ` AND e.category_id = $${values.length}`;
+    }
+    if (start_date && end_date) {
+      values.push(start_date, end_date);
+      extra += ` AND e.expense_date BETWEEN $${values.length - 1} AND $${values.length}`;
+    }
 
     const query = `
  WITH filtered_expenses AS (
@@ -1875,14 +1887,14 @@ exports.get_Expense = async ({
      AND pay.branch_id   = e.branch_id
      AND pay.zodu_id     = e.zodu_id
     WHERE e.branch_id = $1
+      AND e.zodu_id = $4
       AND (
             c.category_name ILIKE $2
          OR e.description   ILIKE $2
          OR ei.item_name    ILIKE $2
          OR e.expense_id::text ILIKE $2
       )
-      ${category_id ? `AND e.category_id = ${category_id}` : ``}
-      ${start_date && end_date ? `AND e.expense_date BETWEEN '${start_date}' AND '${end_date}'` : ``}
+      ${extra}
       AND (
             LOWER($3) = 'all'
          OR (LOWER($3) = 'paid'   AND (COALESCE(pay.total_amount,0) - COALESCE(pay.paid_amount,0)) = 0)
@@ -1955,7 +1967,7 @@ expense_data AS (
         e.expense_date, e.payment_type,
         e.created_at, e.updated_at
     ORDER BY e.expense_date DESC
-    LIMIT ${limit} OFFSET ${offset}
+    LIMIT $5 OFFSET $6
 )
 
 SELECT
@@ -1966,26 +1978,26 @@ SELECT
     (SELECT COALESCE(SUM(pay.total_amount),0)
      FROM tbl_payment pay
      WHERE pay.source_type='expense'
-       AND pay.branch_id=$1) AS total_expense,
+       AND pay.branch_id=$1 AND pay.zodu_id=$4) AS total_expense,
 
     -- total paid
     (SELECT COALESCE(SUM(pay.paid_amount),0)
      FROM tbl_payment pay
      WHERE pay.source_type='expense'
-       AND pay.branch_id=$1) AS total_paid_all,
+       AND pay.branch_id=$1 AND pay.zodu_id=$4) AS total_paid_all,
 
     -- unpaid
     (SELECT COALESCE(SUM(pay.total_amount - COALESCE(pay.paid_amount,0)),0)
      FROM tbl_payment pay
      WHERE pay.source_type='expense'
-       AND pay.branch_id=$1) AS total_unpaid_all,
+       AND pay.branch_id=$1 AND pay.zodu_id=$4) AS total_unpaid_all,
 
     -- this month
     (SELECT COALESCE(SUM(ph.paid_amount),0)
      FROM tbl_payment_history ph
      JOIN tbl_payment pay ON pay.payment_id = ph.payment_id
      WHERE pay.source_type='expense'
-       AND pay.branch_id=$1
+       AND pay.branch_id=$1 AND pay.zodu_id=$4
        AND DATE_TRUNC('month', ph.created_at) = DATE_TRUNC('month', CURRENT_DATE)
     ) AS this_month_expense,
 
@@ -1994,17 +2006,13 @@ SELECT
      FROM tbl_payment_history ph
      JOIN tbl_payment pay ON pay.payment_id = ph.payment_id
      WHERE pay.source_type='expense'
-       AND pay.branch_id=$1
+       AND pay.branch_id=$1 AND pay.zodu_id=$4
        AND DATE_TRUNC('month', ph.created_at) = DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')
     ) AS last_month_expense;
 
     `;
 
-    const result = await conn.query(query, [
-      branch_id,      // $1
-      searchQuery,    // $2
-      filter          // $3
-    ]);
+    const result = await conn.query(query, values);
 
     return {
       expenses: result.rows[0].expenses || [],
@@ -4770,7 +4778,7 @@ exports.getOrdersSummary = async (zodu_id, branch_id, start_date, end_date, opti
     } = options;
 
     if (!orderSortFields.includes(sortBy)) sortBy = "order_date";
-    if (!["asc", "desc"].includes(sortOrder.toLowerCase())) sortOrder = "desc";
+    if (!["asc", "desc"].includes(String(sortOrder).toLowerCase())) sortOrder = "desc";
 
     const offset = (page - 1) * limit;
 
@@ -4921,6 +4929,7 @@ const totalPages = Math.ceil(total / limit);
 exports.getPurchaseSummary = async (zodu_id, branch_id, start_date, end_date, options = {}) => {
   try {
     let { page=1, limit=10, sortOrder="desc", search="", reportView="normal" } = options;
+    sortOrder = String(sortOrder).toLowerCase() === "asc" ? "ASC" : "DESC";   // goes into ORDER BY as text
     const selectedYear = Number(options.year) || new Date().getFullYear();
     const offset = (page-1)*limit;
 
@@ -5060,6 +5069,7 @@ exports.getPurchaseSummary = async (zodu_id, branch_id, start_date, end_date, op
 exports.getExpenseSummary = async (zodu_id, branch_id, start_date, end_date, options = {}) => {
   try {
     let { page=1, limit=10, sortOrder="desc", search="", reportView="normal" } = options;
+    sortOrder = String(sortOrder).toLowerCase() === "asc" ? "ASC" : "DESC";   // goes into ORDER BY as text
     const selectedYear = Number(options.year) || new Date().getFullYear();
     const offset = (page-1)*limit;
 
