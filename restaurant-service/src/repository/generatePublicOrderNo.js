@@ -15,8 +15,15 @@ const authClient = require('../utils/authClient');
 // has duplicate values from before this fix as a result. tbl_doc_id_seq's
 // own primary key (zodu_id, branch_id, doc_type) makes the INSERT ... ON
 // CONFLICT below atomic on its own, with no lock needed.
-exports.generatePublicOrderNo = async (branch_id, zodu_id, client) => {
-  const db = client ?? conn;
+// The prefix per branch, kept for a minute: asking auth-service for it on every
+// order put an extra service round trip in front of each bill.
+const PREFIX_TTL_MS = 60 * 1000;
+const prefixCache = new Map();
+
+async function invoicePrefixFor(zodu_id, branch_id) {
+  const key = `${zodu_id}:${branch_id}`;
+  const cached = prefixCache.get(key);
+  if (cached && Date.now() - cached.at < PREFIX_TTL_MS) return cached.prefix;
 
   let invoicePrefix = 'INV';
   try {
@@ -30,9 +37,18 @@ exports.generatePublicOrderNo = async (branch_id, zodu_id, client) => {
     } else if (settings?.invoice_prefix) {
       invoicePrefix = settings.invoice_prefix;
     }
+    prefixCache.set(key, { at: Date.now(), prefix: invoicePrefix });
   } catch (err) {
     console.error('[generatePublicOrderNo] invoice settings lookup failed, using defaults:', err.message);
+    // A failed lookup isn't cached; the last good prefix still beats the default.
+    if (cached) return cached.prefix;
   }
+  return invoicePrefix;
+}
+
+exports.generatePublicOrderNo = async (branch_id, zodu_id, client) => {
+  const db = client ?? conn;
+  const invoicePrefix = await invoicePrefixFor(zodu_id, branch_id);
 
   const { rows } = await db.query(
     `INSERT INTO tbl_doc_id_seq (zodu_id, branch_id, doc_type, last_seq)

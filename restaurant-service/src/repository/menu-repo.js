@@ -392,9 +392,17 @@ exports.get_menuItem_data = async (zodu_id,branch_id, type, page, limit, search,
      JOIN tbl_category c ON c.id = m.menu_category_id
      LEFT JOIN tbl_gst g ON g.id = m.gst_tax
      LEFT JOIN tbl_units u ON u.id = m.menu_unit
-     LEFT JOIN tbl_inventory i ON i.item_id = m.menu_id AND i.branch_id = m.branch_id
+     -- One inventory row per item: some items have several, and a plain join repeated the item
+     -- in the list (and threw the paging out of step with total_count).
+     LEFT JOIN LATERAL (
+       SELECT stock_qty, stock_alert FROM tbl_inventory
+       WHERE item_id = m.menu_id AND branch_id = m.branch_id AND zodu_id = m.zodu_id
+       ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
+       LIMIT 1
+     ) i ON TRUE
      WHERE ${whereClause}
-     ORDER BY m.created_at DESC
+     -- menu_id breaks created_at ties (bulk imports share a timestamp) so pages never overlap.
+     ORDER BY m.created_at DESC, m.menu_id DESC
      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
     [...params, limit, offset]
   );

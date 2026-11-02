@@ -680,230 +680,232 @@ exports.get_ordered_data = async (branch_id, zodu_id) => {
   }
 };
 
+// Running (Dine-In) order writes. Each takes its own pooled client: BEGIN/COMMIT
+// sent through pool.query() can land on different connections, which left
+// those statements outside any transaction and could leave a pooled
+// connection idle inside an open one, holding its locks.
+async function inTransaction(fn) {
+  const client = await conn.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+const itemKey = (itemId, variantId) => `${itemId}::${variantId || ""}`;
+
+const TMP_ITEM_COLUMNS = 15;
+
+// One multi-row INSERT for new running-order lines.
+async function insertTmpItems(client, orderData, items) {
+  if (items.length === 0) return [];
+  const values = [];
+  const params = [];
+  items.forEach((item, row) => {
+    const hasVariant = !!item.variant_id;
+    const base = row * TMP_ITEM_COLUMNS;
+    values.push(`(${Array.from({ length: TMP_ITEM_COLUMNS }, (_, i) => `$${base + i + 1}`).join(",")})`);
+    params.push(
+      orderData.zodu_id, orderData.branch_id, orderData.api_order_id,
+      item.menu_id, item.name, item.qty, item.price, item.menu_unit,
+      hasVariant ? item.variant_id : null, hasVariant ? item.variant_name : null,
+      item.gst_percentage, item.tax, item.cgst, item.sgst, item.tax_inclusive ?? false
+    );
+  });
+  const result = await client.query(
+    `INSERT INTO tbl_tmp_ordered_items (
+      zodu_id, branch_id, api_order_id, item_id, item_name,
+      qty, price, item_unit, variant_id, variant_name,
+      gst_percentage, tax_amount, cgst, sgst, tax_inclusive
+    ) VALUES ${values.join(",")} RETURNING *`,
+    params
+  );
+  return result.rows;
+}
+
 exports.createtmpOrder = async (orderData) => {
   try {
-    await conn.query("BEGIN");
+    return await inTransaction(async (client) => {
+      // For Dine-In, check for an open order on the same table and accumulate totals
+      if (orderData.order_type === "Dine-In" && orderData.table_no) {
+        const existing = await client.query(
+          `UPDATE tbl_tmp_orders
+           SET no_of_items = no_of_items + $1,
+               subtotal    = subtotal    + $2,
+               total_tax   = total_tax   + $3,
+               total_amt   = total_amt   + $4
+           WHERE branch_id = $5 AND table_no = $6 AND final_payment = false AND zodu_id = $7
+           RETURNING *`,
+          [
+            orderData.no_of_items, orderData.subtotal || 0,
+            orderData.tax_amount || 0, orderData.total_amt,
+            orderData.branch_id, orderData.table_no, orderData.zodu_id
+          ]
+        );
+        if (existing.rowCount > 0) return existing.rows[0];
+      }
 
-    // For Dine-In, check for an open order on the same table and accumulate totals
-    if (orderData.order_type === "Dine-In" && orderData.table_no) {
-      const existing = await conn.query(
-        `UPDATE tbl_tmp_orders
-         SET no_of_items = no_of_items + $1,
-             subtotal    = subtotal    + $2,
-             total_tax   = total_tax   + $3,
-             total_amt   = total_amt   + $4
-         WHERE branch_id = $5 AND table_no = $6 AND final_payment = false AND zodu_id = $7
-         RETURNING *`,
+      // No existing order found — insert a new one
+      const api_order_id = orderData.api_order_id || randomUUID();
+      const legacy_order_ref = `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+      const result = await client.query(
+        `INSERT INTO tbl_tmp_orders (
+          zodu_id, branch_id, api_order_id, legacy_order_ref,
+          table_no, order_type, no_of_items, customer_name, customer_phone,
+          subtotal, total_tax, total_amt, final_payment, payment_type,
+          order_date, order_time, discount_type, discount_value, discount_amount
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,false,$13,$14,$15,$16,$17,$18)
+        ON CONFLICT (api_order_id) DO UPDATE SET
+          no_of_items = tbl_tmp_orders.no_of_items + EXCLUDED.no_of_items,
+          subtotal    = tbl_tmp_orders.subtotal    + EXCLUDED.subtotal,
+          total_tax   = tbl_tmp_orders.total_tax   + EXCLUDED.total_tax,
+          total_amt   = tbl_tmp_orders.total_amt   + EXCLUDED.total_amt
+        RETURNING *`,
         [
-          orderData.no_of_items, orderData.subtotal || 0,
-          orderData.tax_amount || 0, orderData.total_amt,
-          orderData.branch_id, orderData.table_no, orderData.zodu_id
+          orderData.zodu_id, orderData.branch_id, api_order_id, legacy_order_ref,
+          orderData.table_no || null, orderData.order_type, orderData.no_of_items,
+          orderData.customer_name || null, orderData.customer_phone || null,
+          orderData.subtotal || 0, orderData.tax_amount || 0, orderData.total_amt,
+          orderData.payment_type || null, orderData.order_date, orderData.order_time,
+          orderData.discount_type || null, orderData.discount_value || 0, orderData.discount_amount || 0
         ]
       );
-      if (existing.rowCount > 0) {
-        await conn.query("COMMIT");
-        return existing.rows[0];
-      }
-    }
-
-    // No existing order found — insert a new one
-    const api_order_id = orderData.api_order_id || randomUUID();
-    const legacy_order_ref = `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-
-    const result = await conn.query(
-      `INSERT INTO tbl_tmp_orders (
-        zodu_id, branch_id, api_order_id, legacy_order_ref,
-        table_no, order_type, no_of_items, customer_name, customer_phone,
-        subtotal, total_tax, total_amt, final_payment, payment_type,
-        order_date, order_time, discount_type, discount_value, discount_amount
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,false,$13,$14,$15,$16,$17,$18)
-      ON CONFLICT (api_order_id) DO UPDATE SET
-        no_of_items = tbl_tmp_orders.no_of_items + EXCLUDED.no_of_items,
-        subtotal    = tbl_tmp_orders.subtotal    + EXCLUDED.subtotal,
-        total_tax   = tbl_tmp_orders.total_tax   + EXCLUDED.total_tax,
-        total_amt   = tbl_tmp_orders.total_amt   + EXCLUDED.total_amt
-      RETURNING *`,
-      [
-        orderData.zodu_id, orderData.branch_id, api_order_id, legacy_order_ref,
-        orderData.table_no || null, orderData.order_type, orderData.no_of_items,
-        orderData.customer_name || null, orderData.customer_phone || null,
-        orderData.subtotal || 0, orderData.tax_amount || 0, orderData.total_amt,
-        orderData.payment_type || null, orderData.order_date, orderData.order_time,
-        orderData.discount_type || null, orderData.discount_value || 0, orderData.discount_amount || 0
-      ]
-    );
-
-    await conn.query("COMMIT");
-    return result.rows[0];
+      return result.rows[0];
+    });
   } catch (err) {
-    await conn.query("ROLLBACK");
     throw new Error("Unable to create tmp order: " + err.message);
   }
 };
 
 exports.updatetmpOrder = async (orderData) => {
   try {
-    await conn.query("BEGIN");
+    return await inTransaction(async (client) => {
+      const result = await client.query(
+        `UPDATE tbl_tmp_orders SET
+          table_no = $1, no_of_items = $2, customer_name = $3, customer_phone = $4,
+          subtotal = $5, total_tax = $6, total_amt = $7, payment_type = $8,
+          order_date = $9, order_time = $10, discount_type = $11, discount_value = $12,
+          discount_amount = $13
+         WHERE api_order_id = $14 AND branch_id = $15 AND zodu_id = $16 AND final_payment = false
+         RETURNING *`,
+        [
+          orderData.table_no || null, orderData.no_of_items, orderData.customer_name || null,
+          orderData.customer_phone || null, orderData.subtotal || 0, orderData.tax_amount || 0,
+          orderData.total_amt, orderData.payment_type || null, orderData.order_date, orderData.order_time,
+          orderData.discount_type || null, orderData.discount_value || 0, orderData.discount_amount || 0,
+          orderData.api_order_id, orderData.branch_id, orderData.zodu_id
+        ]
+      );
 
-    const result = await conn.query(
-      `UPDATE tbl_tmp_orders SET
-        table_no = $1, no_of_items = $2, customer_name = $3, customer_phone = $4,
-        subtotal = $5, total_tax = $6, total_amt = $7, payment_type = $8,
-        order_date = $9, order_time = $10, discount_type = $11, discount_value = $12,
-        discount_amount = $13
-       WHERE api_order_id = $14 AND branch_id = $15 AND zodu_id = $16 AND final_payment = false
-       RETURNING *`,
-      [
-        orderData.table_no || null, orderData.no_of_items, orderData.customer_name || null,
-        orderData.customer_phone || null, orderData.subtotal || 0, orderData.tax_amount || 0,
-        orderData.total_amt, orderData.payment_type || null, orderData.order_date, orderData.order_time,
-        orderData.discount_type || null, orderData.discount_value || 0, orderData.discount_amount || 0,
-        orderData.api_order_id, orderData.branch_id, orderData.zodu_id
-      ]
-    );
-
-    if (result.rowCount === 0) {
-      throw new Error("Running order not found or already finalized");
-    }
-
-    await conn.query("COMMIT");
-    return result.rows[0];
+      if (result.rowCount === 0) {
+        throw new Error("Running order not found or already finalized");
+      }
+      return result.rows[0];
+    });
   } catch (err) {
-    await conn.query("ROLLBACK");
     throw new Error("Unable to update tmp order: " + err.message);
   }
 };
 
+// Sets the running order's lines to exactly `items`: existing lines are
+// overwritten, new ones inserted, lines no longer in the cart deleted.
 exports.reconciletmpOrderedItems = async (orderData) => {
   try {
-    await conn.query("BEGIN");
-    const items = orderData.items;
-    if (!Array.isArray(items) || items.length === 0) throw new Error("Items array is empty or invalid");
+    return await inTransaction(async (client) => {
+      const items = orderData.items;
+      if (!Array.isArray(items) || items.length === 0) throw new Error("Items array is empty or invalid");
 
-    const updatedItems = [];
-    const keptKeys = [];
+      const { rows: existingRows } = await client.query(
+        `SELECT id, item_id, variant_id FROM tbl_tmp_ordered_items WHERE api_order_id = $1`,
+        [orderData.api_order_id]
+      );
+      const existingByKey = new Map(existingRows.map((r) => [itemKey(r.item_id, r.variant_id), r]));
 
-    for (const item of items) {
-      const hasVariant = !!item.variant_id;
+      // The same line twice in one cart: the later one wins, as it did when each was written in turn.
+      const incoming = new Map();
+      for (const item of items) incoming.set(itemKey(item.menu_id, item.variant_id || null), item);
 
-      const checkQuery = hasVariant
-        ? `SELECT id FROM tbl_tmp_ordered_items WHERE api_order_id = $1 AND item_id = $2 AND variant_id = $3`
-        : `SELECT id FROM tbl_tmp_ordered_items WHERE api_order_id = $1 AND item_id = $2 AND variant_id IS NULL`;
-      const checkValues = hasVariant
-        ? [orderData.api_order_id, item.menu_id, item.variant_id]
-        : [orderData.api_order_id, item.menu_id];
-
-      const existingItem = await conn.query(checkQuery, checkValues);
-
-      if (existingItem.rowCount > 0) {
-        const updateQuery = hasVariant
-          ? `UPDATE tbl_tmp_ordered_items SET qty=$1, price=$2, item_unit=$3, gst_percentage=$4, tax_amount=$5, cgst=$6, sgst=$7, tax_inclusive=$8 WHERE api_order_id=$9 AND item_id=$10 AND variant_id=$11 RETURNING *`
-          : `UPDATE tbl_tmp_ordered_items SET qty=$1, price=$2, item_unit=$3, gst_percentage=$4, tax_amount=$5, cgst=$6, sgst=$7, tax_inclusive=$8 WHERE api_order_id=$9 AND item_id=$10 AND variant_id IS NULL RETURNING *`;
-        const updateValues = hasVariant
-          ? [item.qty, item.price, item.menu_unit, item.gst_percentage, item.tax, item.cgst, item.sgst, item.tax_inclusive ?? false, orderData.api_order_id, item.menu_id, item.variant_id]
-          : [item.qty, item.price, item.menu_unit, item.gst_percentage, item.tax, item.cgst, item.sgst, item.tax_inclusive ?? false, orderData.api_order_id, item.menu_id];
-        const result = await conn.query(updateQuery, updateValues);
-        updatedItems.push(result.rows[0]);
-      } else {
-        const result = await conn.query(
-          `INSERT INTO tbl_tmp_ordered_items (
-            zodu_id, branch_id, api_order_id, item_id, item_name,
-            qty, price, item_unit, variant_id, variant_name,
-            gst_percentage, tax_amount, cgst, sgst, tax_inclusive
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
-          [
-            orderData.zodu_id, orderData.branch_id, orderData.api_order_id,
-            item.menu_id, item.name, item.qty, item.price, item.menu_unit,
-            hasVariant ? item.variant_id : null, hasVariant ? item.variant_name : null,
-            item.gst_percentage, item.tax, item.cgst, item.sgst, item.tax_inclusive ?? false
-          ]
+      const updatedItems = [];
+      const toInsert = [];
+      for (const [key, item] of incoming) {
+        const existing = existingByKey.get(key);
+        if (!existing) { toInsert.push(item); continue; }
+        const result = await client.query(
+          `UPDATE tbl_tmp_ordered_items SET qty=$1, price=$2, item_unit=$3, gst_percentage=$4, tax_amount=$5, cgst=$6, sgst=$7, tax_inclusive=$8
+           WHERE id = $9 RETURNING *`,
+          [item.qty, item.price, item.menu_unit, item.gst_percentage, item.tax, item.cgst, item.sgst, item.tax_inclusive ?? false, existing.id]
         );
         updatedItems.push(result.rows[0]);
       }
+      updatedItems.push(...(await insertTmpItems(client, orderData, toInsert)));
 
-      keptKeys.push({ item_id: item.menu_id, variant_id: hasVariant ? item.variant_id : null });
-    }
-
-    // Remove rows for items that existed on the order but were dropped from the incoming cart
-    const existingRows = await conn.query(
-      `SELECT item_id, variant_id FROM tbl_tmp_ordered_items WHERE api_order_id = $1`,
-      [orderData.api_order_id]
-    );
-    const keptSet = new Set(keptKeys.map(k => `${k.item_id}::${k.variant_id || ""}`));
-    const toRemove = existingRows.rows.filter(row => !keptSet.has(`${row.item_id}::${row.variant_id || ""}`));
-
-    for (const row of toRemove) {
-      if (row.variant_id) {
-        await conn.query(
-          `DELETE FROM tbl_tmp_ordered_items WHERE api_order_id = $1 AND item_id = $2 AND variant_id = $3`,
-          [orderData.api_order_id, row.item_id, row.variant_id]
-        );
-      } else {
-        await conn.query(
-          `DELETE FROM tbl_tmp_ordered_items WHERE api_order_id = $1 AND item_id = $2 AND variant_id IS NULL`,
-          [orderData.api_order_id, row.item_id]
-        );
+      // Remove rows for items that existed on the order but were dropped from the incoming cart
+      const removedIds = existingRows.filter((r) => !incoming.has(itemKey(r.item_id, r.variant_id))).map((r) => r.id);
+      if (removedIds.length > 0) {
+        await client.query(`DELETE FROM tbl_tmp_ordered_items WHERE id = ANY($1)`, [removedIds]);
       }
-    }
-
-    await conn.query("COMMIT");
-    return updatedItems;
+      return updatedItems;
+    });
   } catch (err) {
-    await conn.query("ROLLBACK");
     throw new Error("Unable to update tmp ordered items: " + err.message);
   }
 };
 
+// Adds `items` to the running order: a line it already has gets the qty and
+// tax added on, a new one is inserted.
 exports.createtmpOrderedItems = async (orderData) => {
   try {
-    await conn.query("BEGIN");
-    const items = orderData.items;
-    if (!Array.isArray(items) || items.length === 0) throw new Error("Items array is empty or invalid");
+    return await inTransaction(async (client) => {
+      const items = orderData.items;
+      if (!Array.isArray(items) || items.length === 0) throw new Error("Items array is empty or invalid");
 
-    const insertedItems = [];
-    for (const item of items) {
-      const hasVariant = !!item.variant_id;
+      const { rows: existingRows } = await client.query(
+        `SELECT id, item_id, variant_id FROM tbl_tmp_ordered_items WHERE api_order_id = $1`,
+        [orderData.api_order_id]
+      );
+      const existingByKey = new Map(existingRows.map((r) => [itemKey(r.item_id, r.variant_id), r]));
 
-      const checkQuery = hasVariant
-        ? `SELECT * FROM tbl_tmp_ordered_items WHERE api_order_id = $1 AND item_id = $2 AND variant_id = $3`
-        : `SELECT * FROM tbl_tmp_ordered_items WHERE api_order_id = $1 AND item_id = $2 AND variant_id IS NULL`;
-      const checkValues = hasVariant
-        ? [orderData.api_order_id, item.menu_id, item.variant_id]
-        : [orderData.api_order_id, item.menu_id];
+      // The same line twice in one cart adds up, as it did when each was written in turn.
+      const incoming = new Map();
+      for (const item of items) {
+        const key = itemKey(item.menu_id, item.variant_id || null);
+        const prior = incoming.get(key);
+        incoming.set(key, prior
+          ? {
+              ...prior,
+              qty: Number(prior.qty) + Number(item.qty),
+              gst_percentage: item.gst_percentage,
+              tax: Number(prior.tax || 0) + Number(item.tax || 0),
+              cgst: Number(prior.cgst || 0) + Number(item.cgst || 0),
+              sgst: Number(prior.sgst || 0) + Number(item.sgst || 0),
+            }
+          : item);
+      }
 
-      const existingItem = await conn.query(checkQuery, checkValues);
-
-      if (existingItem.rowCount > 0) {
-        const updateQuery = hasVariant
-          ? `UPDATE tbl_tmp_ordered_items SET qty=qty+$1,gst_percentage=$2,tax_amount=tax_amount+$3,cgst=cgst+$4,sgst=sgst+$5 WHERE api_order_id=$6 AND item_id=$7 AND variant_id=$8 RETURNING *`
-          : `UPDATE tbl_tmp_ordered_items SET qty=qty+$1,gst_percentage=$2,tax_amount=tax_amount+$3,cgst=cgst+$4,sgst=sgst+$5 WHERE api_order_id=$6 AND item_id=$7 AND variant_id IS NULL RETURNING *`;
-        const updateValues = hasVariant
-          ? [item.qty, item.gst_percentage, item.tax, item.cgst, item.sgst, orderData.api_order_id, item.menu_id, item.variant_id]
-          : [item.qty, item.gst_percentage, item.tax, item.cgst, item.sgst, orderData.api_order_id, item.menu_id];
-        const result = await conn.query(updateQuery, updateValues);
-        insertedItems.push(result.rows[0]);
-      } else {
-        const result = await conn.query(
-          `INSERT INTO tbl_tmp_ordered_items (
-            zodu_id, branch_id, api_order_id, item_id, item_name,
-            qty, price, item_unit, variant_id, variant_name,
-            gst_percentage, tax_amount, cgst, sgst, tax_inclusive
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
-          [
-            orderData.zodu_id, orderData.branch_id, orderData.api_order_id,
-            item.menu_id, item.name, item.qty, item.price, item.menu_unit,
-            hasVariant ? item.variant_id : null, hasVariant ? item.variant_name : null,
-            item.gst_percentage, item.tax, item.cgst, item.sgst, item.tax_inclusive ?? false
-          ]
+      const insertedItems = [];
+      const toInsert = [];
+      for (const [key, item] of incoming) {
+        const existing = existingByKey.get(key);
+        if (!existing) { toInsert.push(item); continue; }
+        const result = await client.query(
+          `UPDATE tbl_tmp_ordered_items SET qty=qty+$1, gst_percentage=$2, tax_amount=tax_amount+$3, cgst=cgst+$4, sgst=sgst+$5
+           WHERE id = $6 RETURNING *`,
+          [item.qty, item.gst_percentage, item.tax, item.cgst, item.sgst, existing.id]
         );
         insertedItems.push(result.rows[0]);
       }
-    }
-
-    await conn.query("COMMIT");
-    return insertedItems;
+      insertedItems.push(...(await insertTmpItems(client, orderData, toInsert)));
+      return insertedItems;
+    });
   } catch (err) {
-    await conn.query("ROLLBACK");
     throw new Error("Unable to create or update tmp ordered items: " + err.message);
   }
 };
