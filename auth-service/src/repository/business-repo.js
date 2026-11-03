@@ -844,7 +844,12 @@ exports.listSubscriptionsPaged = async ({ page = 1, limit = 20, status = '' }) =
   params.push(Number(limit), offset);
   const { rows } = await conn.query(
     `SELECT s.zodu_id, s.branch_id, b.business_name, b.mail_id, b.mobile_no,
-            s.plan_code, s.trial_end_date, s.subscription_end_date, s.created_at,
+            s.plan_code,
+            TO_CHAR(s.trial_start_date,  'DD Mon YYYY') AS trial_start_date,
+            TO_CHAR(s.trial_end_date,  'DD Mon YYYY') AS trial_end_date,
+            TO_CHAR(s.subscription_start_date, 'DD Mon YYYY') AS subscription_start_date,
+            TO_CHAR(s.subscription_end_date, 'DD Mon YYYY') AS subscription_end_date,
+            s.created_at,
             TO_CHAR(b.created_at,  'DD Mon YYYY') AS company_created_at,
             br.branch_name,
             TO_CHAR(br.created_at, 'DD Mon YYYY') AS branch_created_at,
