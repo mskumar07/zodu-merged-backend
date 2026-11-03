@@ -30,7 +30,7 @@ jobs:
           - packages/zodu-security
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
       # The lockfile must match package.json (installs exactly what ships).
@@ -56,7 +56,7 @@ jobs:
           - restaurant-service
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
       - run: npm ci
@@ -89,7 +89,7 @@ jobs:
       TEST_REDIS_URL: redis://localhost:6379/15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
       - run: npm ci
