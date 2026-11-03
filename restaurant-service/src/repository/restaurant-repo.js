@@ -5723,7 +5723,7 @@ exports.getCustomerInfo = async ({ custUuid, branchId, zoduId }) => {
  
 // ─────────────────────────────────────────────────────────────────────────────
  
-exports.getSalesRows = async ({ custUuid, branchId, zoduId, fromDate, toDate }) => {
+exports.getSalesRows = async ({ custUuid, branchId, zoduId, fromDate, toDate, search }) => {
   const params = [custUuid, zoduId, branchId];
   let dateClause = '';
 
@@ -5736,6 +5736,11 @@ exports.getSalesRows = async ({ custUuid, branchId, zoduId, fromDate, toDate }) 
   } else if (toDate) {
     params.push(toDate);
     dateClause = `AND s.sale_date <= $${params.length}`;
+  }
+
+  if (search) {
+    params.push(`%${search}%`);
+    dateClause += ` AND s.sale_id ILIKE $${params.length}`;
   }
 
   const { rows } = await conn.query(
@@ -5764,7 +5769,7 @@ exports.getSalesRows = async ({ custUuid, branchId, zoduId, fromDate, toDate }) 
  
 // ─────────────────────────────────────────────────────────────────────────────
  
-exports.getSaleReturnRows = async ({ custUuid, branchId, zoduId, fromDate, toDate }) => {
+exports.getSaleReturnRows = async ({ custUuid, branchId, zoduId, fromDate, toDate, search }) => {
   const params = [custUuid, zoduId, branchId];
   let dateClause = '';
  
@@ -5778,7 +5783,13 @@ exports.getSaleReturnRows = async ({ custUuid, branchId, zoduId, fromDate, toDat
     params.push(toDate);
     dateClause = `AND r.return_date <= $${params.length}`;
   }
- 
+
+  // A return matches by its own id or by the invoice it was raised against
+  if (search) {
+    params.push(`%${search}%`);
+    dateClause += ` AND (r.return_id ILIKE $${params.length} OR r.original_sale_id ILIKE $${params.length})`;
+  }
+
   const { rows } = await conn.query(
     `SELECT
        r.return_uuid                  AS doc_uuid,
@@ -5805,7 +5816,7 @@ exports.getSaleReturnRows = async ({ custUuid, branchId, zoduId, fromDate, toDat
  
 // ─────────────────────────────────────────────────────────────────────────────
  
-exports.getPaymentHistory = async ({ custUuid, branchId, zoduId, fromDate, toDate, method }) => {
+exports.getPaymentHistory = async ({ custUuid, branchId, zoduId, fromDate, toDate, method, search }) => {
   const params = [custUuid, zoduId, branchId];
   let dateClause   = '';
   let methodClause = '';
@@ -5825,7 +5836,12 @@ exports.getPaymentHistory = async ({ custUuid, branchId, zoduId, fromDate, toDat
     params.push(method);
     methodClause = `AND LOWER(sp.transaction_type) = LOWER($${params.length})`;
   }
- 
+
+  if (search) {
+    params.push(`%${search}%`);
+    methodClause += ` AND sp.sale_id ILIKE $${params.length}`;
+  }
+
   const { rows } = await conn.query(
     `SELECT
        sp.payment_id,

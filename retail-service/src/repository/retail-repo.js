@@ -2283,7 +2283,11 @@ exports.getCustomers = async (filters) => {
             AND s.cancelled_inv = false
         ), 0) AS total_invoice,
         COALESCE(opening_balance, 0) + COALESCE((
-          SELECT SUM(s.balance_amount)
+          -- part of an invoice's due already cleared by a return (adjusted_amount) is not owed
+          SELECT SUM(GREATEST(s.balance_amount - COALESCE((
+                   SELECT SUM(r.adjusted_amount) FROM tbl_sale_returns r
+                   WHERE r.original_sale_uuid = s.sale_uuid
+                 ), 0), 0))
           FROM tbl_sales s
           WHERE s.customer_uuid = tbl_customer.cust_uuid
             AND s.zodu_id       = tbl_customer.zodu_id
@@ -4692,23 +4696,33 @@ exports.markPayment = async (data) => {
 
 // ── GET outstanding bills for a customer (feeds the "Mark Payment" modal) ──
 exports.getCustomerOutstandingBills = async ({ cust_uuid, zodu_id, branch_id }) => {
+  // balance_amount here is the due left after returns adjusted against the invoice,
+  // so a bill a return already cleared is not offered for payment.
   const { rows } = await conn.query(
-    `SELECT
-       sale_id,
-       sale_uuid,
-       TO_CHAR(sale_date, 'DD-MON-YYYY')         AS invoice_date,
-       TO_CHAR(due_date,  'DD-MON-YYYY')         AS due_date,
-       total_amount,
-       paid_amount,
-       balance_amount,
-       payment_status
-     FROM tbl_sales
-     WHERE customer_uuid = $1
-       AND zodu_id        = $2
-       AND branch_id      = $3
-       AND sale_type      = 'S'
-       AND balance_amount > 0
-     ORDER BY sale_date ASC, created_at ASC`,   // oldest bill first, FIFO settlement order
+    `SELECT * FROM (
+       SELECT
+         s.sale_id,
+         s.sale_uuid,
+         s.sale_date,
+         s.created_at,
+         TO_CHAR(s.sale_date, 'DD-MON-YYYY')         AS invoice_date,
+         TO_CHAR(s.due_date,  'DD-MON-YYYY')         AS due_date,
+         s.total_amount,
+         s.paid_amount,
+         GREATEST(s.balance_amount - COALESCE((
+           SELECT SUM(r.adjusted_amount) FROM tbl_sale_returns r
+           WHERE r.original_sale_uuid = s.sale_uuid
+         ), 0), 0) AS balance_amount,
+         s.payment_status
+       FROM tbl_sales s
+       WHERE s.customer_uuid = $1
+         AND s.zodu_id        = $2
+         AND s.branch_id      = $3
+         AND s.sale_type      = 'S'
+         AND s.cancelled_inv = false
+     ) b
+     WHERE b.balance_amount > 0
+     ORDER BY b.sale_date ASC, b.created_at ASC`,   // oldest bill first, FIFO settlement order
     [cust_uuid, zodu_id, branch_id]
   );
   return rows;
@@ -4750,6 +4764,7 @@ exports.markCustomerPayment = async (data) => {
          AND zodu_id   = $2
          AND branch_id = $3
          AND customer_uuid = $4
+         AND cancelled_inv = false
        ORDER BY sale_date ASC, created_at ASC
        FOR UPDATE`,
       [saleIds, zodu_id, branch_id, cust_uuid]
@@ -6505,7 +6520,7 @@ exports.getCustomerInfo = async ({ custUuid, branchId, zoduId }) => {
  
 // ─────────────────────────────────────────────────────────────────────────────
  
-exports.getSalesRows = async ({ custUuid, branchId, zoduId, fromDate, toDate }) => {
+exports.getSalesRows = async ({ custUuid, branchId, zoduId, fromDate, toDate, search }) => {
   const params = [custUuid, zoduId, branchId];
   let dateClause = '';
 
@@ -6520,6 +6535,11 @@ exports.getSalesRows = async ({ custUuid, branchId, zoduId, fromDate, toDate }) 
     dateClause = `AND s.sale_date <= $${params.length}`;
   }
 
+  if (search) {
+    params.push(`%${search}%`);
+    dateClause += ` AND s.sale_id ILIKE $${params.length}`;
+  }
+
   const { rows } = await conn.query(
     `SELECT
        s.sale_uuid        AS doc_uuid,
@@ -6529,7 +6549,11 @@ exports.getSalesRows = async ({ custUuid, branchId, zoduId, fromDate, toDate }) 
       TO_CHAR(s.created_at,'DD Mon YYYY, HH12:MI AM (Dy)') AS doc_date,
        s.total_amount,
        s.paid_amount,
-       s.balance_amount,
+       -- due left after returns that were adjusted against this invoice
+       GREATEST(s.balance_amount - COALESCE((
+         SELECT SUM(r.adjusted_amount) FROM tbl_sale_returns r
+         WHERE r.original_sale_uuid = s.sale_uuid
+       ), 0), 0) AS balance_amount,
        s.payment_status,
        TO_CHAR(s.due_date,'DD Mon YYYY') AS due_date
      FROM tbl_sales s
@@ -6547,7 +6571,7 @@ exports.getSalesRows = async ({ custUuid, branchId, zoduId, fromDate, toDate }) 
  
 // ─────────────────────────────────────────────────────────────────────────────
  
-exports.getSaleReturnRows = async ({ custUuid, branchId, zoduId, fromDate, toDate }) => {
+exports.getSaleReturnRows = async ({ custUuid, branchId, zoduId, fromDate, toDate, search }) => {
   const params = [custUuid, zoduId, branchId];
   let dateClause = '';
  
@@ -6561,7 +6585,13 @@ exports.getSaleReturnRows = async ({ custUuid, branchId, zoduId, fromDate, toDat
     params.push(toDate);
     dateClause = `AND r.return_date <= $${params.length}`;
   }
- 
+
+  // A return matches by its own id or by the invoice it was raised against
+  if (search) {
+    params.push(`%${search}%`);
+    dateClause += ` AND (r.return_id ILIKE $${params.length} OR r.original_sale_id ILIKE $${params.length})`;
+  }
+
   const { rows } = await conn.query(
     `SELECT
        r.return_uuid                  AS doc_uuid,
@@ -6589,7 +6619,7 @@ exports.getSaleReturnRows = async ({ custUuid, branchId, zoduId, fromDate, toDat
  
 // ─────────────────────────────────────────────────────────────────────────────
  
-exports.getPaymentHistory = async ({ custUuid, branchId, zoduId, fromDate, toDate, method }) => {
+exports.getPaymentHistory = async ({ custUuid, branchId, zoduId, fromDate, toDate, method, search }) => {
   const params = [custUuid, zoduId, branchId];
   let payDate = '';
   let refDate = '';
@@ -6611,6 +6641,12 @@ exports.getPaymentHistory = async ({ custUuid, branchId, zoduId, fromDate, toDat
     params.push(method);
     payMethod = `AND LOWER(sp.transaction_type) = LOWER($${params.length})`;
     refMethod = `AND LOWER(rp.payment_mode)     = LOWER($${params.length})`;
+  }
+  // Invoice id search: sale payments by sale id, refunds by return id / original invoice id
+  if (search) {
+    params.push(`%${search}%`);
+    payMethod += ` AND sp.sale_id ILIKE $${params.length}`;
+    refMethod += ` AND (r.return_id ILIKE $${params.length} OR r.original_sale_id ILIKE $${params.length})`;
   }
 
   // Sale payments (money in) + return refunds (money out to the customer) in one list.

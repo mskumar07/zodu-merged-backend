@@ -798,6 +798,7 @@ router.get('/api/customers/:custUuid/ledger', async (req, res, next) => {
       fromDate: value.fromDate,
       toDate:   value.toDate,
       method:   value.method,
+      search:   value.search,
       page:     value.page,
       limit:    value.limit,
     });
