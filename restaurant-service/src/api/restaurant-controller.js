@@ -233,6 +233,59 @@ router.get("/api/customers/:cust_uuid", async (req, res) => {
   }
 });
 
+// ── GET /api/customers/:custUuid/ledger
+router.get('/api/customers/:custUuid/ledger', async (req, res, next) => {
+  try {
+    // ✅ FIX: was only validating req.params, missing all query params
+    const { error, value } = schema.ledgerSchema.validate({
+      ...req.params,
+      ...req.query,
+    });
+ 
+    if (error) {
+      return res.status(400).json({
+        success: false,
+        errors: error.details.map((d) => d.message),
+      });
+    }
+ 
+    // ✅ FIX: branchId / zoduId were never extracted from anywhere.
+    //         Primary source is the JWT (set by auth middleware as req.user).
+    //         Fall back to query params for internal/admin calls without a JWT.
+    const branchId = req.user?.branch_id ?? req.query.branch_id;
+    const zoduId   = req.user?.zodu_id   ?? req.query.zodu_id;
+ 
+    if (!branchId || !zoduId) {
+      return res.status(400).json({
+        success: false,
+        errors: ['branch_id and zodu_id are required (via auth token or query param).'],
+      });
+    }
+
+    console.log("test",branchId,zoduId,value)
+ 
+    // ✅ FIX: was calling service.getCustomerById (wrong name) and passing
+    //         no arguments — now calls getCustomerLedger with all needed params
+    const data = await service.getCustomerLedger({
+      custUuid: value.custUuid,
+      branchId,
+      zoduId,
+      fromDate: value.fromDate,
+      toDate:   value.toDate,
+      method:   value.method,
+      search:   value.search,
+      page:     value.page,
+      limit:    value.limit,
+    });
+ 
+    return res.status(200).json({ success: true, data });
+ 
+  } catch (err) {
+    // ✅ FIX: next(err) now lives in the router where it belongs,
+    //         not inside the service function
+    next(err);
+  }
+});
 
 router.post(
   "/api/add/vendor",

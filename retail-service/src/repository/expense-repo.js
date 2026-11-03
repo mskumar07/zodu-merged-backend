@@ -133,7 +133,7 @@ exports.createExpenseLineItems = async (client, items, expense_id, category_id, 
   }
 };
 
-exports.getExpenses = async ({ zodu_id, branch_id, category_id, vendor_id, payment_status, search, page, limit } = {}) => {
+exports.getExpenses = async ({ zodu_id, branch_id, category_id, vendor_id, payment_status, search, from_date, to_date, page, limit } = {}) => {
   const conditions = [];
   const values = [];
   let idx = 1;
@@ -148,6 +148,8 @@ exports.getExpenses = async ({ zodu_id, branch_id, category_id, vendor_id, payme
     values.push(`%${search}%`);
     idx++;
   }
+  if (from_date) { conditions.push(`e.expense_date::date >= $${idx++}::date`); values.push(from_date); }
+  if (to_date)   { conditions.push(`e.expense_date::date <= $${idx++}::date`); values.push(to_date); }
 
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
@@ -205,7 +207,8 @@ exports.getExpenseById = async (id, { branch_id, zodu_id } = {}) => {
         v.vendor_type,
        c.name AS category_name,
        TO_CHAR(e.expense_date, 'DD Mon YYYY') AS expense_date_formatted,
-       TO_CHAR(e.due_date,     'DD Mon YYYY') AS due_date_formatted
+       TO_CHAR(e.due_date,     'DD Mon YYYY') AS due_date_formatted,
+      TO_CHAR(e.created_at,   'DD Mon YYYY, HH12:MI AM') AS created_at_formatted
      FROM tbl_expense e
      LEFT JOIN tbl_category c ON c.id = e.category_id
     LEFT JOIN tbl_vendor v ON v.vendor_id = e.vendor_id AND v.zodu_id = e.zodu_id AND v.branch_id = e.branch_id

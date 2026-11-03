@@ -97,6 +97,8 @@ exports.getPurchases = async ({
   payment_status,
   cancelled_purchase,
   search,
+  from_date,
+  to_date,
 } = {}) => {
   const conditions = [`p.cancelled_purchase = $1`];
   const values = [cancelled_purchase || false];
@@ -125,6 +127,19 @@ exports.getPurchases = async ({
     conditions.push(`(${byPurchase})`);
     returnConditions.push(`(${byPurchase} OR r.return_id ILIKE $${idx})`);
     values.push(`%${search}%`);
+    idx++;
+  }
+  // Date range (inclusive): purchases by purchase_date, returns by their own return_date.
+  if (from_date) {
+    conditions.push(`p.purchase_date::date >= $${idx}::date`);
+    returnConditions.push(`r.return_date::date >= $${idx}::date`);
+    values.push(from_date);
+    idx++;
+  }
+  if (to_date) {
+    conditions.push(`p.purchase_date::date <= $${idx}::date`);
+    returnConditions.push(`r.return_date::date <= $${idx}::date`);
+    values.push(to_date);
     idx++;
   }
 
@@ -174,7 +189,7 @@ exports.getPurchases = async ({
          GREATEST(r.refund_due - r.refunded_amount, 0) AS pending_refund,
          GREATEST(r.refunded_amount - r.refund_due, 0) AS excess_refund,
          r.return_reason,
-         TO_CHAR(r.created_at, 'DD Mon YYYY') AS return_date_fmt,
+         TO_CHAR(r.return_date, 'DD Mon YYYY') AS return_date_fmt,
          r.original_purchase_id,
          p.vendor_id,
          v.vendor_name,
@@ -217,6 +232,7 @@ exports.getPurchaseById = async (id, { branch_id, zodu_id } = {}) => {
      p.*,
      TO_CHAR(p.purchase_date, 'YYYY-MM-DD') AS purchase_date_formatted,
      TO_CHAR(p.due_date, 'DD Mon YYYY') AS due_date_formatted,
+     TO_CHAR(p.created_at, 'DD Mon YYYY, HH12:MI AM') AS created_at_formatted,
      v.vendor_name,
      v.company_name,
      v.vendor_phone,

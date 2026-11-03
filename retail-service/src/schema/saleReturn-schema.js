@@ -23,7 +23,8 @@ export const createSaleReturnSchema = Joi.object({
   return_type:        Joi.string().valid('SALES_RETURN', 'CREDIT_NOTE').default('SALES_RETURN'),
   return_reason:      Joi.string().trim().max(500).optional().allow('', null),
   refund_type:        Joi.string().trim().max(20).optional().allow('', null),
-  refund_payment:     refundPaymentSchema.optional(),
+  refund_payment: refundPaymentSchema.optional(),
+  return_date:        Joi.date().iso().raw().required(),
   notes:              Joi.string().trim().max(1000).optional().allow('', null),
   created_by:         Joi.string().trim().max(100).optional().allow('', null),
   // unique() blocks the same sale line being sent twice, which would sidestep
@@ -40,6 +41,7 @@ export const updateSaleReturnSchema = Joi.object({
   return_reason: Joi.string().trim().max(500).optional().allow('', null),
   refund_type:   Joi.string().trim().max(20).optional().allow('', null),
   notes:         Joi.string().trim().max(1000).optional().allow('', null),
+  return_date:   Joi.date().iso().raw().required(),
   items:         Joi.array().items(returnItemSchema).unique('original_item_id').min(1).required(),
 });
 

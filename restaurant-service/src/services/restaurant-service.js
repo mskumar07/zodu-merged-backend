@@ -1860,6 +1860,7 @@ async function getCustomerLedger  ({
   fromDate,
   toDate,
   method,
+  search,
   page,
   limit,
 }) {
@@ -1879,7 +1880,7 @@ async function getCustomerLedger  ({
   }
  
   // ── 2. Parallel DB fetches ─────────────────────────────────────────────────
-  const baseFilters = { custUuid, branchId, zoduId, fromDate, toDate };
+  const baseFilters = { custUuid, branchId, zoduId, fromDate, toDate, search };
  
   const [salesRows, returnRows, allPayments] = await Promise.all([
     repository.getSalesRows(baseFilters),

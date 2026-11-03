@@ -104,12 +104,33 @@ exports.item_progress = Joi.object({
   is_completed: Joi.boolean().required(),
 });
 
+// ── OCCURRENCES  (list of task occurrences, filterable by date / employee) ────
+
+const iso_date = Joi.string().pattern(/^\d{4}-\d{2}-\d{2}$/);
+
+exports.occurrence_query = Joi.object({
+  ...zodu_branch,
+  checklist_id: Joi.string().uuid(),
+  employee_id:  Joi.string().uuid(),
+  created_by:   Joi.string().uuid(),
+  is_admin:     Joi.boolean().default(false),
+  // from/to are inclusive; a single day is from = to
+  from:   iso_date,
+  to:     iso_date,
+  status: Joi.string().max(30),
+  search: Joi.string().max(100).allow(''),
+  page:   Joi.number().integer().min(1),
+  limit:  Joi.number().integer().min(1).max(100),
+}).options({ stripUnknown: true });   // tolerate cache-busting params etc. on this GET
+
 // ── UPDATE TASK STATUS  (admin "Update Task Status" modal — bulk item update) ─
 
 // Task-wise: one status for the whole task.
 exports.task_status_update = Joi.object({
   ...zodu_branch,
   status: Joi.string().valid('Not Started', 'Completed', 'In Progress', 'Cancelled').required(),
+  // The occurrence being updated. Omitted = the task's latest occurrence.
+  instance_id: Joi.string().uuid(),
   // ITEM-WISE (disabled)
   // items: Joi.array().items(Joi.object({
   //   item_id:     Joi.string().uuid().required(),
