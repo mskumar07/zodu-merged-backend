@@ -208,8 +208,9 @@ async function AddCompany(userInputs, user_id, file = null) {
   try {
     await repository.createDefaultRoleForCompany({ user_id, zodu_id });
   } catch (err) {
-    console.error('Default role creation failed (non-fatal):', err.message);
-    // Non-fatal error - company was created successfully, role creation failure shouldn't block
+    // The company exists; without this role its creator can't open it (access
+    // comes from roles). Repair: auth-service/migrations/owner_admin_role_repair.sql.
+    console.error(`createcompany: owner role for ${zodu_id} failed, user ${user_id} has no role there:`, err.message);
   }
 
   if (same_for_branch === true) {

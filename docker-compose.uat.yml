@@ -219,7 +219,16 @@ services:
       # Refuse tokens of revoked sessions (auth-service's Redis deny-list; needs REDIS_URL).
       AUTH_CHECK_REVOKED_SESSIONS: ${AUTH_CHECK_REVOKED_SESSIONS:-false}
       PORT: 4007
-      MINIO_BUCKET_NAME: zodu-files
+      DB_HOSTNAME: 72.60.206.59
+      DB_PORT: 5432
+      DB_NAME: file_service
+      # UAT MinIO on the host. New files go in the same "zodu" bucket as the old
+      # flat files (under Z.../B... folders); MINIO_ACCESSKEY / MINIO_SECRETKEY
+      # come from the env file.
+      MINIO_INTERNAL_URL: http://72.60.206.59:9000
+      MINIO_PUBLIC_URL: http://72.60.206.59:9000
+      MINIO_BUCKET_NAME: zodu
+      LEGACY_BUCKET_NAME: zodu
       PRESIGNED_URL_TTL: 900
       PUBLIC_FILE_BASE_URL: https://api.myzodu.com
       AUTH_SERVICE_URL: http://auth-service:4000

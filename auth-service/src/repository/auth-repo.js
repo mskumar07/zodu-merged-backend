@@ -268,19 +268,28 @@ async function createDefaultRoleForCompany({ user_id, zodu_id }) {
   try {
     await client.query('BEGIN');
 
-    // Create a default "Admin" role for the new company
+    // The company's "Admin" (owner) role: created here, or reused when the
+    // company already has one (role names are unique per company). Without
+    // it the creator has no role in the company and is refused it.
     const roleResult = await client.query(
       `INSERT INTO tbl_roles (zodu_id, branch_id, role_name, description)
        VALUES ($1, NULL, 'Admin', 'Full access — auto-created for new company')
+       ON CONFLICT (zodu_id, role_name) DO NOTHING
        RETURNING role_id`,
       [zodu_id]
     );
-    const role_id = roleResult.rows[0].role_id;
+    const created = roleResult.rows.length > 0;
+    const role_id = created
+      ? roleResult.rows[0].role_id
+      : (await client.query(
+          `SELECT role_id FROM tbl_roles WHERE zodu_id = $1 AND role_name = 'Admin'`,
+          [zodu_id]
+        )).rows[0].role_id;
 
-    // Grant all modules to Admin role
-    const { rows: modules } = await client.query(
-      'SELECT module_id FROM tbl_modules'
-    );
+    // Grant all modules to a new Admin role (an existing one keeps its grants)
+    const { rows: modules } = created
+      ? await client.query('SELECT module_id FROM tbl_modules')
+      : { rows: [] };
 
     if (modules.length > 0) {
       const placeholders = modules.map((_, i) =>
@@ -300,7 +309,8 @@ async function createDefaultRoleForCompany({ user_id, zodu_id }) {
     // Bind user to the Admin role for this company
     await client.query(
       `INSERT INTO tbl_user_roles (user_id, role_id, zodu_id)
-       VALUES ($1, $2, $3)`,
+       VALUES ($1, $2, $3)
+       ON CONFLICT DO NOTHING`,
       [user_id, role_id, zodu_id]
     );
 

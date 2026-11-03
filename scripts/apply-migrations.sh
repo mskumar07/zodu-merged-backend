@@ -216,6 +216,7 @@ apply "$AUTH_DB" auth-service/migrations/file_service_file_ids.sql
 # auth-service — refresh-token families (session rows without the token) and
 # tbl_security_events (security Phase 2). Apply before the new image serves traffic.
 apply "$AUTH_DB" auth-service/migrations/auth_sessions_security_events.sql
+apply "$AUTH_DB" auth-service/migrations/owner_admin_role_repair.sql
 
 # retail-service / restaurant-service — item description
 apply "$RETAIL_DB"     retail-service/migrations/item_description.sql
