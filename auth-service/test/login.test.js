@@ -139,12 +139,12 @@ test('a branch-scoped employee gets their own branch and only their permissions'
   expect(c.perms.sort()).toEqual(['billing:create', 'billing:read', 'expense:read']);
 });
 
-test('sign-up: the owner password needs 12 characters and must not be a common one', async () => {
+test('sign-up: the owner password needs 8 characters and must not be a common one', async () => {
   const base = {
     restaurant_name: 'Policy Cafe', phone_number: `8${String(Date.now()).slice(-9)}`, email: `policy${Date.now()}@example.com`, business_type: 'Restaurant',
   };
-  const short = await api().post('/api/create-account').send({ ...base, password: 'Short1pass' });
-  expect(short.body.data.error).toBe('Password must be at least 12 characters');
+  const short = await api().post('/api/create-account').send({ ...base, password: 'Short1p' });
+  expect(short.body.data.error).toBe('Password must be at least 8 characters');
   const common = await api().post('/api/create-account').send({ ...base, password: 'password1234' });
   expect(common.body.data.error).toMatch(/too common/);
   const ok = await api().post('/api/create-account').send({ ...base, password: 'a long passphrase nobody uses' });

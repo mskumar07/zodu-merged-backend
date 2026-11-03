@@ -17,7 +17,7 @@ const bcrypt = require('bcrypt');
 
 const ARGON2 = { type: argon2.argon2id, memoryCost: 19456, timeCost: 2, parallelism: 1 };
 const MIN_LENGTH = 8;
-const MIN_LENGTH_OWNER = 12;
+const MIN_LENGTH_OWNER = 8;
 const MAX_LENGTH = 128;
 const BCRYPT = /^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/;
 

@@ -15,7 +15,7 @@ const { revokeAllForUser, revokeAllForUsers } = require('./session-service');
 const ADMIN_ROLE = 'Admin';
 const isAdminName = (name) => typeof name === 'string' && name.trim().toLowerCase() === ADMIN_ROLE.toLowerCase();
 
-// Owner / Admin passwords need 12 characters, everyone else's 8.
+// Owner / Admin passwords: the owner policy (8 characters, like everyone else's).
 async function isOwnerLogin({ role_id, zodu_id, branch_id, is_first_employee }) {
   if (is_first_employee) return true;
   if (!role_id) return false;

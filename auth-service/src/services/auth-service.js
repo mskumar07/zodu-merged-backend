@@ -29,7 +29,7 @@ async function CreateAccount(userInputs) {
   const email = userInputs.email?.toLowerCase() || null;
   const { restaurant_name, phone_number, password, same_for_branch, business_type } = userInputs;
 
-  // The account created here owns the company (Admin role): 12 characters minimum.
+  // The account created here owns the company (Admin role): 8 characters minimum.
   const weak = passwordProblem(password, { owner: true });
   if (weak) return FormateData({ error: weak });
 

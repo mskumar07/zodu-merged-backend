@@ -156,7 +156,7 @@ the token. A custom role named "Owner" gets no bypass.
 
 NIST SP 800-63B:
 
-- at least 8 characters, 12 for the owner/Admin; at most 128; no composition rules;
+- at least 8 characters (owner/Admin included); at most 128; no composition rules;
 - refused if in the offline common-password list
   (`auth-service/data/common-passwords.txt`, 46,483 entries of 8+ characters
   from SecLists' NCSC top 100k);
@@ -246,5 +246,5 @@ plaintext `tbl_user_sessions.refresh_token` column.
 | Treat the refresh token as opaque (64 characters, not a JWT) | now |
 | Call `/api/switch-context` when the user changes company or branch, and use the returned token | file-service (now), all services (Phase 3) |
 | Stop sending `zodu_id` / `branch_id` / `X-Branch-Id`: they are ignored | Phase 3 |
-| Sign-up form: owner passwords need 12+ characters | now |
+| Sign-up form: owner passwords need 8+ characters | now |
 | Allow `CORS_ORIGINS` for the web app and the Electron origin | gateway |
