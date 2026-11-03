@@ -71,6 +71,24 @@ const schema = {
     password: joi.string().min(1).max(128).required()
   }).xor('email', 'phone_number'),
 
+  // Forgot password: the email or phone the code goes to.
+  forgot_password: joi.object({
+    phone_number: joi.string().length(10).pattern(/^[0-9]+$/),
+    email: joi.string().email().max(254),
+  }).xor('email', 'phone_number'),
+
+  forgot_password_verify: joi.object({
+    phone_number: joi.string().length(10).pattern(/^[0-9]+$/),
+    email: joi.string().email().max(254),
+    otp: joi.string().length(6).pattern(/^[0-9]+$/).required(),
+  }).xor('email', 'phone_number'),
+
+  // The policy (length, common passwords) is checked by the service.
+  reset_password: joi.object({
+    reset_token: joi.string().pattern(/^[A-Za-z0-9_-]{43}$/).required(),
+    new_password: joi.string().min(1).max(128).required(),
+  }),
+
   switch_context: joi.object({
     zodu_id:   joi.string().pattern(/^[A-Za-z0-9_-]{1,64}$/).required(),
     branch_id: joi.string().pattern(/^[A-Za-z0-9_-]{1,64}$/).allow(null, ''),

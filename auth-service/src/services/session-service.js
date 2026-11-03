@@ -459,6 +459,7 @@ async function switchContext(authCtx, { zodu_id, branch_id }, req) {
 }
 
 module.exports = {
+  accountUsable,
   login,
   refresh,
   logout,

@@ -8,6 +8,7 @@ const { logger } = require('../utils');
 const { createRateLimit } = require('@zodu/security');
 const config = require('../config');
 const sessions = require('../services/session-service');
+const passwordReset = require('../services/password-reset-service');
 const { authenticate, getRedis } = require('../auth');
 const {
   readPlatform, setRefreshCookie, clearRefreshCookie, RequestError,
@@ -40,6 +41,10 @@ const loginLimit = createRateLimit({
 });
 const signupLimit = createRateLimit({
   name: 'auth-signup', limit: config.SIGNUP_RATE_LIMIT_PER_MIN, redis: getRedis(),
+  onStoreError: (err) => logger.error({ err: err.message }, 'rate limit store'),
+});
+const passwordResetLimit = createRateLimit({
+  name: 'auth-password-reset', limit: config.PASSWORD_RESET_RATE_LIMIT_PER_MIN, redis: getRedis(),
   onStoreError: (err) => logger.error({ err: err.message }, 'rate limit store'),
 });
 const refreshLimit = createRateLimit({
@@ -251,6 +256,29 @@ router.post('/api/login', loginLimit, tokenRoute(async (req, res, platform) => {
   const { errors, input } = await RequestValidator(schema.login, req.body);
   if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
   return send(res, await sessions.login(input, { req, platform }), platform);
+}));
+
+// ── Forgot password ───────────────────────────────────────────────────────────
+// 1. { email } | { phone_number } → a 6-digit code sent there (same answer
+//    whether or not the account exists; 429 + Retry-After while cooling down).
+router.post('/api/forgot-password', passwordResetLimit, tokenRoute(async (req, res) => {
+  const { errors, input } = await RequestValidator(schema.forgot_password, req.body);
+  if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
+  return send(res, await passwordReset.requestReset(input, { req }));
+}));
+
+// 2. { email | phone_number, otp } → { reset_token, expires_in }
+router.post('/api/forgot-password/verify', passwordResetLimit, tokenRoute(async (req, res) => {
+  const { errors, input } = await RequestValidator(schema.forgot_password_verify, req.body);
+  if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
+  return send(res, await passwordReset.verifyCode(input, { req }));
+}));
+
+// 3. { reset_token, new_password } → password changed, signed out everywhere.
+router.post('/api/reset-password', passwordResetLimit, tokenRoute(async (req, res) => {
+  const { errors, input } = await RequestValidator(schema.reset_password, req.body);
+  if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
+  return send(res, await passwordReset.resetPassword(input, { req }));
 }));
 
 // ── POST /api/refresh-token ───────────────────────────────────────────────────

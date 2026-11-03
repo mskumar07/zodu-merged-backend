@@ -38,7 +38,10 @@ function createLockout({ redis, maxFailures, lockMinutes }) {
 
   const recordSuccess = (identifier) => redis.del(failKey(identifier));
 
-  return { retryAfter, recordFailure, recordSuccess };
+  // Failures and any lock: after the owner proved who they are (password reset).
+  const clear = (identifier) => redis.del(failKey(identifier), lockKey(identifier));
+
+  return { retryAfter, recordFailure, recordSuccess, clear };
 }
 
 module.exports = { createLockout };

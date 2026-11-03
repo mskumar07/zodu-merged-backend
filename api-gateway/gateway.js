@@ -110,7 +110,10 @@ const authLimit = createRateLimit({
   redis,
   onStoreError,
 });
-app.use(['/auth/api/login', '/auth/api/create-account', '/auth/api/refresh-token'], authLimit);
+app.use([
+  '/auth/api/login', '/auth/api/create-account', '/auth/api/refresh-token',
+  '/auth/api/forgot-password', '/auth/api/reset-password',
+], authLimit);
 
 // File responses carry file-service's own headers: a PDF must open in the
 // browser's viewer (a CSP of default-src 'none' would block it) and may be

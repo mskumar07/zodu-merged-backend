@@ -10,6 +10,7 @@ const { loadKeys } = require('./keys');
 const { createAccessTokenIssuer } = require('./access-token');
 const { createRefreshStore } = require('./refresh-store');
 const { createLockout } = require('./lockout');
+const { createPasswordReset } = require('./password-reset');
 const { initPasswords } = require('./password');
 
 let redisClient;
@@ -56,6 +57,14 @@ async function initAuth({ redis = getRedis() } = {}) {
       redis,
       maxFailures: config.LOGIN_MAX_FAILURES,
       lockMinutes: config.LOGIN_LOCKOUT_MINUTES,
+    }),
+    passwordReset: createPasswordReset({
+      redis,
+      codeTtlSeconds: config.PASSWORD_RESET_CODE_TTL_SECONDS,
+      resendSeconds: config.PASSWORD_RESET_RESEND_SECONDS,
+      maxSendsPerHour: config.PASSWORD_RESET_MAX_SENDS_PER_HOUR,
+      maxAttempts: config.PASSWORD_RESET_MAX_ATTEMPTS,
+      tokenTtlSeconds: config.PASSWORD_RESET_TOKEN_TTL_SECONDS,
     }),
     ...createAuthenticate({ verifier, respond }),
   };

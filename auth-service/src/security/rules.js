@@ -11,6 +11,8 @@ module.exports = [
 
   // ── Token endpoints ──
   { method: 'POST', path: /^\/api\/(create-account|login|refresh-token|logout)$/, public: true },
+  // Forgot password: proven by the one-time code, then the reset token.
+  { method: 'POST', path: /^\/api\/(forgot-password(\/verify)?|reset-password)$/, public: true },
   // Its own authenticate: the body names the company to switch to, which the
   // session service checks against the user's memberships.
   { method: 'POST', path: '/api/switch-context', public: true },

@@ -64,6 +64,31 @@ module.exports = {
   LOGIN_LOCKOUT_MINUTES: int(process.env.LOGIN_LOCKOUT_MINUTES, 15),
   SIGNUP_RATE_LIMIT_PER_MIN: int(process.env.SIGNUP_RATE_LIMIT_PER_MIN, 5),
 
+  // ── Forgot password (one-time code by email or SMS) ────────────────────────
+  PASSWORD_RESET_RATE_LIMIT_PER_MIN: int(process.env.PASSWORD_RESET_RATE_LIMIT_PER_MIN, 10),
+  PASSWORD_RESET_CODE_TTL_SECONDS: int(process.env.PASSWORD_RESET_CODE_TTL_SECONDS, 10 * 60),
+  PASSWORD_RESET_RESEND_SECONDS: int(process.env.PASSWORD_RESET_RESEND_SECONDS, 60),
+  PASSWORD_RESET_MAX_SENDS_PER_HOUR: int(process.env.PASSWORD_RESET_MAX_SENDS_PER_HOUR, 5),
+  PASSWORD_RESET_MAX_ATTEMPTS: int(process.env.PASSWORD_RESET_MAX_ATTEMPTS, 5),
+  PASSWORD_RESET_TOKEN_TTL_SECONDS: int(process.env.PASSWORD_RESET_TOKEN_TTL_SECONDS, 10 * 60),
+
+  // Email (SMTP). The sender is noreply@zodu.in.
+  MAIL_FROM: process.env.MAIL_FROM || 'Zodu <noreply@zodu.in>',
+  SMTP_HOST: process.env.SMTP_HOST,
+  SMTP_PORT: int(process.env.SMTP_PORT, 587),
+  // true for port 465 (TLS from the start); 587 upgrades with STARTTLS.
+  SMTP_SECURE: bool(process.env.SMTP_SECURE),
+  SMTP_USER: process.env.SMTP_USER,
+  SMTP_PASS: process.env.SMTP_PASS,
+
+  // SMS (Twilio Messages API). Either a sender number or a Messaging Service.
+  TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN,
+  TWILIO_FROM_NUMBER: process.env.TWILIO_FROM_NUMBER,
+  TWILIO_MESSAGING_SERVICE_SID: process.env.TWILIO_MESSAGING_SERVICE_SID,
+  // Users' phone numbers are stored as 10 digits; this makes them E.164.
+  SMS_COUNTRY_CODE: process.env.SMS_COUNTRY_CODE || '+91',
+
   REDIS_URL: process.env.REDIS_URL,
   TRUST_PROXY: process.env.TRUST_PROXY,
 };

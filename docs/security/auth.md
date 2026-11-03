@@ -168,17 +168,30 @@ NIST SP 800-63B:
   unknown, inactive, deleted and `login_user=false` all return
   "Invalid email/phone or password"; the real reason is in the security log.
 
-### Password reset (design only, not built)
+### Forgot password
 
-1. `POST /api/password-reset/request { email | phone_number }` always answers
-   "If the account exists, we've sent instructions", same timing either way.
-   Rate limited per IP and per identifier.
-2. Token: 32 random bytes, single use, **15 minutes**; only its SHA-256 is
-   stored (`tbl_password_resets`: user_id, token_hash, expires_at, used_at).
-   Sent by email/SMS as a link; never logged.
-3. `POST /api/password-reset/confirm { token, password }`: password policy,
-   argon2id, mark the token used, **revoke all sessions**, record
-   `password_reset`. Notify the user that the password changed.
+`auth-service/src/services/password-reset-service.js`, codes in Redis
+(`src/auth/password-reset.js`), delivery in `src/notify/`. Public routes, per-IP
+limit (`PASSWORD_RESET_RATE_LIMIT_PER_MIN`, default 10) plus the gateway's auth limit.
+
+1. `POST /api/forgot-password { email } | { phone_number }`: a 6-digit code
+   (`crypto.randomInt`) to that email (SMTP, from `noreply@zodu.in`) or phone
+   (Twilio SMS). Always 200 "If an account uses this email or phone number, a
+   code has been sent", whether the account exists, is disabled or not; the code
+   is sent after answering, so the timing doesn't differ. One request per
+   identifier per 60 s and 5 per hour (429 + `Retry-After`, unknown accounts too).
+2. `POST /api/forgot-password/verify { email | phone_number, otp }`: code valid
+   10 minutes, stored salted-hashed, compared in constant time, single use; a new
+   request replaces it; 5 wrong tries delete it. Returns `reset_token` (32 random
+   bytes, 10 minutes, only its SHA-256 is a Redis key).
+3. `POST /api/reset-password { reset_token, new_password }`: password policy
+   (checked before the token is used up), argon2id, token used (`GETDEL`),
+   **every session revoked**, login lockout cleared.
+
+Codes are never logged, except when the channel isn't configured outside
+production (local testing). Events: `password_reset_requested`,
+`password_reset_delivery_failed`, `password_reset_code_failed`,
+`password_reset_code_verified`, `password_reset`.
 
 ### Two-factor (extension point)
 
@@ -194,7 +207,8 @@ and add `POST /api/login/2fa { challenge, code }` that issues the tokens.
 details jsonb, created_at). Written without blocking the request. Events:
 `login_success`, `login_failed` (reason), `login_blocked`, `lockout`,
 `refresh_refused`, `refresh_reuse_detected`, `legacy_refresh_migrated`,
-`logout_all`, `session_revoked`, `password_changed`, `cross_tenant_attempt`.
+`logout_all`, `session_revoked`, `password_changed`, `password_reset*` (above),
+`cross_tenant_attempt`.
 `permission_denied` (sampled) comes with `requirePermission` in Phase 3.
 Passwords, tokens and request bodies are never logged.
 
