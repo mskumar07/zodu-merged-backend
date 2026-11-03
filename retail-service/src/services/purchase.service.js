@@ -146,7 +146,6 @@ exports.createPurchase = async (data) => {
     return { success: true, data: purchase };
   } catch (err) {
     await client.query("ROLLBACK");
-    console.log(err);
     return { success: false, message: err.message };
   } finally {
     client.release();
@@ -218,13 +217,13 @@ exports.getPurchaseSummary = async ({ zodu_id, branch_id }) => {
 // ─────────────────────────────────────────────────────────────
 // UPDATE PURCHASE (WITH SMART STOCK ADJUSTMENT)
 // ─────────────────────────────────────────────────────────────
-exports.updatePurchase = async (purchase_id, data) => {
+// tenant: { zodu_id, branch_id } of the request (src/security/request.js)
+exports.updatePurchase = async (purchase_id, data, tenant) => {
   const client = await conn.connect();
-  console.log(data)
   try {
     await client.query("BEGIN");
 
-    const oldPurchase = await repo.getPurchaseByIdForUpdate(client, purchase_id);
+    const oldPurchase = await repo.getPurchaseByIdForUpdate(client, purchase_id, tenant.zodu_id);
     if (!oldPurchase) {
       await client.query("ROLLBACK");
       return { success: false, message: "Purchase not found" };
@@ -238,10 +237,10 @@ exports.updatePurchase = async (purchase_id, data) => {
       };
     }
 
-    const oldItems = await repo.getPurchaseItems(client, purchase_id);
+    const oldItems = await repo.getPurchaseItems(client, purchase_id, oldPurchase.zodu_id);
     const newItems = data.items || [];
 
-    const zodu_id = data.zodu_id || oldPurchase.zodu_id;
+    const zodu_id = oldPurchase.zodu_id;
     const branch_id = data.branch_id || oldPurchase.branch_id;
 
     const { missing } = await inventoryRepo.checkItemIdsExistBulk(
@@ -350,8 +349,8 @@ exports.updatePurchase = async (purchase_id, data) => {
     }
 
     // Update database records
-    await repo.deletePurchaseItems(client, purchase_id);
-    await repo.updatePurchase(client, purchase_id, data);
+    await repo.deletePurchaseItems(client, purchase_id, zodu_id);
+    await repo.updatePurchase(client, purchase_id, { ...data, zodu_id, branch_id: oldPurchase.branch_id }, zodu_id);
     
     if (newItems.length > 0) {
       await repo.createPurchaseItems(client, newItems, purchase_id, zodu_id);
@@ -379,7 +378,6 @@ exports.updatePurchase = async (purchase_id, data) => {
     return { success: true, message: "Updated successfully" };
   } catch (err) {
     await client.query("ROLLBACK");
-    console.log(err)
     return { success: false, message: err.message };
   } finally {
     client.release();
@@ -389,12 +387,12 @@ exports.updatePurchase = async (purchase_id, data) => {
 // ─────────────────────────────────────────────────────────────
 // DELETE PURCHASE (WITH STOCK REVERSAL)
 // ─────────────────────────────────────────────────────────────
-exports.deletePurchase = async (purchase_id) => {
+exports.deletePurchase = async (purchase_id, tenant) => {
   const client = await conn.connect();
   try {
     await client.query("BEGIN");
 
-    const purchase = await repo.getPurchaseByIdForUpdate(client, purchase_id);
+    const purchase = await repo.getPurchaseByIdForUpdate(client, purchase_id, tenant.zodu_id);
     if (!purchase) {
       await client.query("ROLLBACK");
       return { success: false, message: "Purchase not found" };
@@ -421,7 +419,7 @@ exports.deletePurchase = async (purchase_id) => {
 
     // Soft-delete: mark as cancelled instead of removing rows, so stock
     // ledger history and payment records stay intact
-    await repo.deletePurchase(client, purchase_id);
+    await repo.deletePurchase(client, purchase_id, purchase.zodu_id);
 
     await client.query("COMMIT");
     return {
@@ -439,14 +437,22 @@ exports.deletePurchase = async (purchase_id) => {
 // ─────────────────────────────────────────────────────────────
 // MARK PAYMENT
 // ─────────────────────────────────────────────────────────────
-exports.markPayment = async (purchase_id, data) => {
+exports.markPayment = async (purchase_id, data, tenant) => {
   const client = await conn.connect();
   try {
     await client.query("BEGIN");
 
+    const purchase = await repo.getPurchaseByIdForUpdate(client, purchase_id, tenant.zodu_id);
+    if (!purchase) {
+      await client.query("ROLLBACK");
+      return { success: false, message: "Purchase not found" };
+    }
+
     await repo.createPurchasePayment(client, {
-      purchase_id,
       ...data,
+      purchase_id,
+      zodu_id:   purchase.zodu_id,
+      branch_id: purchase.branch_id,
     });
 
     const updated = await client.query(
@@ -465,9 +471,9 @@ exports.markPayment = async (purchase_id, data) => {
                ELSE 'partial'
              END,
            updated_at = NOW()
-       WHERE purchase_id = $2
+       WHERE purchase_id = $2 AND zodu_id = $3
        RETURNING *`,
-      [data.paid_amount, purchase_id]
+      [data.paid_amount, purchase_id, purchase.zodu_id]
     );
 
     await client.query("COMMIT");

@@ -3,6 +3,11 @@ const router = express.Router();
 const service = require("../services/purchase.service");
 const RequestValidator = require("../utils/requestValidator");
 const vSchema = require("../schema/validation-schema");
+const owned = require("../security/owned");
+const { tenantOf } = require("../security/request");
+
+// purchase_id is unique per company only.
+router.param("id", owned.param("tbl_purchase", "purchase_id", { code: true }));
 
 // CREATE PURCHASE
 router.post("/", async (req, res) => {
@@ -29,7 +34,7 @@ router.get("/summary", async (req, res) => {
 
 // GET ONE
 router.get("/:id", async (req, res) => {
-  const result = await service.getPurchaseById(req.params.id, req.query);
+  const result = await service.getPurchaseById(req.params.id, { ...req.query, zodu_id: req.tenant.zoduId });
   return res.status(result.success ? 200 : 404).json(result);
 });
 
@@ -37,13 +42,13 @@ router.get("/:id", async (req, res) => {
 router.put("/:id", async (req, res) => {
   const { errors, input } = await RequestValidator(vSchema.purchase_update, req.body);
   if (errors) return res.status(400).json({ errors });
-  const result = await service.updatePurchase(req.params.id, input);
+  const result = await service.updatePurchase(req.params.id, input, tenantOf(req));
   return res.status(result.success ? 200 : 400).json(result);
 });
 
 // DELETE (WITH STOCK REVERSAL)
 router.delete("/:id", async (req, res) => {
-  const result = await service.deletePurchase(req.params.id);
+  const result = await service.deletePurchase(req.params.id, tenantOf(req));
   return res.status(result.success ? 200 : 400).json(result);
 });
 
@@ -51,7 +56,7 @@ router.delete("/:id", async (req, res) => {
 router.post("/payment/:id/", async (req, res) => {
   const { errors, input } = await RequestValidator(vSchema.purchase_payment, req.body);
   if (errors) return res.status(400).json({ errors });
-  const result = await service.markPayment(req.params.id, input);
+  const result = await service.markPayment(req.params.id, input, tenantOf(req));
   return res.status(result.success ? 200 : 400).json(result);
 });
 

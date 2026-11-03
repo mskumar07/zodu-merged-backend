@@ -1,14 +1,8 @@
 const multer = require('multer');
-const Minio = require("minio");
-const sharp = require("sharp");
 const conn = require('../database/connection.js');
 const repository = require('../repository/retail-repo.js');
-const { PDFDocument } = require('pdf-lib');
+const files = require('../utils/file-client');
 const moment = require('moment/moment');
-const {
-  MINIO_HOST, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY, BUCKET_NAME,
-  PUBLIC_FILE_BASE_URL,
-} = require('../config/index.js');
 const { getDateRange } = require("../utils/Date_Folder/getDate.js");
 const { getPagination, getMeta } = require('../utils/pagination.js');
 const stockRepository = require('../repository/menu-repo.js');
@@ -18,19 +12,6 @@ const { round } = require('../utils/number.js');
 
 
 
-const minioClient = new Minio.Client({
-  endPoint: MINIO_HOST,
-  port: MINIO_PORT,
-  useSSL: false,
-  accessKey: MINIO_ACCESSKEY,
-  secretKey: MINIO_SECRETKEY
-});
-
-const bucketName = BUCKET_NAME;
-// Public origin the file URLs are built against — set per environment
-// (UAT: https://api.myzodu.com, prod: https://api.zodu.in). Trailing slash trimmed so a
-// value with or without one produces the same URL.
-const publicBaseUrl = String(PUBLIC_FILE_BASE_URL || 'https://api.myzodu.com').replace(/\/+$/, '');
 
 const normalizeBranchIds = (branchIds) => {
   const normalized = Array.isArray(branchIds)
@@ -50,60 +31,17 @@ const normalizeBranchIds = (branchIds) => {
   return normalized;
 };
 
-async function uploadImg(file) {
-  console.log(file)
+// POST /upload: the file is checked (type from its bytes, unsafe content
+// refused), re-encoded and stored by file-service in its staging area; the URL
+// is a permanent file-service link. Saving a record with it claims the file.
+async function uploadImg(file, ctx = {}) {
   try {
-    if (!file || !file.buffer)
-      throw new Error("Invalid file input");
-
-    const MAX_SIZE = 10 * 1024 * 1024; // 10 MB
-
-    if (file.size > MAX_SIZE)
-      throw new Error("File exceeds 10MB limit");
-
-    const ext = file.originalname.split(".").pop().toLowerCase();
-
-    let buffer = file.buffer;
-    let outputName = `${Date.now()}-${file.originalname}`;
-
-    // ✔ Optimize only images
-    if (["jpg", "jpeg", "png", "webp"].includes(ext)) {
-      buffer = await sharp(file.buffer)
-        .resize({ width: 1800, withoutEnlargement: true })
-        .toFormat("webp", { quality: 80 })
-        .toBuffer();
-
-      outputName = `${Date.now()}-${file.originalname.replace(/\.[^/.]+$/, "")}.webp`;
-    }
-
-    // ✔ PDFs (compress)
-    else if (ext === "pdf") {
-      const pdfDoc = await PDFDocument.load(file.buffer);
-      const compressed = await pdfDoc.save({ useObjectStreams: true });
-      buffer = Buffer.from(compressed);
-    }
-
-    // ✔ OFFICE DOCS, CSV, TXT — do not modify
-    else {
-      buffer = Buffer.from(file.buffer);
-    }
-
-    // Upload to MinIO
-    await minioClient.putObject(
-      bucketName,
-      outputName,
-      buffer,
-      buffer.length,
-      { "Content-Type": file.mimetype }
-    );
-
-    const url = `${publicBaseUrl}/restaurant/file/${outputName}`;
-
-    return { success: true, fileUrl: url };
-
+    if (!file || !file.buffer) throw new Error("Invalid file input");
+    const [stored] = await files.stage(ctx, [file]);
+    return { success: true, fileUrl: stored.url, file_id: stored.file_id };
   } catch (err) {
-    console.error("Upload failed:", err);
-    return { success: false, message: err.message };
+    console.error("Upload failed:", err.message);
+    return { success: false, message: err.details?.[0]?.error || err.message };
   }
 }
 
@@ -299,35 +237,31 @@ async function updateMenuFav(menu_id, favorite) {
   }
 }
 
-async function uploadMultiple(files) {
-  if (!Array.isArray(files) || files.length === 0) {
+// POST /upload/multiple: all-or-nothing, like a single upload of every file.
+// file-service takes at most 10 per call, so larger batches go in chunks and
+// a failed chunk discards the ones already staged.
+async function uploadMultiple(uploads, ctx = {}) {
+  if (!Array.isArray(uploads) || uploads.length === 0) {
     throw new Error("No files received");
   }
 
-  const results = [];
-
-  for (const file of files) {
-    // Validate file
-    if (!file || !file.buffer) {
-      throw new Error("Invalid file received");
+  const stored = [];
+  try {
+    for (let i = 0; i < uploads.length; i += 10) {
+      stored.push(...await files.stage(ctx, uploads.slice(i, i + 10)));
     }
-
-    const uploaded = await uploadImg(file);
-
-    if (!uploaded.success) {
-      throw new Error(uploaded.message || "One or more file uploads failed");
-    }
-
-    results.push({
-      id: Date.now() + "-" + Math.floor(Math.random() * 1000000),
-      filename: file.originalname || `file-${Date.now()}`, // safe fallback
-      url: uploaded.fileUrl,
-      size: file.size || 0,
-      mimetype: file.mimetype ?? "application/octet-stream",
-    });
+  } catch (err) {
+    await files.quietly(files.discard(ctx, stored.map((f) => f.file_id)));
+    throw err;
   }
 
-  return results;
+  return stored.map((f, i) => ({
+    id: f.file_id,
+    filename: uploads[i].originalname || f.original_name,
+    url: f.url,
+    size: uploads[i].size || 0,
+    mimetype: f.mime_type,
+  }));
 }
 
 
@@ -593,7 +527,6 @@ async function updateExpenseCategory(name,id,branch_id) {
 }
 async function deleteExpenseCategory(id) {
   try {
-    console.log("fromserv",id)
     const deletedCategory = await repository.deleteExpenseCategory(id);
     return {
       success: true,
@@ -701,16 +634,21 @@ async function getPurchaseCategoryData(branch_id) {
   }
 }
 
-async function deleteFileFromMinIO(fileName) {
+// DELETE /delete/file/:name — the app removing an upload before saving. Only
+// staged uploads no record has claimed can go this way (name = the file id in
+// the link); a saved record's files go with the record, and files from before
+// file-service are kept for the Phase 3 migration.
+async function deleteFileFromMinIO(fileName, ctx = {}) {
   try {
     if (!fileName) throw new Error("File name required");
 
-    await minioClient.removeObject(bucketName, fileName);
+    const fileId = files.isFileId(fileName) ? fileName : files.fileIdFromUrl(fileName);
+    if (fileId) await files.discard(ctx, [fileId]);
 
     return { success: true, message: "File deleted successfully" };
 
   } catch (err) {
-    console.error("MinIO Delete Error:", err);
+    console.error("File delete error:", err.message);
     return { success: false, message: err.message };
   }
 };
@@ -1238,18 +1176,14 @@ async function createBranch(branchData) {
   try {
     // Generate branch_id if not provided
     let BranchId = await repository.findMaxBranchID(branchData.zodu_id);
-    console.log("BranchId", BranchId.rows);
     if (BranchId.rows[0].max === null || BranchId.rows[0].max === undefined) {
       branchData.branch_id = branchData.zodu_id + "B1";
-      console.log("first branch id", branchData.branch_id);
     }
     else if (BranchId.rows[0].max) {
-      console.log("Not first branch id", BranchId.rows[0].max);
       const maxBranchId = BranchId.rows[0].max;
       const match = maxBranchId.match(/B(\d+)$/);
       const nextNum = match ? parseInt(match[1], 10) + 1 : 1;
       branchData.branch_id = maxBranchId.replace(/B\d+$/, "B" + nextNum);
-      console.log("New Branch ID:", branchData.branch_id);
     }
 
     const createQr = await repository.createQRCode(branchData.branch_id);
@@ -1296,7 +1230,6 @@ async function createDefaultBranchService({ zodu_id, branch_name, branch_mobile_
       branch_mobile_no: branch_mobile_no || null,
       branch_mail_id:   branch_mail_id   || null,
     });
-    console.log("vv",branch)
 
     return { success: true, branch_id, data: branch };
   } catch (err) {
@@ -1344,7 +1277,6 @@ async function createOrder(orderData) {
       orderData.discount_value,
       orderData.discount_gst_mode || "after"
     );
-    console.log("totals", totals)
 
     // ✅ PAYMENT LOGIC
  const finalTotal = totals.final_amount;
@@ -1362,12 +1294,10 @@ const balanceAmount = round(finalTotal - paidAmount);
 orderData.balance_amount=balanceAmount;
 
    let paymentStatus = "unpaid";
-  console.log("paidAmount", paidAmount, "finalTotal", finalTotal, "balanceAmount", balanceAmount);
 if (!isQuotation) {
   if (paidAmount <= 0) {
     paymentStatus = "unpaid";
   } else if (paidAmount < finalTotal) {
-    console.log("paidAmount is less than finalTotal");
     paymentStatus = "partially_paid";
   } else {
     paymentStatus = "fully_paid";
@@ -1402,9 +1332,11 @@ if (!isQuotation) {
           throw new Error(`Invalid quantity for ${item.item_name}`);
         }
 
+        // item_uuid comes from the request: only this branch's stock.
         const inv = await client.query(
-          `SELECT available_qty FROM tbl_inventory WHERE item_uuid = $1 FOR UPDATE`,
-          [item.item_uuid]
+          `SELECT available_qty FROM tbl_inventory
+           WHERE item_uuid = $1 AND zodu_id = $2 AND branch_id = $3 FOR UPDATE`,
+          [item.item_uuid, orderData.zodu_id, orderData.branch_id]
         );
 
         if (!inv.rows.length) {
@@ -1426,8 +1358,9 @@ if (!isQuotation) {
         const stock_after = stock_before - qty;
 
         await client.query(
-          `UPDATE tbl_inventory SET available_qty = $1 WHERE item_uuid = $2`,
-          [stock_after, item.item_uuid]
+          `UPDATE tbl_inventory SET available_qty = $1
+           WHERE item_uuid = $2 AND zodu_id = $3 AND branch_id = $4`,
+          [stock_after, item.item_uuid, orderData.zodu_id, orderData.branch_id]
         );
 
         await stockRepository.createStockLedger(client, {
@@ -1496,12 +1429,13 @@ async function applyStockAdjustments(client, {
 
   const itemUuids = adjustments.map(a => a.item_uuid);
 
+  // item_uuid comes from the request: only this branch's stock moves.
   const invRes = await client.query(
     `SELECT item_uuid, available_qty
      FROM tbl_inventory
-     WHERE item_uuid = ANY($1::uuid[])
+     WHERE item_uuid = ANY($1::uuid[]) AND zodu_id = $2 AND branch_id = $3
      FOR UPDATE`,
-    [itemUuids]
+    [itemUuids, zodu_id, branch_id]
   );
 
   const stockBeforeMap = new Map(
@@ -1548,8 +1482,8 @@ async function applyStockAdjustments(client, {
        FROM jsonb_to_recordset($1::jsonb) AS t(item_uuid uuid, qty_change numeric)
        GROUP BY item_uuid
      ) v
-     WHERE inv.item_uuid = v.item_uuid`,
-    [JSON.stringify(adjustments.map(a => ({ item_uuid: a.item_uuid, qty_change: a.qty_change })))]
+     WHERE inv.item_uuid = v.item_uuid AND inv.zodu_id = $2 AND inv.branch_id = $3`,
+    [JSON.stringify(adjustments.map(a => ({ item_uuid: a.item_uuid, qty_change: a.qty_change }))), zodu_id, branch_id]
   );
 
   await client.query(
@@ -1575,7 +1509,6 @@ async function applyStockAdjustments(client, {
 
 async function updateOrder(orderData) {
   const client = await conn.connect();
- console.log("test",orderData)
   try {
     await client.query('BEGIN');
  
@@ -1584,12 +1517,13 @@ async function updateOrder(orderData) {
     // =========================================================
     // 0️⃣  LOCK & FETCH CURRENT SALE
     // =========================================================
+    // In the request's (checked) company and branch only.
     const saleRes = await client.query(
       `SELECT sale_uuid, sale_id, sale_type, zodu_id, branch_id
        FROM tbl_sales
-       WHERE sale_uuid = $1
+       WHERE sale_uuid = $1 AND zodu_id = $2 AND branch_id = $3
        FOR UPDATE`,
-      [saleId]
+      [saleId, orderData.zodu_id, orderData.branch_id]
     );
  
     if (!saleRes.rows.length) throw new Error('Sale not found');
@@ -1619,9 +1553,10 @@ async function updateOrder(orderData) {
     const oldItemsRes = await client.query(
       `SELECT si.*, m.item_uuid
        FROM tbl_sale_items si
-       LEFT JOIN tbl_menu_items m ON m.item_id::text = si.item_id
+       LEFT JOIN tbl_menu_items m
+              ON m.item_id::text = si.item_id AND m.zodu_id = $2 AND m.branch_id = $3
        WHERE si.sale_uuid = $1`,
-      [saleId]
+      [saleId, sale.zodu_id, sale.branch_id]
     );
  
     const normalizedOldItems = oldItemsRes.rows.map(i => ({
@@ -1846,8 +1781,8 @@ async function updateOrder(orderData) {
       //         and conversion; for conversions, old quotation id had no payments
       //         but is still the correct key to clean up).
       await client.query(
-        `DELETE FROM tbl_sale_payment WHERE sale_id = $1`,
-        [sale.sale_id]
+        `DELETE FROM tbl_sale_payment WHERE sale_id = $1 AND zodu_id = $2 AND branch_id = $3`,
+        [sale.sale_id, sale.zodu_id, sale.branch_id]
       );
  
       if (paidAmount > 0) {
@@ -2495,7 +2430,6 @@ async function getPurchaseSummary(
   options = {}
 ) {
   try {
-    console.log(start_date,end_date,filterType);
     const { startDate, endDate } = await getDateRange(
       filterType,
       start_date,

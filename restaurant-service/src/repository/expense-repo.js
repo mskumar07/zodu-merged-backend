@@ -1,3 +1,4 @@
+const attachments = require('../utils/attachments');
 const conn = require("../database/connection");
 
 // ── EXPENSE ITEM CATALOG (tbl_expense_menu_items) ────────────────
@@ -105,11 +106,13 @@ exports.createExpense = async (client, data) => {
       totalAmount,
       paidAmount,
       data.notes          || null,
-      data.attachment_url ? JSON.stringify(data.attachment_url) : null,
+      null,   // attachments: stored below, once the trigger has set expense_id
       data.due_date       || null,
     ]
   );
-  return rows[0];
+  return attachments.storeAfterInsert(client, {
+    table: 'tbl_expense', idColumn: 'expense_id', row: rows[0], attachments: data.attachment_url, module: 'expense',
+  });
 };
 
 exports.createExpenseLineItems = async (client, items, expense_id, category_id, zodu_id) => {
@@ -222,68 +225,45 @@ exports.getExpenseById = async (id, { branch_id, zodu_id } = {}) => {
        c.name AS category_name
      FROM tbl_expense_items ei
      LEFT JOIN tbl_category c ON c.id = ei.category_id
-     WHERE ei.expense_id = $1
+     WHERE ei.expense_id = $1 AND ei.zodu_id = $2
      ORDER BY ei.expense_item_id ASC`,
-    [expense.expense_id]
+    [expense.expense_id, expense.zodu_id]
   );
 
   const { rows: payments } = await conn.query(
     `SELECT *,
        TO_CHAR(payment_date, 'DD Mon YYYY') AS payment_date_formatted
      FROM tbl_expense_payment
-     WHERE expense_id = $1
+     WHERE expense_id = $1 AND zodu_id = $2
      ORDER BY payment_date ASC, created_at ASC`,
-    [expense.expense_id]
+    [expense.expense_id, expense.zodu_id]
   );
 
   return { ...expense, items, payments };
 };
 
-exports.getExpenseByIdForUpdate = async (client, expense_id) => {
+// expense_id is unique per company only: every query on it also names the company.
+exports.getExpenseByIdForUpdate = async (client, expense_id, zodu_id) => {
   const { rows } = await client.query(
-    `SELECT * FROM tbl_expense WHERE expense_id = $1 FOR UPDATE`,
-    [expense_id]
+    `SELECT * FROM tbl_expense WHERE expense_id = $1 AND zodu_id = $2 FOR UPDATE`,
+    [expense_id, zodu_id]
   );
   return rows[0];
 };
 
-exports.getExpenseLineItems = async (client, expense_id) => {
+exports.getExpenseLineItems = async (client, expense_id, zodu_id) => {
   const { rows } = await client.query(
-    `SELECT * FROM tbl_expense_items WHERE expense_id = $1`,
-    [expense_id]
+    `SELECT * FROM tbl_expense_items WHERE expense_id = $1 AND zodu_id = $2`,
+    [expense_id, zodu_id]
   );
   return rows;
 };
 
-exports.deleteExpenseLineItems = async (client, expense_id) => {
-  await client.query(`DELETE FROM tbl_expense_items WHERE expense_id = $1`, [expense_id]);
+exports.deleteExpenseLineItems = async (client, expense_id, zodu_id) => {
+  await client.query(`DELETE FROM tbl_expense_items WHERE expense_id = $1 AND zodu_id = $2`, [expense_id, zodu_id]);
 };
 
-exports.UpdateExpensePayment = async (expense_id, data) => {
-  const client = await conn.connect();
-  try {
-    await client.query("BEGIN");
-
-    const updated = await client.query(
-      `UPDATE tbl_expense_payment
-       SET paid_amount = $1,
-           transaction_type = $2
-       WHERE expense_id = $3
-       RETURNING *`,
-      [data.paid_amount, expense_id]
-    );
-
-    await client.query("COMMIT");
-    return { success: true, data: updated.rows[0] };
-  } catch (err) {
-    await client.query("ROLLBACK");
-    return { success: false, message: err.message };
-  } finally {
-    client.release();
-  }
-};
-
-exports.updateExpense = async (client, expense_id, data) => {
+exports.updateExpense = async (client, expense_id, data, zodu_id) => {
   const totalAmount = Number(data.total_amount) || 0;
   const paidAmount  = Number(data.paid_amount)  || 0;
 
@@ -303,7 +283,7 @@ exports.updateExpense = async (client, expense_id, data) => {
          notes          = $6,
          attachment_url = $7,
          updated_at     = NOW()
-     WHERE expense_id = $8`,
+     WHERE expense_id = $8 AND zodu_id = $10`,
     [
       data.expense_date,
       data.category_id    || null,
@@ -311,19 +291,22 @@ exports.updateExpense = async (client, expense_id, data) => {
       totalAmount,
       paidAmount,
       data.notes          || null,
-      data.attachment_url ? JSON.stringify(data.attachment_url) : null,
+      data.attachment_url
+        ? JSON.stringify(await attachments.storedAttachments(client, { table: 'tbl_expense', idColumn: 'expense_id', id: expense_id, data: data, module: 'expense' }))
+        : null,
       String(expense_id),
       data.due_date       || null,
+      zodu_id,
     ]
   );
 };
 
-exports.deleteExpensePayments = async (client, expense_id) => {
-  await client.query(`DELETE FROM tbl_expense_payment WHERE expense_id = $1`, [expense_id]);
+exports.deleteExpensePayments = async (client, expense_id, zodu_id) => {
+  await client.query(`DELETE FROM tbl_expense_payment WHERE expense_id = $1 AND zodu_id = $2`, [expense_id, zodu_id]);
 };
 
-exports.deleteExpense = async (client, expense_id) => {
-  await client.query(`DELETE FROM tbl_expense WHERE expense_id = $1`, [expense_id]);
+exports.deleteExpense = async (client, expense_id, zodu_id) => {
+  await client.query(`DELETE FROM tbl_expense WHERE expense_id = $1 AND zodu_id = $2`, [expense_id, zodu_id]);
 };
 
 exports.createExpensePayment = async (client, data) => {

@@ -103,7 +103,7 @@ async function applyStockDelta(client, { zodu_id, branch_id, deltaByItem, nameBy
   const changed = [...deltaByItem].filter(([, delta]) => delta !== 0).map(([uuid]) => uuid);
   if (!changed.length) return;
 
-  const inventories = await repo.findInventoriesForUpdate(client, changed, branch_id);
+  const inventories = await repo.findInventoriesForUpdate(client, changed, branch_id, zodu_id);
   if (!inventories.length) return;
 
   const updates = [];

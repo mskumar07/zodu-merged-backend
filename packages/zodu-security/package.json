@@ -1,0 +1,38 @@
+{
+  "name": "@zodu/security",
+  "version": "1.1.0",
+  "private": true,
+  "description": "Shared security middleware for the Zodu Node services: service-to-service auth, request ids, CORS, rate limits, security headers.",
+  "main": "index.js",
+  "type": "commonjs",
+  "files": [
+    "index.js",
+    "testing.js",
+    "src/"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express-rate-limit": "^8.7.1",
+    "helmet": "^8.3.0",
+    "ioredis": "^5.11.1",
+    "jose": "^6.2.12"
+  },
+  "peerDependencies": {
+    "express": "^4.18.0 || ^5.0.0"
+  },
+  "devDependencies": {
+    "express": "^5.1.0",
+    "jest": "^30.5.2",
+    "multer": "^2.5.0",
+    "supertest": "^7.3.0"
+  },
+  "jest": {
+    "testEnvironment": "node"
+  }
+}

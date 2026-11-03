@@ -4,13 +4,84 @@ const authService  = require('../services/auth-service');
 const RequestValidator = require('../utils/requestValidator');
 const schema       = require('../schema/auth-schema');
 const STATUS_CODES = require('../utils/error/status-codes');
-const { logger, ValidateSignature } = require('../utils');
+const { logger } = require('../utils');
+const { createRateLimit } = require('@zodu/security');
+const config = require('../config');
+const sessions = require('../services/session-service');
+const passwordReset = require('../services/password-reset-service');
+const { authenticate, getRedis } = require('../auth');
+const {
+  readPlatform, setRefreshCookie, clearRefreshCookie, RequestError,
+} = require('../auth/request');
+
+const security = require('../security');
 
 const router = express.Router();
 
+// zodu_id / branch_id in a path: the token's company, a branch the user may use.
+// Route permissions: src/security/rules.js.
+security.protectParams(router);
+
+// Signed-in routes: req.user in the shape these handlers used before
+// (user_id / zodu_id / user_type). The route policy has already checked the
+// token on most of them; the ones it leaves public (role-access) check it here.
+const withLegacyUser = (req, res, next) => {
+  req.user = { user_id: req.auth.userId, zodu_id: req.auth.zoduId, user_type: req.auth.userType };
+  next();
+};
+const signedIn = (req, res, next) => (req.auth
+  ? withLegacyUser(req, res, next)
+  : authenticate(req, res, () => withLegacyUser(req, res, next)));
+
+// Per-IP limits on the public token endpoints (the gateway has a looser one
+// in front). Per-account lockout is in the login flow itself.
+const loginLimit = createRateLimit({
+  name: 'auth-login', limit: config.LOGIN_RATE_LIMIT_PER_MIN, redis: getRedis(),
+  onStoreError: (err) => logger.error({ err: err.message }, 'rate limit store'),
+});
+const signupLimit = createRateLimit({
+  name: 'auth-signup', limit: config.SIGNUP_RATE_LIMIT_PER_MIN, redis: getRedis(),
+  onStoreError: (err) => logger.error({ err: err.message }, 'rate limit store'),
+});
+const passwordResetLimit = createRateLimit({
+  name: 'auth-password-reset', limit: config.PASSWORD_RESET_RATE_LIMIT_PER_MIN, redis: getRedis(),
+  onStoreError: (err) => logger.error({ err: err.message }, 'rate limit store'),
+});
+const refreshLimit = createRateLimit({
+  name: 'auth-refresh', limit: 60, redis: getRedis(),
+  onStoreError: (err) => logger.error({ err: err.message }, 'rate limit store'),
+});
+
+// Sends a session-service result: Retry-After, then the refresh token as the
+// web cookie or in the body (desktop, mobile, and clients without X-Client-Platform).
+function send(res, result, platform) {
+  if (result.retryAfter) res.set('Retry-After', String(result.retryAfter));
+  const data = { ...result.data };
+  if (result.refresh) {
+    if (platform === 'web') setRefreshCookie(res, result.refresh.token, result.refresh.maxAge);
+    else data.refresh_token = result.refresh.token;
+  }
+  res.set('Cache-Control', 'no-store');
+  return res.status(result.status).json({ data });
+}
+
+// Wraps a token endpoint: platform header, errors without internals.
+const tokenRoute = (handler) => async (req, res) => {
+  let platform;
+  try {
+    platform = readPlatform(req);
+    return await handler(req, res, platform);
+  } catch (error) {
+    if (error instanceof RequestError) return res.status(error.status).json({ data: { error: error.message } });
+    logger.error(error);
+    return res.status(STATUS_CODES.INTERNAL_ERROR).json({ data: { error: 'Something went wrong. Please try again.' } });
+  }
+};
+
 // Signature images are small; keep them in memory and hand the buffer straight
-// to MinIO rather than touching disk. The 2MB cap is enforced here as well as
-// in utils/minio so an oversized upload is rejected before it is buffered.
+// to file-service rather than touching disk. The 2MB cap is enforced here so an
+// oversized upload is rejected before it is buffered; file-service checks the
+// content (real type from the bytes) before anything is stored.
 const uploadSignature = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 2 * 1024 * 1024 },
@@ -53,7 +124,6 @@ const handleCompanyLogoUpload = (req, res, next) =>
 async function handleCreateCompany(req, res) {
   try {
     const { errors, input } = await RequestValidator(schema.add_business, req.body);
-    console.log(errors)
     if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
 
     const data = await authService.AddCompany(input, req.user.user_id, req.file || null);
@@ -68,7 +138,6 @@ async function handleCreateCompany(req, res) {
 async function handleAddBranch(req, res) {
   try {
     const { errors, input } = await RequestValidator(schema.add_branch, req.body);
-    console.log("new",errors)
     if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
 
     const data = await authService.AddBranch(input, req.user.user_id);
@@ -82,7 +151,6 @@ async function handleAddBranch(req, res) {
 
 async function handleEditCompany(req, res) {
   try {
-    console.log(req.body)
     // edit_business demands zodu_id + at least one field to change. A logo-only
     // edit sends the file and an empty body, so relax that floor when a file
     // is attached — the file *is* the change.
@@ -92,11 +160,9 @@ async function handleEditCompany(req, res) {
       zodu_id: req.params.zodu_id,
     });
 
-    console.log(errors)
     if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
 
     const data = await authService.EditCompany(input, req.user.user_id, req.file || null);
-    console.log(data)
     if (data.error) return res.status(400).json(data);
     return res.status(200).json(data);
   } catch (error) {
@@ -112,7 +178,6 @@ async function handleEditBranch(req, res) {
       zodu_id: req.params.zodu_id,
       branch_id: req.params.branch_id,
     });
-    console.log(errors)
     if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
 
     const data = await authService.EditBranch(input, req.user.user_id);
@@ -164,11 +229,10 @@ async function handleDeleteCompany(req, res) {
 }
 
 // ── POST /api/create-account ──────────────────────────────────────────────────
-router.post('/api/create-account', async (req, res) => {
+router.post('/api/create-account', signupLimit, async (req, res) => {
   try {
     const { errors, input } = await RequestValidator(schema.account_create, req.body);
     if (errors) {
-      console.log(errors)
       logger.error('Validation errors:', errors);
       return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
     }
@@ -180,95 +244,113 @@ router.post('/api/create-account', async (req, res) => {
     return res.status(201).json(data);
   } catch (error) {
     logger.error(error);
-    console.log(error)
     return res.status(STATUS_CODES.INTERNAL_ERROR).json({ message: error.message });
   }
 });
 
 // ── POST /api/login ───────────────────────────────────────────────────────────
-router.post('/api/login', async (req, res) => {
-  try {
-    const { errors, input } = await RequestValidator(schema.login, req.body);
-    if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
+// Same response as before (access_token, user, companies), plus expires_in and
+// context { zodu_id, branch_id, role }. refresh_token: in the body, or for
+// X-Client-Platform: web in the HttpOnly cookie `rt` only.
+router.post('/api/login', loginLimit, tokenRoute(async (req, res, platform) => {
+  const { errors, input } = await RequestValidator(schema.login, req.body);
+  if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
+  return send(res, await sessions.login(input, { req, platform }), platform);
+}));
 
-    // Pass request metadata for session tracking
-    const meta = {
-      ip_address: req.ip || req.headers['x-forwarded-for'],
-      user_agent: req.headers['user-agent'],
-    };
+// ── Forgot password ───────────────────────────────────────────────────────────
+// 1. { email } | { phone_number } → a 6-digit code sent there (same answer
+//    whether or not the account exists; 429 + Retry-After while cooling down).
+router.post('/api/forgot-password', passwordResetLimit, tokenRoute(async (req, res) => {
+  const { errors, input } = await RequestValidator(schema.forgot_password, req.body);
+  if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
+  return send(res, await passwordReset.requestReset(input, { req }));
+}));
 
-    const data = await authService.AccountLogin(input, meta);
-    if (data.data?.error) {
-      return res.status(401).json(data);
-    }
-    return res.status(STATUS_CODES.OK).json(data);
-  } catch (error) {
-    logger.error(error);
-    return res.status(STATUS_CODES.INTERNAL_ERROR).json({ message: error.message });
-  }
-});
+// 2. { email | phone_number, otp } → { reset_token, expires_in }
+router.post('/api/forgot-password/verify', passwordResetLimit, tokenRoute(async (req, res) => {
+  const { errors, input } = await RequestValidator(schema.forgot_password_verify, req.body);
+  if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
+  return send(res, await passwordReset.verifyCode(input, { req }));
+}));
+
+// 3. { reset_token, new_password } → password changed, signed out everywhere.
+router.post('/api/reset-password', passwordResetLimit, tokenRoute(async (req, res) => {
+  const { errors, input } = await RequestValidator(schema.reset_password, req.body);
+  if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
+  return send(res, await passwordReset.resetPassword(input, { req }));
+}));
 
 // ── POST /api/refresh-token ───────────────────────────────────────────────────
-router.post('/api/refresh-token', async (req, res) => {
-  try {
-    const { refresh_token } = req.body;
-    if (!refresh_token) {
-      return res.status(STATUS_CODES.BAD_REQUEST).json({ error: 'refresh_token required' });
-    }
-    const data = await authService.RefreshToken({ refresh_token });
-    if (data.error) {
-      return res.status(401).json(data);
-    }
-    return res.status(STATUS_CODES.OK).json(data);
-  } catch (error) {
-    logger.error(error);
-    return res.status(STATUS_CODES.INTERNAL_ERROR).json({ message: error.message });
-  }
-});
+// web: cookie `rt`; desktop / mobile / no platform header: body.refresh_token.
+router.post('/api/refresh-token', refreshLimit, tokenRoute(async (req, res, platform) => {
+  const result = await sessions.refresh({ req, platform });
+  if (result.status === 401 && platform === 'web') clearRefreshCookie(res);
+  return send(res, result, platform);
+}));
 
 // ── POST /api/logout ──────────────────────────────────────────────────────────
-router.post('/api/logout', async (req, res) => {
-  try {
-    const { refresh_token } = req.body;
-    const data = await authService.Logout({ refresh_token });
-    return res.status(STATUS_CODES.OK).json(data);
-  } catch (error) {
-    logger.error(error);
-    return res.status(STATUS_CODES.INTERNAL_ERROR).json({ message: error.message });
-  }
-});
+router.post('/api/logout', tokenRoute(async (req, res, platform) => {
+  clearRefreshCookie(res);
+  return send(res, await sessions.logout({ req, platform }), platform);
+}));
+
+// ── POST /api/logout-all ──────────────────────────────────────────────────────
+// Ends every session of the signed-in user, on every device.
+router.post('/api/logout-all', authenticate, tokenRoute(async (req, res) => {
+  clearRefreshCookie(res);
+  return send(res, await sessions.logoutAll(req.auth, req));
+}));
+
+// ── GET /api/sessions, DELETE /api/sessions/:sid ──────────────────────────────
+// The signed-in user's own sessions (devices); `current` marks this one.
+router.get('/api/sessions', authenticate, tokenRoute(async (req, res) => (
+  send(res, await sessions.listSessions(req.auth))
+)));
+
+router.delete('/api/sessions/:sid', authenticate, tokenRoute(async (req, res) => {
+  if (!/^[0-9a-f-]{36}$/i.test(req.params.sid)) return res.status(404).json({ data: { error: 'Session not found' } });
+  return send(res, await sessions.revokeOwnSession(req.auth, req.params.sid.toLowerCase(), req));
+}));
+
+// ── POST /api/switch-context ──────────────────────────────────────────────────
+// Body { zodu_id, branch_id? }: a new access token for another company or
+// branch the user belongs to, in the same session. 404 otherwise.
+router.post('/api/switch-context', authenticate, tokenRoute(async (req, res) => {
+  const { errors, input } = await RequestValidator(schema.switch_context, req.body);
+  if (errors) return res.status(STATUS_CODES.BAD_REQUEST).json({ errors });
+  return send(res, await sessions.switchContext(req.auth, input, req));
+}));
 
 // ── GET /api/auth-check ───────────────────────────────────────────────────────
-router.get('/api/auth-check', ValidateSignature, async (req, res) => {
-  try {
-    logger.info('Auth check hit by:', req.user?.zodu_id);
-    return res.status(STATUS_CODES.OK).json({
-      message: 'You are authorized',
-      user: req.user,
-    });
-  } catch (error) {
-    logger.error(error);
-    return res.status(STATUS_CODES.INTERNAL_ERROR).json({ message: error.message });
-  }
-});
+router.get('/api/auth-check', authenticate, (req, res) => res.status(STATUS_CODES.OK).json({
+  message: 'You are authorized',
+  user: {
+    user_id: req.auth.userId,
+    zodu_id: req.auth.zoduId,
+    branch_id: req.auth.branchId,
+    user_type: req.auth.userType,
+    role: req.auth.role,
+  },
+}));
 
 // ── POST /api/company/add ─────────────────────────────────────────────────────
 // Accepts JSON, or multipart/form-data with the logo image in `company_logo`
 // so a company can be created with its logo in a single request.
-router.post('/api/company/add', ValidateSignature, handleCompanyLogoUpload, handleCreateCompany);
-router.post('/api/create-company', ValidateSignature, handleCompanyLogoUpload, handleCreateCompany);
-router.post('/api/branch/add', ValidateSignature, handleAddBranch);
-router.put('/api/company/edit/:zodu_id', ValidateSignature, handleCompanyLogoUpload, handleEditCompany);
-router.put('/api/branch/edit/:zodu_id/:branch_id', ValidateSignature, handleEditBranch);
-router.delete('/api/branch/:zodu_id/:branch_id', ValidateSignature, handleDeleteBranch);
-router.delete('/api/company/:zodu_id', ValidateSignature, handleDeleteCompany);
+router.post('/api/company/add', signedIn, handleCompanyLogoUpload, handleCreateCompany);
+router.post('/api/create-company', signedIn, handleCompanyLogoUpload, handleCreateCompany);
+router.post('/api/branch/add', signedIn, handleAddBranch);
+router.put('/api/company/edit/:zodu_id', signedIn, handleCompanyLogoUpload, handleEditCompany);
+router.put('/api/branch/edit/:zodu_id/:branch_id', signedIn, handleEditBranch);
+router.delete('/api/branch/:zodu_id/:branch_id', signedIn, handleDeleteBranch);
+router.delete('/api/company/:zodu_id', signedIn, handleDeleteCompany);
 
 // ── POST /api/company/:zodu_id/logo ───────────────────────────────────────────
 // multipart/form-data, image in the `company_logo` field. Replaces whatever
 // logo the company had and returns the full updated company row.
 router.post(
   '/api/company/:zodu_id/logo',
-  ValidateSignature,
+  signedIn,
   handleCompanyLogoUpload,
   async (req, res) => {
     try {
@@ -291,7 +373,7 @@ router.post(
 );
 
 // ── DELETE /api/company/:zodu_id/logo ─────────────────────────────────────────
-router.delete('/api/company/:zodu_id/logo', ValidateSignature, async (req, res) => {
+router.delete('/api/company/:zodu_id/logo', signedIn, async (req, res) => {
   try {
     const data = await authService.DeleteCompanyLogo({
       user_id: req.user.user_id,
@@ -306,9 +388,8 @@ router.delete('/api/company/:zodu_id/logo', ValidateSignature, async (req, res) 
 });
 
 // ── GET /api/my-companies ─────────────────────────────────────────────────────
-router.get('/api/my-companies', ValidateSignature, async (req, res) => {
+router.get('/api/my-companies', signedIn, async (req, res) => {
   try {
-    console.log("test")
     const data = await authService.GetMyCompanies(req.user.user_id);
     return res.status(STATUS_CODES.OK).json(data);
   } catch (error) {
@@ -320,7 +401,7 @@ router.get('/api/my-companies', ValidateSignature, async (req, res) => {
 // ── GET /api/role-access ──────────────────────────────────────────────────────
 // Query: user_id, zodu_id, branch_id
 // Admin role → zodu_id-only access (branch ignored). Other roles → zodu_id + branch_id.
-router.get('/api/role-access', ValidateSignature, async (req, res) => {
+router.get('/api/role-access', signedIn, async (req, res) => {
   try {
     const { zodu_id, branch_id } = req.query;
     const data = await authService.GetRoleAccess({
@@ -341,7 +422,7 @@ router.get('/api/role-access', ValidateSignature, async (req, res) => {
 // in one response, namespaced by category (currently just "invoice"). Add new
 // categories to authService.GetAllSettings as their tables land; this route
 // stays the same.
-router.get('/api/settings/:zodu_id/:branch_id', ValidateSignature, async (req, res) => {
+router.get('/api/settings/:zodu_id/:branch_id', signedIn, async (req, res) => {
   try {
     const { zodu_id, branch_id } = req.params;
     const data = await authService.GetAllSettings({
@@ -359,7 +440,7 @@ router.get('/api/settings/:zodu_id/:branch_id', ValidateSignature, async (req, r
 
 // ── GET /api/invoice-settings/:zodu_id/:branch_id?document_type=invoice|quotation|proforma
 // document_type defaults to 'invoice'; quotation/proforma are Retail-only (400 otherwise).
-router.get('/api/invoice-settings/:zodu_id/:branch_id', ValidateSignature, async (req, res) => {
+router.get('/api/invoice-settings/:zodu_id/:branch_id', signedIn, async (req, res) => {
   try {
     const { zodu_id, branch_id } = req.params;
     const data = await authService.GetInvoiceSettings({
@@ -377,7 +458,7 @@ router.get('/api/invoice-settings/:zodu_id/:branch_id', ValidateSignature, async
 });
 
 // ── PUT /api/invoice-settings/:zodu_id/:branch_id ─────────────────────────────
-router.put('/api/invoice-settings/:zodu_id/:branch_id', ValidateSignature, async (req, res) => {
+router.put('/api/invoice-settings/:zodu_id/:branch_id', signedIn, async (req, res) => {
   try {
     const { errors, input } = await RequestValidator(schema.edit_invoice_settings, {
       ...req.body,
@@ -401,7 +482,7 @@ router.put('/api/invoice-settings/:zodu_id/:branch_id', ValidateSignature, async
 });
 
 // ── GET /api/pos-settings/:zodu_id/:branch_id ─────────────────────────────────
-router.get('/api/pos-settings/:zodu_id/:branch_id', ValidateSignature, async (req, res) => {
+router.get('/api/pos-settings/:zodu_id/:branch_id', signedIn, async (req, res) => {
   try {
     const { zodu_id, branch_id } = req.params;
     const data = await authService.GetPosSettings({
@@ -418,7 +499,7 @@ router.get('/api/pos-settings/:zodu_id/:branch_id', ValidateSignature, async (re
 });
 
 // ── PUT /api/pos-settings/:zodu_id/:branch_id ─────────────────────────────────
-router.put('/api/pos-settings/:zodu_id/:branch_id', ValidateSignature, async (req, res) => {
+router.put('/api/pos-settings/:zodu_id/:branch_id', signedIn, async (req, res) => {
   try {
     const { errors, input } = await RequestValidator(schema.edit_pos_settings, {
       ...req.body,
@@ -444,7 +525,7 @@ router.put('/api/pos-settings/:zodu_id/:branch_id', ValidateSignature, async (re
 // signature the branch had and returns the full updated settings row.
 router.post(
   '/api/invoice-settings/:zodu_id/:branch_id/signature',
-  ValidateSignature,
+  signedIn,
   handleSignatureUpload,
   async (req, res) => {
     try {
@@ -470,7 +551,7 @@ router.post(
 );
 
 // ── DELETE /api/invoice-settings/:zodu_id/:branch_id/signature ────────────────
-router.delete('/api/invoice-settings/:zodu_id/:branch_id/signature', ValidateSignature, async (req, res) => {
+router.delete('/api/invoice-settings/:zodu_id/:branch_id/signature', signedIn, async (req, res) => {
   try {
     const { zodu_id, branch_id } = req.params;
     const data = await authService.DeleteInvoiceSignature({
@@ -518,7 +599,7 @@ for (const { path, kind, field, label, maxMb } of INVOICE_IMAGE_ROUTES) {
       return res.status(STATUS_CODES.BAD_REQUEST).json({ message });
     });
 
-  router.post(route, ValidateSignature, handleUpload, async (req, res) => {
+  router.post(route, signedIn, handleUpload, async (req, res) => {
     try {
       if (!req.file) {
         return res.status(STATUS_CODES.BAD_REQUEST).json({ message: `No file uploaded — send the image as '${field}'` });
@@ -540,7 +621,7 @@ for (const { path, kind, field, label, maxMb } of INVOICE_IMAGE_ROUTES) {
     }
   });
 
-  router.delete(route, ValidateSignature, async (req, res) => {
+  router.delete(route, signedIn, async (req, res) => {
     try {
       const { zodu_id, branch_id } = req.params;
       const data = await authService.DeleteInvoiceImage({

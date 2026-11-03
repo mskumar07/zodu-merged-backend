@@ -259,13 +259,17 @@ exports.updateItemStatus = async (item_id, { status, remarks, employee_id }) => 
 // One row PER CHECKLIST — file_url is a JSONB array of { id, file_name, file_url,
 // uploaded_by, uploaded_by_name }. New uploads APPEND to the existing row's array;
 // only creates a new row the first time a checklist gets an attachment.
-exports.insertAttachments = async (client, { checklist_id, files, uploaded_by, uploaded_by_name }) => {
+// Files stored in file-service are saved as file refs ({ ..., file_id, file_ctx,
+// url_key: 'file_url' }); responses get a fresh file_url (utils/file-client).
+exports.insertAttachments = async (client, { checklist_id, files, file_ctx, uploaded_by, uploaded_by_name }) => {
   const { v4: uuidv4 } = require('uuid');
 
   const newEntries = files.map(f => ({
     id:               uuidv4(),
-    file_name:        f.fileName,
-    file_url:         f.fileUrl,
+    file_name:        f.original_name,
+    file_id:          f.file_id,
+    file_ctx,
+    url_key:          'file_url',
     uploaded_by,
     uploaded_by_name,
   }));
@@ -483,6 +487,15 @@ exports.deleteAttachment = async (file_id, checklist_id) => {
 };
 
 // ── INSTANCES ─────────────────────────────────────────────────────────────────
+
+// One instance, only within a company / branch.
+exports.findInstance = async (id, { zodu_id, branch_id }) => {
+  const { rows } = await db.query(
+    `SELECT id FROM tbl_checklist_instances WHERE id = $1 AND zodu_id = $2 AND branch_id = $3`,
+    [id, zodu_id, branch_id]
+  );
+  return rows[0] || null;
+};
 
 exports.findInstances = async ({ checklist_id, zodu_id, branch_id, status, limit, offset }) => {
   const conds = ['ci.zodu_id = $1', 'ci.branch_id = $2'];
@@ -766,7 +779,7 @@ exports.getAssignedEmployeesSummary = async ({ zodu_id, branch_id, created_by, i
     vals.push(checklistStatus);
   }
 
-  if (search) { 
+  if (search) {
     conds.push(`(
       c.checklist_code ILIKE $${idx}
       OR c.title ILIKE $${idx}

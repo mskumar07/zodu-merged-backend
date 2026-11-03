@@ -1,175 +1,198 @@
-version: "3.8"
+# Secrets (DB credentials, APP_SECRET, service tokens, Redis password) live in
+# ./env/<service>.uat.env on the host, never in this file. Templates: each
+# service's .env.example; scripts/gen-secrets.sh writes the service tokens.
+# Node images build from the repository root: docker compose -f <this file> build
 
 services:
   # Auth Service
   auth-service:
     image: vicky0015/zodu-backend-retail-auth-service:uat
+    build:
+      context: .
+      dockerfile: auth-service/Dockerfile
     container_name: uat-auth-service-latest
     restart: always
     expose:
       - "4000"
+    env_file:
+      - ./env/auth-service.uat.env
     environment:
       NODE_ENV: production
+      # Phase 4 switches: off until the client builds that send X-Client-Platform ship
+      # (AUTH_REQUIRE_PLATFORM_HEADER=true docker compose ... up -d).
+      AUTH_REQUIRE_PLATFORM_HEADER: ${AUTH_REQUIRE_PLATFORM_HEADER:-false}
+      AUTH_CHECK_REVOKED_SESSIONS: ${AUTH_CHECK_REVOKED_SESSIONS:-false}
       PORT: 4000
       DB_HOSTNAME: 72.60.206.59
       DB_PORT: 5432
-      DB_USERNAME: zodudb
-      DB_PASSWORD: zodu@2025
       DB_NAME: retail_auth_service
-      MINIO_HOST: 72.60.206.59
-      MINIO_PORT: 9000
-      MINIO_ACCESSKEY: zoduminio
-      MINIO_SECRETKEY: zodu@2025
-      MINIO_BUCKET_NAME: zodu
-      PUBLIC_FILE_BASE_URL: https://api.myzodu.com
+      RETAIL_SERVICE_URL: http://retail-service:4001
+      RESTAURANT_SERVICE_URL: http://restaurant-service:4003
+      EMPLOYEE_SERVICE_URL: http://employee-service:4002
+      PAYROLL_SERVICE_URL: http://payroll-service:4004
+      CHECKLIST_SERVICE_URL: http://checklist-service:4005
+      FILE_SERVICE_URL: http://file-service:4007
+    # Refresh-token sessions, login lockout and rate limits (REDIS_URL, JWT_PRIVATE_KEY
+    # and JWT_KID come from the env file: scripts/gen-secrets.sh).
+    depends_on:
+      - redis
 
-
-
-  # Restaurant Service
+  # Retail Service
   retail-service:
     image: vicky0015/zodu-backend-retail-service:uat
+    build:
+      context: .
+      dockerfile: retail-service/Dockerfile
     container_name: uat-retail-service-latest
     restart: always
     expose:
       - "4001"
+    env_file:
+      - ./env/retail-service.uat.env
     environment:
       NODE_ENV: production
+      # Refuse tokens of revoked sessions (auth-service's Redis deny-list; needs REDIS_URL).
+      AUTH_CHECK_REVOKED_SESSIONS: ${AUTH_CHECK_REVOKED_SESSIONS:-false}
       PORT: 4001
       DB_HOSTNAME: 72.60.206.59
       DB_PORT: 5432
-      DB_USERNAME: zodudb
-      DB_PASSWORD: zodu@2025
       DB_NAME: retail_restaurant_service
-      MINIO_HOST: 72.60.206.59
-      MINIO_PORT: 9000
-      MINIO_ACCESSKEY: zoduminio
-      MINIO_SECRETKEY: zodu@2025
-      MINIO_BUCKET_NAME: zodu
-      PUBLIC_FILE_BASE_URL: https://api.myzodu.com
-
-
+      AUTH_SERVICE_URL: http://auth-service:4000
+      FILE_SERVICE_URL: http://file-service:4007
 
   # Face Service — photo → face embedding for face-recognition attendance.
-  # Stateless and internal: only employee-service calls it.
+  # Stateless and internal: only employee-service calls it (its X-Internal-Token).
   face-service:
     image: vicky0015/zodu-backend-face-service:uat
+    build:
+      context: ./face-service
     container_name: uat-face-service
     restart: always
     expose:
       - "8000"
+    env_file:
+      - ./env/face-service.uat.env
 
   # Employee Service
   employee-service:
     image: vicky0015/zodu-backend-employee-service:uat
+    build:
+      context: .
+      dockerfile: employee-service/Dockerfile
     container_name: uat-employee-service-latest
     restart: always
     expose:
       - "4002"
+    env_file:
+      - ./env/employee-service.uat.env
     environment:
       NODE_ENV: production
+      # Refuse tokens of revoked sessions (auth-service's Redis deny-list; needs REDIS_URL).
+      AUTH_CHECK_REVOKED_SESSIONS: ${AUTH_CHECK_REVOKED_SESSIONS:-false}
       PORT: 4002
       DB_HOSTNAME: 72.60.206.59
       DB_PORT: 5432
-      DB_USERNAME: zodudb
-      DB_PASSWORD: zodu@2025
       DB_NAME: employee-service
-      MINIO_HOST: 72.60.206.59
-      MINIO_PORT: 9000
-      MINIO_ACCESSKEY: zoduminio
-      MINIO_SECRETKEY: zodu@2025
-      MINIO_BUCKET_NAME: zodu
-      PUBLIC_FILE_BASE_URL: https://api.myzodu.com
+      AUTH_SERVICE_URL: http://auth-service:4000
+      PAYROLL_SERVICE_URL: http://payroll-service:4004
       FACE_SERVICE_URL: http://face-service:8000
+      FILE_SERVICE_URL: http://file-service:4007
     depends_on:
       - face-service
 
-  
+  # Restaurant Service
   restaurant-service:
     image: vicky0015/zodu-backend-restaurant-service:uat
+    build:
+      context: .
+      dockerfile: restaurant-service/Dockerfile
     container_name: uat-restaurant-service-latest
     restart: always
     expose:
       - "4003"
+    env_file:
+      - ./env/restaurant-service.uat.env
     environment:
       NODE_ENV: production
+      # Refuse tokens of revoked sessions (auth-service's Redis deny-list; needs REDIS_URL).
+      AUTH_CHECK_REVOKED_SESSIONS: ${AUTH_CHECK_REVOKED_SESSIONS:-false}
       PORT: 4003
       DB_HOSTNAME: 72.60.206.59
       DB_PORT: 5432
-      DB_USERNAME: zodudb
-      DB_PASSWORD: zodu@2025
       DB_NAME: restaurant-service
-      MINIO_HOST: 72.60.206.59
-      MINIO_PORT: 9000
-      MINIO_ACCESSKEY: zoduminio
-      MINIO_SECRETKEY: zodu@2025
-      MINIO_BUCKET_NAME: zodu
-      PUBLIC_FILE_BASE_URL: https://api.myzodu.com
+      AUTH_SERVICE_URL: http://auth-service:4000
+      FILE_SERVICE_URL: http://file-service:4007
 
-
-
-  # Payroll Service
+  # Payroll Service — not proxied by the gateway; only employee-service and
+  # auth-service call it.
   payroll-service:
     image: vicky0015/zodu-backend-payroll-service:uat
+    build:
+      context: .
+      dockerfile: payroll-service/Dockerfile
     container_name: uat-payroll-service-latest
     restart: always
     expose:
       - "4004"
+    env_file:
+      - ./env/payroll-service.uat.env
     environment:
       NODE_ENV: production
       PORT: 4004
       DB_HOSTNAME: 72.60.206.59
       DB_PORT: 5432
-      DB_USERNAME: zodudb
-      DB_PASSWORD: zodu@2025
       DB_NAME: payroll-service
 
+  # Checklist Service
   checklist-service:
     image: vicky0015/zodu-backend-checklist-service:uat
+    build:
+      context: .
+      dockerfile: checklist-service/Dockerfile
     container_name: uat-checklist-service-latest
     restart: always
     expose:
       - "4005"
+    env_file:
+      - ./env/checklist-service.uat.env
     environment:
       NODE_ENV: production
+      # Refuse tokens of revoked sessions (auth-service's Redis deny-list; needs REDIS_URL).
+      AUTH_CHECK_REVOKED_SESSIONS: ${AUTH_CHECK_REVOKED_SESSIONS:-false}
       PORT: 4005
       DB_HOSTNAME: 72.60.206.59
       DB_PORT: 5432
-      DB_USERNAME: zodudb
-      DB_PASSWORD: zodu@2025
       DB_NAME: checklist-service
-      MINIO_HOST: 72.60.206.59
-      MINIO_PORT: 9000
-      MINIO_ACCESSKEY: zoduminio
-      MINIO_SECRETKEY: zodu@2025
-      MINIO_BUCKET_NAME: zodu
-      PUBLIC_FILE_BASE_URL: https://api.myzodu.com
+      FILE_SERVICE_URL: http://file-service:4007
+      AUTH_SERVICE_URL: http://auth-service:4000
+      EMPLOYEE_SERVICE_URL: http://employee-service:4002
 
-
-  # Admin Panel Service — staff-only console API. Reached ONLY through
-  # api-gateway's /admin route, same as every other service here.
+  # Admin Panel Service — staff-only console API. Reached only through the
+  # gateway's /admin route. Its APP_SECRET is its own, never the customer services'.
   admin-service:
     image: vicky0015/zodu-backend-retail-admin-service:uat
+    build:
+      context: .
+      dockerfile: admin-service/Dockerfile
     container_name: uat-admin-service-latest
     restart: always
     expose:
       - "4006"
+    env_file:
+      - ./env/admin-service.uat.env
     environment:
       NODE_ENV: production
       PORT: 4006
       DB_HOSTNAME: 72.60.206.59
       DB_PORT: 5432
-      DB_USERNAME: zodudb
-      DB_PASSWORD: zodu@2025
       DB_NAME: admin_service
-      APP_SECRET: zodu@2025adminsecretuat
       JWT_EXPIRES_IN: 8h
-      INTERNAL_SERVICE_KEY: zodu@2025internalkeyuat
       CORS_ORIGIN: https://admin-uat.zodu.in
       AUTH_SERVICE_URL: http://auth-service:4000
       RETAIL_SERVICE_URL: http://retail-service:4001
       EMPLOYEE_SERVICE_URL: http://employee-service:4002
-      RESTAURANT_SERVICE_URL: http://restaurant-service:4003
       PAYROLL_SERVICE_URL: http://payroll-service:4004
+      RESTAURANT_SERVICE_URL: http://restaurant-service:4003
       CHECKLIST_SERVICE_URL: http://checklist-service:4005
     depends_on:
       - auth-service
@@ -178,30 +201,81 @@ services:
       - payroll-service
       - checklist-service
 
-  # API Gateway
+  # File Service — the only service with MinIO credentials. Reached only through
+  # the gateway's /files route.
+  file-service:
+    image: vicky0015/zodu-backend-file-service:uat
+    build:
+      context: .
+      dockerfile: file-service/Dockerfile
+    container_name: uat-file-service
+    restart: always
+    expose:
+      - "4007"
+    env_file:
+      - ./env/file-service.uat.env
+    environment:
+      NODE_ENV: production
+      # Refuse tokens of revoked sessions (auth-service's Redis deny-list; needs REDIS_URL).
+      AUTH_CHECK_REVOKED_SESSIONS: ${AUTH_CHECK_REVOKED_SESSIONS:-false}
+      PORT: 4007
+      MINIO_BUCKET_NAME: zodu-files
+      PRESIGNED_URL_TTL: 900
+      PUBLIC_FILE_BASE_URL: https://api.myzodu.com
+      AUTH_SERVICE_URL: http://auth-service:4000
+      MAX_CONCURRENT_UPLOADS: 4
+    depends_on:
+      - redis
+      - auth-service
+
+  # Shared state: rate-limit counters (gateway, file-service, auth-service) and
+  # auth-service's refresh-token sessions, so it is persisted (AOF) and never
+  # evicts keys: losing it signs every user out. Internal only, password from ./env/redis.uat.env (REDIS_PASSWORD).
+  redis:
+    image: redis:7.4-alpine
+    container_name: uat-redis
+    restart: always
+    env_file:
+      - ./env/redis.uat.env
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --appendonly yes --appendfsync everysec --maxmemory 256mb --maxmemory-policy noeviction"]
+    volumes:
+      - redis-data:/data
+    expose:
+      - "6379"
+
+  # API Gateway — the only published port. HTTPS and HSTS are at the reverse
+  # proxy in front (TRUST_PROXY=1 hop); CORS_ORIGINS and REDIS_URL come from its env file.
   apigateway:
     image: vicky0015/zodu-backend-apigateway:uat
+    build:
+      context: .
+      dockerfile: api-gateway/Dockerfile
     container_name: uat-apigateway-latest
     restart: always
     ports:
       - "5001:5001"
+    env_file:
+      - ./env/api-gateway.uat.env
     environment:
+      NODE_ENV: production
       PORT: 5001
+      TRUST_PROXY: 1
       AUTH_SERVICE_URL: http://auth-service:4000
       RETAIL_SERVICE_URL: http://retail-service:4001
       EMPLOYEE_SERVICE_URL: http://employee-service:4002
       RESTAURANT_SERVICE_URL: http://restaurant-service:4003
-      PAYROLL_SERVICE_URL: http://payroll-service:4004
       CHECKLIST_SERVICE_URL: http://checklist-service:4005
       ADMIN_SERVICE_URL: http://admin-service:4006
+      FILE_SERVICE_URL: http://file-service:4007
     depends_on:
+      - redis
       - auth-service
       - retail-service
       - employee-service
       - restaurant-service
-      - payroll-service
       - checklist-service
       - admin-service
+      - file-service
 
-
-
+volumes:
+  redis-data:

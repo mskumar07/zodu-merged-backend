@@ -1,4 +1,4 @@
-const Joi = require('@hapi/joi');
+const Joi = require('joi');
 
 const permissionObject = Joi.object({
   module_id:  Joi.string().uuid().required(),
@@ -33,9 +33,9 @@ exports.createEmployeeUser = Joi.object({
   access_level:         Joi.string().max(30).default('Full Access'),
   reporting_manager_id: Joi.string().uuid().allow(null, ''),
   is_first_employee:    Joi.boolean().default(false),
-  password:             Joi.string().pattern(/^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{8,20}$/).allow(null, '').messages({
-    'string.pattern.base': 'Password must be 8-20 chars with 1 uppercase, 1 number, 1 special char',
-  }),
+  // Length and the common-password list: the password policy
+  // (src/auth/password.js). No composition rules (NIST SP 800-63B).
+  password:             Joi.string().max(128).allow(null, ''),
 });
 
 exports.updateEmployeeRole = Joi.object({
@@ -51,9 +51,7 @@ exports.setEmployeeLogin = Joi.object({
   zodu_id:              Joi.string().required(),
   branch_id:            Joi.string().required(),
   role_id:              Joi.string().uuid(),
-  password:             Joi.string().pattern(/^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{8,20}$/).messages({
-    'string.pattern.base': 'Password must be 8-20 chars with 1 uppercase, 1 number, 1 special char',
-  }),
+  password:             Joi.string().max(128),
   login_user:           Joi.boolean(),
   reporting_manager_id: Joi.string().uuid().allow(null, ''),
   // Used only when the login user does not exist yet and has to be created

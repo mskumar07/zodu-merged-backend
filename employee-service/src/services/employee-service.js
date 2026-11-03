@@ -1,9 +1,13 @@
 const { v4: uuidv4 } = require('uuid');
 const axios  = require('axios');
+const { createInternalHttp } = require('@zodu/security');
 const db     = require('../database/connection');
 const repo   = require('../repository/employee-repo');
-const minio  = require('../utils/minio');
+const files  = require('../utils/file-client');
 const { AUTH_SERVICE_URL, PAYROLL_SERVICE_URL } = require('../config');
+
+// Calls to auth-service / payroll-service /internal routes carry this service's token.
+const internalHttp = createInternalHttp(axios, { timeout: 10_000 });
 
 // ── CREATE ────────────────────────────────────────────────────────────────────
 
@@ -39,7 +43,7 @@ exports.createEmployee = async (data, created_by) => {
 
     // 3. Salary in payroll-service (non-blocking)
     if (data.basic_salary != null) {
-      axios.post(`${PAYROLL_SERVICE_URL}/internal/salary/create`, {
+      internalHttp.post(`${PAYROLL_SERVICE_URL}/internal/salary/create`, {
         employee_id, user_id,
         zodu_id: data.zodu_id, branch_id: data.branch_id,
         basic_salary: data.basic_salary, allowances: data.allowances || 0,
@@ -70,7 +74,7 @@ async function callLoginStatus(user_ids, { zodu_id, branch_id }, with_count = fa
   const ids = [...new Set(user_ids.filter(Boolean))];
   if (!ids.length && !with_count) return {};
   try {
-    const { data } = await axios.post(
+    const { data } = await internalHttp.post(
       `${AUTH_SERVICE_URL}/internal/employee/login-status`,
       { user_ids: ids, zodu_id, branch_id, with_count }
     );
@@ -121,8 +125,8 @@ exports.getEmployeeById = async (employee_id, { zodu_id, branch_id }) => {
   const [[docsResult, authResult, salaryResult], loginStatus] = await Promise.all([
     Promise.allSettled([
       repo.findDocuments(employee_id),
-      axios.get(`${AUTH_SERVICE_URL}/internal/employee/${employee.user_id}/role`),
-      axios.get(`${PAYROLL_SERVICE_URL}/internal/salary/${employee_id}`),
+      internalHttp.get(`${AUTH_SERVICE_URL}/internal/employee/${employee.user_id}/role`),
+      internalHttp.get(`${PAYROLL_SERVICE_URL}/internal/salary/${employee_id}`),
     ]),
     fetchLoginStatus([employee.user_id], { zodu_id, branch_id }),
   ]);
@@ -135,7 +139,7 @@ exports.getEmployeeById = async (employee_id, { zodu_id, branch_id }) => {
       has_password: ls?.has_password ?? null,
       has_role:     ls?.has_role     ?? null,
       login_user:   ls?.login_user   ?? null,
-      documents: docsResult.status  === 'fulfilled' ? docsResult.value              : [],
+      documents: docsResult.status  === 'fulfilled' ? docsResult.value.map((d) => files.ref(d)) : [],
       role_info: authResult.status   === 'fulfilled' ? authResult.value.data.data   : null,
       salary:    salaryResult.status === 'fulfilled' ? salaryResult.value.data.data : null,
     },
@@ -148,12 +152,23 @@ exports.getEmployeeById = async (employee_id, { zodu_id, branch_id }) => {
 // creates the tbl_users row with that id (from the employee's email / phone),
 // plus the company link and role. Later calls only update role / password.
 
-exports.setLoginDetails = async (employee_id, { zodu_id, branch_id, role_id, password, login_user }) => {
+// The owner's login (the first employee, EMP001) is changed by the owner only:
+// otherwise anyone with employee:edit could take the account over.
+function assertMayChangeLogin(employee, caller) {
+  if (employee.employee_code === 'EMP001' && !caller?.isOwner) {
+    const e = new Error("Only the owner can change the owner's login");
+    e.status = 403;
+    throw e;
+  }
+}
+
+exports.setLoginDetails = async (employee_id, { zodu_id, branch_id, role_id, password, login_user }, caller) => {
   const employee = await repo.findById(employee_id, { zodu_id, branch_id });
   if (!employee) throw new Error('Employee not found');
+  assertMayChangeLogin(employee, caller);
 
   try {
-    await axios.put(
+    await internalHttp.put(
       `${AUTH_SERVICE_URL}/internal/employee/login-details`,
       {
         user_id: employee.user_id,
@@ -186,7 +201,7 @@ exports.setLoginDetails = async (employee_id, { zodu_id, branch_id, role_id, pas
 
 // ── UPDATE ────────────────────────────────────────────────────────────────────
 
-exports.updateEmployee = async (employee_id, data, updated_by) => {
+exports.updateEmployee = async (employee_id, data, updated_by, caller) => {
   const client = await db.connect();
   try {
     await client.query('BEGIN');
@@ -194,12 +209,14 @@ exports.updateEmployee = async (employee_id, data, updated_by) => {
     // Get current employee to find user_id for exclude check
     const current = await repo.findById(employee_id, { zodu_id: data.zodu_id, branch_id: data.branch_id });
     if (!current) throw new Error('Employee not found');
+    // email / phone are the owner's sign-in identifiers
+    if (data.email !== undefined || data.phone !== undefined || data.status !== undefined) assertMayChangeLogin(current, caller);
 
     // Check email + phone duplicate in tbl_users (auth-service) excluding current user
     const emailToCheck = data.email || null;
     const phoneToCheck = data.phone || null;
     if (emailToCheck || phoneToCheck) {
-      const { data: dupCheck } = await axios.post(
+      const { data: dupCheck } = await internalHttp.post(
         `${AUTH_SERVICE_URL}/internal/employee/check-duplicate`,
         { email: emailToCheck, phone: phoneToCheck, exclude_user_id: current.user_id }
       );
@@ -210,7 +227,7 @@ exports.updateEmployee = async (employee_id, data, updated_by) => {
     // Sync email / phone to tbl_users (no-op until Set User has created the login)
     if (emailToCheck || phoneToCheck) {
       try {
-        await axios.put(
+        await internalHttp.put(
           `${AUTH_SERVICE_URL}/internal/employee/${current.user_id}/update-user`,
           { email: data.email, phone: data.phone }
         );
@@ -254,7 +271,7 @@ exports.updateEmployee = async (employee_id, data, updated_by) => {
       if (!isMasked && data.bank_account_number !== undefined)
         salaryPayload.bank_account_number = data.bank_account_number;
 
-      axios.put(`${PAYROLL_SERVICE_URL}/internal/salary/${employee_id}`, salaryPayload)
+      internalHttp.put(`${PAYROLL_SERVICE_URL}/internal/salary/${employee_id}`, salaryPayload)
         .catch(err => console.error('[payroll] salary update failed:', err.message));
     }
 
@@ -269,14 +286,14 @@ exports.updateEmployee = async (employee_id, data, updated_by) => {
 
 // ── DELETE ────────────────────────────────────────────────────────────────────
 
-exports.deleteEmployee = async (employee_id, { zodu_id, branch_id, status }) => {
+exports.deleteEmployee = async (employee_id, { zodu_id, branch_id, status }, caller) => {
   const employee = await repo.findById(employee_id, { zodu_id, branch_id });
-  console.log('Deleting employee:', employee_id, 'zodu_id:', zodu_id, 'branch_id:', branch_id, 'status:', status);
   if (!employee) throw new Error('Employee not found');
+  assertMayChangeLogin(employee, caller);
 
   await repo.softDelete(employee_id, { zodu_id, branch_id, status });
 
-  axios.put(`${AUTH_SERVICE_URL}/internal/employee/${employee.user_id}/deactivate`)
+  internalHttp.put(`${AUTH_SERVICE_URL}/internal/employee/${employee.user_id}/deactivate`)
     .catch(err => console.error('[auth] deactivate failed:', err.message));
 
   return { success: true };
@@ -284,11 +301,21 @@ exports.deleteEmployee = async (employee_id, { zodu_id, branch_id, status }) => 
 
 // ── DOCUMENTS ─────────────────────────────────────────────────────────────────
 
-exports.uploadDocument = async (employee_id, fileData, uploaded_by) => {
+// The file goes to file-service under this employee (Aadhaar, PAN, ...:
+// "documents"; the avatar: "profile"); the row keeps only its file_id. If the
+// row can't be saved, the uploaded file is removed again.
+exports.uploadDocument = async (employee_id, fileData, uploaded_by, ctx) => {
   const employee = await repo.findById(employee_id, {
     zodu_id: fileData.zodu_id, branch_id: fileData.branch_id,
   });
   if (!employee) throw new Error('Employee not found');
+
+  const [stored] = await files.upload(ctx, {
+    module:   'employee',
+    entityId: employee_id,
+    category: fileData.document_type === 'Profile Photo' ? 'profile' : 'documents',
+    files:    [fileData.file],
+  });
 
   const client = await db.connect();
   try {
@@ -296,33 +323,31 @@ exports.uploadDocument = async (employee_id, fileData, uploaded_by) => {
     const doc = await repo.insertDocument(client, {
       employee_id, zodu_id: fileData.zodu_id, branch_id: fileData.branch_id,
       document_type: fileData.document_type,
-      file_name:     fileData.file_name || fileData.file_url.split('/').pop(),
-      file_url:      fileData.file_url,
+      file_name:     stored.original_name,
+      file_id:       stored.file_id,
       uploaded_by,
     });
     await client.query('COMMIT');
-    return { success: true, data: doc };
+    return { success: true, data: files.ref(doc) };
   } catch (err) {
     await client.query('ROLLBACK');
+    await files.quietly(files.remove(ctx, [stored.file_id]));
     throw err;
   } finally {
     client.release();
   }
 };
 
-exports.deleteDocument = async (doc_id, employee_id, { zodu_id, branch_id }) => {
+exports.deleteDocument = async (doc_id, employee_id, { zodu_id, branch_id }, ctx) => {
   const employee = await repo.findById(employee_id, { zodu_id, branch_id });
   if (!employee) throw new Error('Employee not found');
 
   const doc = await repo.deleteDocument(doc_id, employee_id);
   if (!doc) throw new Error('Document not found');
 
-  // Delete from MinIO — extract key by removing leading /bucket-name/
-  if (doc.file_url) {
-    const parts = doc.file_url.split('/').filter(Boolean); // remove empty strings
-    const file_key = parts.slice(1).join('/');             // skip bucket name, keep the rest
-    await minio.deleteFile(file_key);
-  }
+  // Files from before file-service (file_url only) stay in the old bucket
+  // until the Phase 3 migration; it never deletes there.
+  if (doc.file_id) await files.quietly(files.remove(ctx, [doc.file_id]));
 
   return { success: true };
 };

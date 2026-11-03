@@ -411,12 +411,20 @@ exports.generateTickets = async (ctx) =>
         ]
       );
       const ticket = rows[0];
-      for (const item of group.items) {
+      // All the ticket's lines in one INSERT — one statement per line made a long
+      // order hold the branch's KOT lock (above) for a round trip per item.
+      if (group.items.length > 0) {
+        const params = [];
+        const values = group.items.map((item, row) => {
+          params.push(ticket.id, item.item_id, item.item_name, item.variant_id, item.variant_name, item.qty, item.note, item.fallback_counter_id);
+          const base = row * 8;
+          return `(${Array.from({ length: 8 }, (_, i) => `$${base + i + 1}`).join(",")})`;
+        });
         await client.query(
           `INSERT INTO tbl_kot_ticket_items
              (ticket_id, item_id, item_name, variant_id, variant_name, qty, note, fallback_counter_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-          [ticket.id, item.item_id, item.item_name, item.variant_id, item.variant_name, item.qty, item.note, item.fallback_counter_id]
+           VALUES ${values.join(",")}`,
+          params
         );
       }
       tickets.push({

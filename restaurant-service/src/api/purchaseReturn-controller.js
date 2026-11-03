@@ -7,6 +7,9 @@ const {
 } = require("../schema/purchaseReturn-schema");
 const router = express.Router();
 const service = require("../services/purchaseReturn-service");
+const owned = require("../security/owned");
+
+router.param("return_uuid", owned.param("tbl_purchase_returns", "return_uuid"));
 const { successResponse } = require("../utils/responseFormatter/successResponse");
 
 // Validates `source` (body or query) and hands the cleaned value to `handler`.

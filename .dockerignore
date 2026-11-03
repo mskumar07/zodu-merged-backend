@@ -1,0 +1,25 @@
+# Node images are built from the repository root (docker build -f <svc>/Dockerfile .).
+# Keep secrets, dependencies and everything a service doesn't run out of the build context.
+.git
+**/node_modules
+**/npm-debug.log*
+**/*.log
+
+# secrets: never in an image
+env/
+**/.env
+**/.env.*
+!**/.env.example
+
+# tests, docs, tooling
+**/test/
+**/tests/
+**/*.test.js
+**/docker-compose.test.yml
+docs/
+scripts/
+.github/
+
+# not part of the Node images (face-service builds from its own folder)
+face-service/
+print-bridge/

@@ -1,12 +1,33 @@
-const bcrypt = require('bcryptjs');
 const repo   = require('../repository/role-repo');
+const authRepo = require('../repository/auth-repo');
 const { withTransaction } = require('../utils/transaction');
+const { hashPassword, assertPasswordPolicy } = require('../auth/password');
+const { revokeAllForUser, revokeAllForUsers } = require('./session-service');
+
+// Sessions are revoked after the change commits (access tokens carry the
+// permissions, so a role change must force a fresh token): password change,
+// login disabled, deactivation, role or access change.
+
+// The company's Admin role (created with the company) passes every permission
+// check. Through the roles API it can't be created, renamed to or from, or
+// deleted: anyone holding a role of that name would be an owner, and a company
+// without it has no one with full access.
+const ADMIN_ROLE = 'Admin';
+const isAdminName = (name) => typeof name === 'string' && name.trim().toLowerCase() === ADMIN_ROLE.toLowerCase();
+
+// Owner / Admin passwords: the owner policy (8 characters, like everyone else's).
+async function isOwnerLogin({ role_id, zodu_id, branch_id, is_first_employee }) {
+  if (is_first_employee) return true;
+  if (!role_id) return false;
+  const role = await repo.findRoleById(role_id, { zodu_id, branch_id });
+  return role?.role_name === 'Admin';
+}
 
 // ── CREATE ROLE ───────────────────────────────────────────────────────────────
 
 exports.createRole = async ({ zodu_id, branch_id, role_name, description, permissions }) => {
-  // Admin role is always global — never scope it (or its permissions) to a branch
-  const roleBranchId = role_name === 'Admin' ? null : branch_id;
+  if (isAdminName(role_name)) return { success: false, message: `"${ADMIN_ROLE}" is reserved for the company's owner role` };
+  const roleBranchId = branch_id;
 
   const role = await withTransaction(async (client) => {
     const newRole = await repo.createRole(client, { zodu_id, branch_id: roleBranchId, role_name, description });
@@ -66,6 +87,11 @@ exports.getRoleWithPermissions = async (role_id, { zodu_id, branch_id }) => {
 // ── UPDATE ROLE ───────────────────────────────────────────────────────────────
 
 exports.updateRole = async (role_id, { zodu_id, branch_id, role_name, description, permissions }) => {
+  const current = await repo.findRoleById(role_id, { zodu_id, branch_id });
+  if (!current) throw new Error('Role not found');
+  if (role_name !== undefined && isAdminName(current.role_name) !== isAdminName(role_name)) {
+    return { success: false, message: `The ${ADMIN_ROLE} role cannot be renamed, and no role can be renamed to it` };
+  }
   const updated = await withTransaction(async (client) => {
     const role = await repo.updateRole(client, role_id, { zodu_id, branch_id, role_name, description });
     if (!role) throw new Error('Role not found');
@@ -93,12 +119,17 @@ exports.updateRole = async (role_id, { zodu_id, branch_id, role_name, descriptio
     return role;
   });
 
+  await revokeAllForUsers(await authRepo.getRoleUserIds({ role_id }), 'role_changed');
   return { success: true, data: updated };
 };
 
 // ── DELETE ROLE ───────────────────────────────────────────────────────────────
 
 exports.deleteRole = async (role_id, { zodu_id, branch_id }) => {
+  const current = await repo.findRoleById(role_id, { zodu_id, branch_id });
+  if (!current) throw new Error('Role not found');
+  if (isAdminName(current.role_name)) return { success: false, message: `The ${ADMIN_ROLE} role cannot be deleted` };
+  const affected = await authRepo.getRoleUserIds({ role_id });
   await withTransaction(async (client) => {
     await repo.deleteAccessByRole(client, role_id);
 
@@ -106,6 +137,7 @@ exports.deleteRole = async (role_id, { zodu_id, branch_id }) => {
     if (!deleted) throw new Error('Role not found');
   });
 
+  await revokeAllForUsers(affected, 'role_deleted');
   return { success: true };
 };
 
@@ -136,6 +168,7 @@ exports.getModules = async (business_type) => {
 // ── INTERNAL — create employee login ──────────────────────────────────────────
 
 exports.createEmployeeUser = async ({ email, phone, zodu_id, branch_id, role_id, access_level, reporting_manager_id, password, is_first_employee }) => {
+  if (password) assertPasswordPolicy(password, { owner: await isOwnerLogin({ role_id, zodu_id, branch_id, is_first_employee }) });
   const user_id = await withTransaction(async (client) => {
     const emailExists = email ? await repo.checkEmailExists(client, email) : false;
     if (emailExists) throw new Error('Email already registered');
@@ -145,7 +178,7 @@ exports.createEmployeeUser = async ({ email, phone, zodu_id, branch_id, role_id,
 
     // tbl_users.password_hash is NOT NULL — a login cannot be created without a password.
     if (!password) throw new Error('Password is required to create the login');
-    const password_hash = await bcrypt.hash(password, await bcrypt.genSalt(10));
+    const password_hash = await hashPassword(password);
 
     const user_type = is_first_employee ? 'super_admin' : 'employee';
     const id = await repo.createEmployeeUser(client, { email, phone, zodu_id, password_hash, user_type });
@@ -185,6 +218,7 @@ exports.updateEmployeeRole = async (user_id, { role_id, access_level, zodu_id, b
     });
   });
 
+  await revokeAllForUser(user_id, 'role_changed');
   return { success: true };
 };
 
@@ -192,14 +226,16 @@ exports.updateEmployeeRole = async (user_id, { role_id, access_level, zodu_id, b
 
 exports.deactivateEmployee = async (user_id) => {
   await repo.deactivateEmployeeUser(user_id);
+  await revokeAllForUser(user_id, 'deactivated');
   return { success: true };
 };
 
 exports.updateEmployeeUser = async (user_id, { email, phone, password }) => {
   if (password) {
-    const salt = await bcrypt.genSalt(10);
-    const hash = await bcrypt.hash(password, salt);
-    await repo.updateUserPassword(user_id, hash);
+    const user = await authRepo.findUserState({ user_id });
+    assertPasswordPolicy(password, { owner: user?.user_type === 'super_admin' });
+    await repo.updateUserPassword(user_id, await hashPassword(password));
+    await revokeAllForUser(user_id, 'password_changed');
   }
   if (email || phone) {
     await repo.updateUserEmailPhone(user_id, { email, phone });
@@ -239,6 +275,8 @@ exports.getLoginStatus = async ({ user_ids, zodu_id, branch_id, with_count = fal
 // ── INTERNAL — set role and/or password (Set User / Login Details) ───────────
 
 exports.setEmployeeLogin = async ({ user_id, role_id, password, login_user, zodu_id, branch_id, reporting_manager_id, email, phone, is_first_employee }) => {
+  if (password) assertPasswordPolicy(password, { owner: await isOwnerLogin({ role_id, zodu_id, branch_id, is_first_employee }) });
+  let existed = false;
   await withTransaction(async (client) => {
     // Serialize concurrent Set User calls for the same employee: the second one
     // waits here, then sees the user already exists and only updates.
@@ -249,9 +287,10 @@ exports.setEmployeeLogin = async ({ user_id, role_id, password, login_user, zodu
       if (!role) throw new Error('Role not found');
     }
 
-    const password_hash = password ? await bcrypt.hash(password, await bcrypt.genSalt(10)) : null;
+    const password_hash = password ? await hashPassword(password) : null;
 
-    if (!(await repo.userExists(client, user_id))) {
+    existed = await repo.userExists(client, user_id);
+    if (!existed) {
       // First time this employee gets a login → create the tbl_users row (+ company link) now.
       // password_hash is NOT NULL, so the password must come with the first call.
       if (!password) throw new Error('Password is required to create the login');
@@ -276,5 +315,8 @@ exports.setEmployeeLogin = async ({ user_id, role_id, password, login_user, zodu
       await repo.setUserRole(client, { user_id, role_id, zodu_id, branch_id, reporting_manager_id });
     }
   });
+  if (existed && (password || login_user === false || role_id)) {
+    await revokeAllForUser(user_id, password ? 'password_changed' : login_user === false ? 'login_disabled' : 'role_changed');
+  }
   return { success: true, user_id };
 };

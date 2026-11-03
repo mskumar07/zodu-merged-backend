@@ -14,7 +14,6 @@ function requireParams(res, ...params) {
 async function getStats(req, res) {
   const { zodu_id, branch_id } = req.query;
   if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"])) return;
-console.log(zodu_id,branch_id)
   try {
     const data = await service.getStats(zodu_id, branch_id);
     
@@ -27,7 +26,6 @@ console.log(zodu_id,branch_id)
 async function getSales(req, res) {
   const { zodu_id, branch_id, cursor, limit } = req.query;
   if (!requireParams(res, [zodu_id, "zodu_id"], [branch_id, "branch_id"])) return;
-  console.log(zodu_id,branch_id,cursor,limit)
 
   try {
     const result = await service.getSales(zodu_id, branch_id, limit, cursor);
@@ -57,7 +55,6 @@ async function getReminders(req, res) {
     const result = await service.getReminders(zodu_id, branch_id, page, limit);
     res.json({ success: true, ...result });
   } catch (err) {
-    console.log(err)
     res.status(500).json({ error: err.message });
   }
 }

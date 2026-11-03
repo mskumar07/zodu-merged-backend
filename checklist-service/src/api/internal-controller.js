@@ -2,8 +2,8 @@ const express = require('express');
 const router  = express.Router();
 const repo    = require('../repository/checklist-repo');
 
-// Internal routes — called by auth-service only, NOT exposed via gateway.
-// No JWT required. Protect at network/gateway level (not callable from internet).
+// Internal routes — auth-service only: blocked at the gateway, and express-app.js
+// requires auth-service's X-Internal-Token.
 
 // POST /internal/branches/:zodu_id/:branch_id/purge — hard-delete every row
 // scoped to this branch. Called by auth-service's delete-branch orchestrator.

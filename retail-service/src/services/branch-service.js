@@ -36,7 +36,6 @@ async function createBranch(branchData) {
 
 async function updateBranch(zodu_id, branch_id, updateData) {
   try {
-    console.log("repo",updateData)
     const existing = await repository.getBranchByIds(zodu_id, branch_id);
     if (!existing) {
       return {
@@ -46,7 +45,6 @@ async function updateBranch(zodu_id, branch_id, updateData) {
     }
 
     const updated = await repository.updateBranch(zodu_id, branch_id, updateData);
-    console.log(updated)
     return {
       success: true,
       data: updated

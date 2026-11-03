@@ -1,4 +1,5 @@
 const { FACE_SERVICE_URL } = require('../config');
+const { internalHeaders } = require('@zodu/security');
 const { BaseError } = require('./error/errors');
 
 // face-service runs the model on CPU; a VPS takes a second or two per photo.
@@ -27,6 +28,7 @@ exports.getEmbedding = async (file) => {
   try {
     const res = await fetch(`${FACE_SERVICE_URL}/embedding`, {
       method: 'POST',
+      headers: internalHeaders(),   // face-service only accepts employee-service's token
       body:   form,
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });

@@ -90,8 +90,13 @@ exports.upsertEmergencyContact = async (client, d) => {
 // ── LIST ──────────────────────────────────────────────────────────────────────
 
 // The employee's latest "Profile Photo" document, shown as their avatar.
+// A file-service photo comes out as a file ref ({ file_id, file_ctx, as_string })
+// that the response middleware turns into a URL string; an old one is its URL.
 const PROFILE_PHOTO_URL = `(
-       SELECT d.file_url FROM tbl_employee_documents d
+       SELECT CASE WHEN d.file_id IS NOT NULL
+                   THEN jsonb_build_object('file_id', d.file_id, 'file_ctx', d.zodu_id || '/' || d.branch_id, 'as_string', true)
+                   ELSE to_jsonb(d.file_url) END
+       FROM tbl_employee_documents d
        WHERE d.employee_id = e.employee_id AND d.document_type = 'Profile Photo'
        ORDER BY d.created_at DESC LIMIT 1
      ) AS profile_photo_url`;
@@ -165,6 +170,16 @@ exports.findById = async (employee_id, { zodu_id, branch_id }) => {
   return rows[0] || null;
 };
 
+// The signed-in user's own employee record in a company / branch.
+exports.findByUser = async (user_id, { zodu_id, branch_id }) => {
+  const { rows } = await db.query(
+    `SELECT employee_id, employee_code FROM tbl_employees
+     WHERE user_id = $1 AND zodu_id = $2 AND branch_id = $3 LIMIT 1`,
+    [user_id, zodu_id, branch_id]
+  );
+  return rows[0] || null;
+};
+
 exports.findDocuments = async (employee_id) => {
   const { rows } = await db.query(
     `SELECT * FROM tbl_employee_documents
@@ -225,9 +240,9 @@ exports.softDelete = async (employee_id, { zodu_id, branch_id, status }) => {
 exports.insertDocument = async (client, d) => {
   const { rows } = await client.query(
     `INSERT INTO tbl_employee_documents
-       (employee_id, zodu_id, branch_id, document_type, file_name, file_url, uploaded_by)
+       (employee_id, zodu_id, branch_id, document_type, file_name, file_id, uploaded_by)
      VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-    [d.employee_id, d.zodu_id, d.branch_id, d.document_type, d.file_name, d.file_url, d.uploaded_by || null]
+    [d.employee_id, d.zodu_id, d.branch_id, d.document_type, d.file_name, d.file_id, d.uploaded_by || null]
   );
   return rows[0];
 };
@@ -235,7 +250,7 @@ exports.insertDocument = async (client, d) => {
 exports.deleteDocument = async (id, employee_id) => {
   const { rows } = await db.query(
     `DELETE FROM tbl_employee_documents
-     WHERE id = $1 AND employee_id = $2 RETURNING file_url`,
+     WHERE id = $1 AND employee_id = $2 RETURNING file_url, file_id`,
     [id, employee_id]
   );
   return rows[0] || null;

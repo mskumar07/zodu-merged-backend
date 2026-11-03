@@ -1,5 +1,8 @@
 const conn = require("../database/connection");
 
+// hold_id (HOLD-000001, trg_generate_hold_id) is numbered per company and
+// branch: every query on it also names both.
+
 
 exports. getHold = async (branch_id, zodu_id) => {
   try {
@@ -30,7 +33,8 @@ exports. getHold = async (branch_id, zodu_id) => {
           '[]'
         ) AS items
       FROM tbl_hold h
-      LEFT JOIN tbl_hold_items hi ON h.hold_id = hi.hold_id
+      LEFT JOIN tbl_hold_items hi
+             ON hi.hold_id = h.hold_id AND hi.zodu_id = h.zodu_id AND hi.branch_id = h.branch_id
       WHERE h.branch_id = $1 AND h.zodu_id = $2
       GROUP BY h.hold_id,h.zodu_id,h.branch_id,h.order_type,h.table_no,h.customer_name,h.customer_phone,h.created_at
       ORDER BY h.created_at DESC;
@@ -69,29 +73,32 @@ exports.createHold = async (zodu_id, branch_id, orderType, table_no, customerNam
   return result.rows[0].hold_id;
 }
 
-exports.updateHold = async (hold_id, orderType, table_no, customerName, customerPhone) => {
+exports.updateHold = async ({ hold_id, zodu_id, branch_id }, orderType, table_no, customerName, customerPhone) => {
   const query = `
     UPDATE tbl_hold
     SET order_type = $2, table_no = $3, customer_name = $4, customer_phone = $5
-    WHERE hold_id = $1
+    WHERE hold_id = $1 AND zodu_id = $6 AND branch_id = $7
   `;
 
-  await conn.query(query, [
+  const { rowCount } = await conn.query(query, [
     hold_id,
     orderType,
     table_no,
     customerName,
-    customerPhone
+    customerPhone,
+    zodu_id,
+    branch_id,
   ]);
+  return rowCount;
 }
 
-exports.bulkUpdateHoldItems = async (hold_id, items) => {
+exports.bulkUpdateHoldItems = async ({ hold_id, zodu_id, branch_id }, items) => {
   if (!items.length) return;
 
   const columns = ["id", "item_name", "item_id", "item_unit", "qty", "price", "variant_name", "variant_id"];
-  const params = [hold_id];
+  const params = [hold_id, zodu_id, branch_id];
   const rows = items.map((item, i) => {
-    const base = i * columns.length;
+    const base = i * columns.length + 2;
     params.push(
       item.id,
       item.item_name,
@@ -115,7 +122,7 @@ exports.bulkUpdateHoldItems = async (hold_id, items) => {
         variant_name = v.variant_name,
         variant_id = v.variant_id
     FROM (VALUES ${rows.join(",")}) AS v(id, item_name, item_id, item_unit, qty, price, variant_name, variant_id)
-    WHERE hi.id = v.id AND hi.hold_id = $1
+    WHERE hi.id = v.id AND hi.hold_id = $1 AND hi.zodu_id = $2 AND hi.branch_id = $3
   `;
 
   await conn.query(query, params);
@@ -151,35 +158,37 @@ exports.bulkInsertHoldItems = async (hold_id, zodu_id, branch_id, items) => {
   await conn.query(query, params);
 }
 
-exports.deleteHoldItemsExcept = async (hold_id, keepIds) => {
+exports.deleteHoldItemsExcept = async ({ hold_id, zodu_id, branch_id }, keepIds) => {
   if (!keepIds.length) {
-    const query = `DELETE FROM tbl_hold_items WHERE hold_id = $1`;
-    await conn.query(query, [hold_id]);
+    const query = `DELETE FROM tbl_hold_items WHERE hold_id = $1 AND zodu_id = $2 AND branch_id = $3`;
+    await conn.query(query, [hold_id, zodu_id, branch_id]);
     return;
   }
 
   const query = `
     DELETE FROM tbl_hold_items
-    WHERE hold_id = $1 AND id NOT IN (${keepIds.map((_, i) => `$${i + 2}`).join(",")})
+    WHERE hold_id = $1 AND zodu_id = $2 AND branch_id = $3
+      AND id NOT IN (${keepIds.map((_, i) => `$${i + 4}`).join(",")})
   `;
 
-  await conn.query(query, [hold_id, ...keepIds]);
+  await conn.query(query, [hold_id, zodu_id, branch_id, ...keepIds]);
 };
 
-exports.deleteHoldItems = async (hold_id) => {
+exports.deleteHoldItems = async ({ hold_id, zodu_id, branch_id }) => {
   const query = `
-    DELETE FROM tbl_hold_items  
-    WHERE hold_id = $1 
+    DELETE FROM tbl_hold_items
+    WHERE hold_id = $1 AND zodu_id = $2 AND branch_id = $3
   `;
 
-  await conn.query(query, [hold_id]);
+  await conn.query(query, [hold_id, zodu_id, branch_id]);
 };
 
-exports.deleteHold = async (hold_id) => {
+exports.deleteHold = async ({ hold_id, zodu_id, branch_id }) => {
   const query = `
     DELETE FROM tbl_hold
-    WHERE hold_id = $1 
+    WHERE hold_id = $1 AND zodu_id = $2 AND branch_id = $3
   `;
 
-  await conn.query(query, [hold_id]);
+  const { rowCount } = await conn.query(query, [hold_id, zodu_id, branch_id]);
+  return rowCount;
 };

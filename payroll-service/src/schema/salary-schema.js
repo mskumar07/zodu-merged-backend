@@ -1,4 +1,4 @@
-const Joi = require('@hapi/joi');
+const Joi = require('joi');
 
 exports.salary_create = Joi.object({
   employee_id:         Joi.string().uuid().required(),

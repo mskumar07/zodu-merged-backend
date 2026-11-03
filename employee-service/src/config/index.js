@@ -16,16 +16,10 @@ module.exports = {
   DB_PORT:             process.env.DB_PORT,
   DB_HOSTNAME:         process.env.DB_HOSTNAME,
   DB_NAME:             process.env.DB_NAME,
-  APP_SECRET:          process.env.APP_SECRET,
-  MINIO_HOST:          process.env.MINIO_HOST || 'localhost',
-  MINIO_PORT:          process.env.MINIO_PORT,
-  MINIO_ACCESSKEY:     process.env.MINIO_ACCESSKEY,
-  MINIO_SECRETKEY:     process.env.MINIO_SECRETKEY,
-  BUCKET_NAME:         process.env.MINIO_BUCKET_NAME,
-  // Origin the stored file URLs are built against. These URLs are handed to
-  // browsers as plain <img src>, so it must be the public site, not an internal
-  // hostname: api.myzodu.com on UAT, api.zodu.in on prod.
-  PUBLIC_FILE_BASE_URL: process.env.PUBLIC_FILE_BASE_URL || 'https://api.myzodu.com',
+  // Employee documents live in file-service; utils/file-client.js reads
+  // FILE_SERVICE_URL straight from the environment. Service-to-service tokens
+  // (@zodu/security): INTERNAL_TOKEN is sent, INTERNAL_TOKEN_AUTH accepted on /internal/*.
+  FILE_SERVICE_URL:    process.env.FILE_SERVICE_URL    || 'http://file-service:4007',
   AUTH_SERVICE_URL:    process.env.AUTH_SERVICE_URL    || 'http://auth-service:4000',
   PAYROLL_SERVICE_URL: process.env.PAYROLL_SERVICE_URL || 'http://payroll-service:4004',
   FACE_SERVICE_URL:    process.env.FACE_SERVICE_URL    || 'http://face-service:8000',

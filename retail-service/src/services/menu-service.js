@@ -19,7 +19,6 @@ const conn = require('../database/connection');
  */
 async function createMenuItem(input) {
   const client = await conn.connect();
-  console.log(input)
   try {
     await client.query("BEGIN");
 
@@ -160,7 +159,6 @@ async function deleteMenuItem(item_uuid,status) {
     return { success: true, message: "Menu item marked as inactive", data: deleted };
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
-    console.log("test",err)
     console.error("[menu service] deleteMenuItem:", err.message);
     return { success: false, message: err.message };
   } finally {

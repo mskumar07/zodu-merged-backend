@@ -10,7 +10,8 @@ const nullableId = Joi.number().integer().positive().allow(null);
 const printer = Joi.object({
   ...tenant,
   printer_name: Joi.string().trim().max(60).required(),
-  connection_type: Joi.string().valid("LAN", "USB", "BLUETOOTH").required(),
+  // KDS: a kitchen display screen — a counter on it shows its tickets there and prints nothing.
+  connection_type: Joi.string().valid("LAN", "USB", "BLUETOOTH", "KDS").required(),
   ip_address: Joi.when("connection_type", {
     is: "LAN",
     then: Joi.string().trim().ip({ version: ["ipv4", "ipv6"] }).required(),
@@ -22,9 +23,9 @@ const printer = Joi.object({
     otherwise: Joi.number().integer().min(1).max(65535).allow(null).optional(),
   }),
   device_name: Joi.when("connection_type", {
-    is: "LAN",
-    then: Joi.string().allow(null, "").optional(),
-    otherwise: Joi.string().trim().max(120).required(),
+    is: Joi.valid("USB", "BLUETOOTH"),
+    then: Joi.string().trim().max(120).required(),
+    otherwise: Joi.string().allow(null, "").optional(),
   }),
   paper_size: Joi.string().valid("2", "3", "5").default("3"),
   cut_mode: Joi.string().valid("partial", "full", "none").default("partial"),

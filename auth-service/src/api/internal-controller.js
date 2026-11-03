@@ -1,14 +1,46 @@
 const express = require('express');
 const router  = express.Router();
 const repo    = require('../repository/business-repo');
+const authRepo = require('../repository/auth-repo');
+const { requireInternal } = require('@zodu/security');
 
-// Internal routes — called by restaurant-service only, NOT exposed via gateway
-// No JWT required. Protect at network/gateway level (not callable from internet).
+// Internal routes: blocked at the gateway, and every call needs the calling
+// service's X-Internal-Token (express-app.js). Each route names its callers:
+//   company / branches / settings writes  restaurant-service, retail-service
+//   company / branch reads                 + admin-service
+//   /admin/*                               admin-service
+//   /user-branch-access                    every service that serves customer routes
+const fromBusiness = requireInternal('restaurant', 'retail');
+const forReading   = requireInternal('restaurant', 'retail', 'admin');
+const fromAdmin    = requireInternal('admin');
+// The tenant guard of every customer-facing service (@zodu/security createAccessClient).
+const forAccess    = requireInternal('file', 'employee', 'checklist', 'retail', 'restaurant');
+
+const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const UUID    = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// GET /internal/user-branch-access?user_id=&zodu_id=[&branch_id=]
+// The tenant / branch / module-permission check of file-service and of the
+// tenant guard in every customer-facing service.
+// → { is_member, branch_exists, has_branch_access, is_admin, permissions: { [module_name]: {read, create, edit, delete} } }
+router.get('/user-branch-access', forAccess, async (req, res) => {
+  try {
+    const { user_id, zodu_id, branch_id } = req.query;
+    if (!UUID.test(String(user_id || '')) || !SAFE_ID.test(String(zodu_id || ''))
+        || (branch_id !== undefined && !SAFE_ID.test(String(branch_id)))) {
+      return res.status(400).json({ success: false, message: 'user_id (uuid) and zodu_id are required; branch_id is optional' });
+    }
+    const data = await authRepo.getUserBranchAccess({ user_id, zodu_id, branch_id: branch_id || null });
+    return res.status(200).json({ success: true, data });
+  } catch (err) {
+    console.error('[internal] getUserBranchAccess:', err.message);
+    return res.status(500).json({ success: false, message: 'Internal error' });
+  }
+});
 
 // POST /internal/company  — create or upsert company
-router.post('/company', async (req, res) => {
+router.post('/company', fromBusiness, async (req, res) => {
   try {
-    console.log("Creating company with data:--------", req.body);
     const company = await repo.createCompany(req.body);
     return res.status(201).json({ success: true, data: company });
   } catch (err) {
@@ -18,7 +50,7 @@ router.post('/company', async (req, res) => {
 });
 
 // PUT /internal/company/:zodu_id  — update company
-router.put('/company/:zodu_id', async (req, res) => {
+router.put('/company/:zodu_id', fromBusiness, async (req, res) => {
   try {
     const updated = await repo.updateCompany(req.params.zodu_id, req.body);
     return res.status(200).json({ success: true, data: updated });
@@ -29,7 +61,7 @@ router.put('/company/:zodu_id', async (req, res) => {
 });
 
 // GET /internal/company/:zodu_id  — fetch company with address + bank
-router.get('/company/:zodu_id', async (req, res) => {
+router.get('/company/:zodu_id', forReading, async (req, res) => {
   try {
     const company = await repo.getCompany(req.params.zodu_id);
     if (!company) return res.status(404).json({ success: false, message: 'Company not found' });
@@ -41,7 +73,7 @@ router.get('/company/:zodu_id', async (req, res) => {
 });
 
 // GET /internal/branches/max/:zodu_id  — get max branch_id for ID generation
-router.get('/branches/max/:zodu_id', async (req, res) => {
+router.get('/branches/max/:zodu_id', fromBusiness, async (req, res) => {
   try {
     const row = await repo.findMaxBranchId(req.params.zodu_id);
     return res.status(200).json({ success: true, max: row.max });
@@ -52,7 +84,7 @@ router.get('/branches/max/:zodu_id', async (req, res) => {
 });
 
 // GET /internal/branches/:zodu_id  — get all branches for a company
-router.get('/branches/:zodu_id', async (req, res) => {
+router.get('/branches/:zodu_id', forReading, async (req, res) => {
   try {
     const branches = await repo.getBranches(req.params.zodu_id);
     return res.status(200).json({ success: true, data: branches });
@@ -63,7 +95,7 @@ router.get('/branches/:zodu_id', async (req, res) => {
 });
 
 // GET /internal/branches/:zodu_id/:branch_id  — get single branch
-router.get('/branches/:zodu_id/:branch_id', async (req, res) => {
+router.get('/branches/:zodu_id/:branch_id', forReading, async (req, res) => {
   try {
     const { zodu_id, branch_id } = req.params;
     const rows = await repo.getBranches(zodu_id, branch_id);
@@ -76,7 +108,7 @@ router.get('/branches/:zodu_id/:branch_id', async (req, res) => {
 });
 
 // POST /internal/branches/default  — create minimal default branch (called on signup)
-router.post('/branches/default', async (req, res) => {
+router.post('/branches/default', fromBusiness, async (req, res) => {
   try {
     const { zodu_id, branch_id, branch_name, branch_mobile_no, branch_mail_id, qr_code_id } = req.body;
     if (!zodu_id || !branch_id || !branch_name) {
@@ -91,7 +123,7 @@ router.post('/branches/default', async (req, res) => {
 });
 
 // POST /internal/branches  — create full branch with address + bank
-router.post('/branches', async (req, res) => {
+router.post('/branches', fromBusiness, async (req, res) => {
   try {
     const branch = await repo.createBranch(req.body);
     return res.status(201).json({ success: true, data: branch });
@@ -102,7 +134,7 @@ router.post('/branches', async (req, res) => {
 });
 
 // PUT /internal/branches/:zodu_id/:branch_id  — update branch
-router.put('/branches/:zodu_id/:branch_id', async (req, res) => {
+router.put('/branches/:zodu_id/:branch_id', fromBusiness, async (req, res) => {
   try {
     const { zodu_id, branch_id } = req.params;
     const updated = await repo.updateBranch(zodu_id, branch_id, req.body);
@@ -116,7 +148,7 @@ router.put('/branches/:zodu_id/:branch_id', async (req, res) => {
 
 // GET /internal/invoice-settings/:zodu_id/:branch_id  — used by retail-service /
 // restaurant-service for the invoice_prefix (see generateSaleId's authClient call)
-router.get('/invoice-settings/:zodu_id/:branch_id', async (req, res) => {
+router.get('/invoice-settings/:zodu_id/:branch_id', fromBusiness, async (req, res) => {
   try {
     const { zodu_id, branch_id } = req.params;
     const settings = await repo.getInvoiceSettings(zodu_id, branch_id);
@@ -129,7 +161,7 @@ router.get('/invoice-settings/:zodu_id/:branch_id', async (req, res) => {
 });
 
 // PUT /internal/invoice-settings/:zodu_id/:branch_id  — upsert invoice settings
-router.put('/invoice-settings/:zodu_id/:branch_id', async (req, res) => {
+router.put('/invoice-settings/:zodu_id/:branch_id', fromBusiness, async (req, res) => {
   try {
     const { zodu_id, branch_id } = req.params;
     const settings = await repo.upsertInvoiceSettings(zodu_id, branch_id, req.body);
@@ -142,7 +174,7 @@ router.put('/invoice-settings/:zodu_id/:branch_id', async (req, res) => {
 
 // GET /internal/pos-settings/:zodu_id/:branch_id  — used by retail-service for
 // quotation_prefix/proforma_prefix (see generateSaleId's authClient call)
-router.get('/pos-settings/:zodu_id/:branch_id', async (req, res) => {
+router.get('/pos-settings/:zodu_id/:branch_id', fromBusiness, async (req, res) => {
   try {
     const { zodu_id, branch_id } = req.params;
     const settings = await repo.getPosSettings(zodu_id, branch_id);
@@ -159,7 +191,7 @@ router.get('/pos-settings/:zodu_id/:branch_id', async (req, res) => {
 // rest of this file — not exposed via gateway.
 
 // GET /internal/admin/companies?page=&limit=&search=
-router.get('/admin/companies', async (req, res) => {
+router.get('/admin/companies', fromAdmin, async (req, res) => {
   try {
     const { page = 1, limit = 20, search = '' } = req.query;
     const result = await repo.listCompaniesPaged({ page, limit, search });
@@ -177,7 +209,7 @@ router.get('/admin/companies', async (req, res) => {
 });
 
 // GET /internal/admin/subscriptions?page=&limit=&status=
-router.get('/admin/subscriptions', async (req, res) => {
+router.get('/admin/subscriptions', fromAdmin, async (req, res) => {
   try {
     const { page = 1, limit = 20, status = '' } = req.query;
     const result = await repo.listSubscriptionsPaged({ page, limit, status });

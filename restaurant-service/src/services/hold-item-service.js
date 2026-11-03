@@ -55,21 +55,23 @@ async function updateHoldMenu(data) {
       items
     } = data;
 
-    await repository.updateHold(
-      hold_id,
+    const hold = { hold_id, zodu_id, branch_id };
+    const found = await repository.updateHold(
+      hold,
       orderType,
       table_no,
       customerName,
       customerPhone
     );
+    if (!found) return { success: false, message: "Hold not found" };
 
     const itemsToUpdate = items.filter((item) => item.id);
     const itemsToInsert = items.filter((item) => !item.id);
     const keepIds = itemsToUpdate.map((item) => item.id);
 
     await Promise.all([
-      repository.deleteHoldItemsExcept(hold_id, keepIds),
-      repository.bulkUpdateHoldItems(hold_id, itemsToUpdate),
+      repository.deleteHoldItemsExcept(hold, keepIds),
+      repository.bulkUpdateHoldItems(hold, itemsToUpdate),
       repository.bulkInsertHoldItems(hold_id, zodu_id, branch_id, itemsToInsert),
     ]);
 
@@ -87,11 +89,13 @@ async function updateHoldMenu(data) {
   }
 }
 
-async function deleteHoldMenu(hold_id) {
+// hold: { hold_id, zodu_id, branch_id } — hold ids repeat across companies and branches.
+async function deleteHoldMenu(hold) {
 
   try {
-    await repository.deleteHold(hold_id);
-    await repository.deleteHoldItems(hold_id);
+    const found = await repository.deleteHold(hold);
+    if (!found) return { success: false, message: "Hold not found" };
+    await repository.deleteHoldItems(hold);
 
     return {
       success: true,

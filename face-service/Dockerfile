@@ -27,7 +27,7 @@ RUN python -c "from insightface.app import FaceAnalysis; \
 FaceAnalysis(name='buffalo_l', allowed_modules=['detection', 'recognition'], \
 providers=['CPUExecutionProvider']).prepare(ctx_id=-1)"
 
-COPY main.py .
+COPY main.py internal_auth.py ./
 
 EXPOSE 8000
 

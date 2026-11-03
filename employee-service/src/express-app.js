@@ -1,26 +1,38 @@
 const express = require('express');
-const cors    = require('cors');
+const { requireInternal, applySecurity } = require('@zodu/security');
 const conn    = require('./database/connection');
 const { httpLogger, logger } = require('./utils/logger');
 const { HandleErrorWithLogger } = require('./utils/error/handler');
+const security = require('./security');
 
 const app = express({ strict: false });
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(cors());
+// Headers, request id, trusted proxies, body limits. CORS is the gateway's;
+// per-IP limits too.
+applySecurity(app, { express, cors: false, ipLimitPerMinute: 0, bodyLimit: '1mb' });
 app.use(httpLogger);
 app.set('router options', { strict: false });
 
+// Service-to-service routes: auth-service only (its X-Internal-Token), except the
+// user → employee lookup, which checklist-service also uses (own-task checks).
+const fromAuth = requireInternal('auth');
+const fromAuthOrChecklist = requireInternal('auth', 'checklist');
+app.use('/internal',
+  (req, res, next) => (req.method === 'GET' && req.path === '/employee/by-user' ? fromAuthOrChecklist : fromAuth)(req, res, next),
+  require('./api/internal-controller'));
+
+// Customer routes: access token, company/branch from the token, route permissions.
+app.use(security.middleware);
+// Stored file ids → fresh URLs in every JSON response (document file_url, profile_photo_url).
+app.use(require('./utils/file-client').fileUrlsMiddleware);
+
 app.use('/api/employees',   require('./api/employee-controller'));
 app.use('/api/attendance',  require('./api/attendance-controller'));
-app.use('/file',            require('./api/file-controller'));
-app.use('/internal',        require('./api/internal-controller'));
 
 app.use(HandleErrorWithLogger);
 
 // ── DB check ──────────────────────────────────────────────────────────────────
-(async () => {
+if (process.env.NODE_ENV !== 'test') (async () => {
   try {
     const client = await conn.connect();
     logger.info('✅ Employee DB connected');

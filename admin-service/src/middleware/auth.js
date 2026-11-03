@@ -1,18 +1,21 @@
 const jwt = require('jsonwebtoken');
-const { APP_SECRET } = require('../config');
+const { APP_SECRET, ADMIN_TOKEN } = require('../config');
 const { AuthorizeError, ForbiddenError } = require('../utils/error');
 
 // Verifies the admin console's own JWT — issued by admin-auth-service on
 // login, never the customer-facing token from auth-service. Keeping these
 // two token spaces separate means an admin session can't be forged from a
-// leaked customer token and vice versa.
+// leaked customer token and vice versa: HS256 only, and only tokens issued
+// for the admin console (issuer + audience), whatever secret they were signed with.
 const requireAdminAuth = (req, res, next) => {
   try {
     const header = req.headers.authorization || '';
     const [scheme, token] = header.split(' ');
     if (scheme !== 'Bearer' || !token) throw AuthorizeError('Missing bearer token');
 
-    const payload = jwt.verify(token, APP_SECRET);
+    const payload = jwt.verify(token, APP_SECRET, {
+      algorithms: ['HS256'], issuer: ADMIN_TOKEN.issuer, audience: ADMIN_TOKEN.audience,
+    });
     req.admin = { id: payload.sub, email: payload.email, role: payload.role };
     next();
   } catch (err) {

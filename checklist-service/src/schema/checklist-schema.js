@@ -1,4 +1,4 @@
-const Joi = require('@hapi/joi');
+const Joi = require('joi');
 
 const zodu_branch = {
   zodu_id:   Joi.string().max(50).required(),

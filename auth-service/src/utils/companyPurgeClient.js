@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { createInternalHttp } = require('@zodu/security');
 const {
   RETAIL_SERVICE_URL,
   RESTAURANT_SERVICE_URL,
@@ -13,6 +14,9 @@ const {
 // still hold data for it. Stop on first failure; the caller reports which
 // service failed so a retry can re-run the whole sequence (every fn_purge_company
 // call is idempotent — already-purged rows just delete 0 rows, no error).
+// Purging a large tenant can take a while.
+const internalHttp = createInternalHttp(axios, { timeout: 30_000 });
+
 const SERVICES = [
   { name: 'retail-service',     baseURL: RETAIL_SERVICE_URL },
   { name: 'restaurant-service', baseURL: RESTAURANT_SERVICE_URL },
@@ -30,10 +34,9 @@ exports.purgeCompanyAcrossServices = async (zodu_id) => {
 
   for (const svc of SERVICES) {
     try {
-      const res = await axios.post(
+      const res = await internalHttp.post(
         `${svc.baseURL}/internal/companies/${zodu_id}/purge`,
-        {},
-        { timeout: 30000 }
+        {}
       );
       results.push({ service: svc.name, data: res.data?.data });
     } catch (err) {

@@ -55,6 +55,7 @@ case "$ENV" in
     EMPLOYEE_DB=employee-service
     PAYROLL_DB=payroll-service
     ADMIN_DB=admin_service
+    FILE_DB=file_service
     # api-gateway (not the frontend on 5173) — it proxies /auth/* to
     # auth-service, so /auth/file/<key> is reachable through here, matching
     # how uat/prod point at their public gateway origins below.
@@ -74,6 +75,7 @@ case "$ENV" in
     EMPLOYEE_DB=employee-service
     PAYROLL_DB=payroll-service
     ADMIN_DB=admin_service
+    FILE_DB=file_service
     PUBLIC_BASE=https://api.myzodu.com
     run_sql() { psql -h "$HOST" -p "$PORT" -U "$USER" -d "$1" -v ON_ERROR_STOP=1 -f "$2"; }
     run_sql_str() { psql -h "$HOST" -p "$PORT" -U "$USER" -d "$1" -v ON_ERROR_STOP=1 -tAc "$2"; }
@@ -91,6 +93,7 @@ case "$ENV" in
     EMPLOYEE_DB=employee_service
     PAYROLL_DB=payroll-service
     ADMIN_DB=admin_service
+    FILE_DB=file_service
     PUBLIC_BASE=https://api.zodu.in
     run_sql() { psql -h "$HOST" -p "$PORT" -U "$USER" -d "$1" -v ON_ERROR_STOP=1 -f "$2"; }
     run_sql_str() { psql -h "$HOST" -p "$PORT" -U "$USER" -d "$1" -v ON_ERROR_STOP=1 -tAc "$2"; }
@@ -154,6 +157,11 @@ force_apply() {  # force_apply <db> <path-relative-to-repo-root>
   record_applied "$1" "$2"
 }
 
+# file-service — tbl_files (every stored file; owning services keep only
+# file_id) and tbl_file_access_log. Own file_service database, which must
+# already exist, like every other service database above.
+apply "$FILE_DB" file-service/migrations/001_files.sql
+
 # admin-service — tbl_admin_users, the admin console's own login table.
 # Lives in its own admin_service database, never in AUTH_DB — the admin
 # panel's operators are a different concept from customer/business users.
@@ -201,6 +209,13 @@ apply "$AUTH_DB" auth-service/migrations/tbl_users_login_user.sql
 # auth-service — branch bank details can be saved with a blank account number
 # (stored as NULL), so tbl_bank_details.account_number must be nullable.
 apply "$AUTH_DB" auth-service/migrations/bank_details_account_number_nullable.sql
+
+# auth-service — file-service ids for the company logo and invoice images (Phase 2).
+apply "$AUTH_DB" auth-service/migrations/file_service_file_ids.sql
+
+# auth-service — refresh-token families (session rows without the token) and
+# tbl_security_events (security Phase 2). Apply before the new image serves traffic.
+apply "$AUTH_DB" auth-service/migrations/auth_sessions_security_events.sql
 
 # retail-service / restaurant-service — item description
 apply "$RETAIL_DB"     retail-service/migrations/item_description.sql
@@ -396,6 +411,9 @@ apply "$RESTAURANT_DB" restaurant-service/migrations/purchase_return.sql
 # employee-service — registered faces for face-recognition attendance
 # (POST /api/employees/:id/face, POST /api/attendance/face).
 apply "$EMPLOYEE_DB" employee-service/migrations/employee_faces.sql
+
+# employee-service — documents keep a file-service file_id (Phase 2).
+apply "$EMPLOYEE_DB" employee-service/migrations/file_service_file_ids.sql
 
 # Older rows were written before PUBLIC_FILE_BASE_URL existed, so they carry
 # whatever origin the code defaulted to at the time (myzodu.com, zodu.in, ...).

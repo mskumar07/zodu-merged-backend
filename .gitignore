@@ -11,3 +11,10 @@ docker-compose.yml
 .scripts
 
 print-bridge/dist
+
+# Per-host secret env files for docker compose (env_file:)
+/env/
+
+# Python caches
+__pycache__/
+.pytest_cache/

@@ -1,15 +1,9 @@
 const multer = require('multer');
 const { consumeEvents } = require('../consumer/consumer');
-const Minio = require("minio");
-const sharp = require("sharp");
 const conn = require('../database/connection.js');
 const repository = require('../repository/restaurant-repo.js');
-const { PDFDocument } = require('pdf-lib');
+const files = require('../utils/file-client');
 const moment = require('moment/moment');
-const {
-  MINIO_HOST, MINIO_PORT, MINIO_ACCESSKEY, MINIO_SECRETKEY, BUCKET_NAME,
-  PUBLIC_FILE_BASE_URL,
-} = require('../config/index.js');
 const { getDateRange } = require("../utils/Date_Folder/getDate.js");
 const { get } = require('../api/restaurant-controller.js');
 const { getPagination, getMeta } = require('../utils/pagination.js');
@@ -20,19 +14,6 @@ const { round } = require('../utils/number.js');
 
 
 
-const minioClient = new Minio.Client({
-  endPoint: MINIO_HOST,
-  port: MINIO_PORT,
-  useSSL: false,
-  accessKey: MINIO_ACCESSKEY,
-  secretKey: MINIO_SECRETKEY
-});
-
-const bucketName = BUCKET_NAME;
-// Public origin the file URLs are built against — set per environment
-// (UAT: https://api.myzodu.com, prod: https://api.zodu.in). Trailing slash trimmed so a
-// value with or without one produces the same URL.
-const publicBaseUrl = String(PUBLIC_FILE_BASE_URL || 'https://api.myzodu.com').replace(/\/+$/, '');
 
 const normalizeBranchIds = (branchIds) => {
   const normalized = Array.isArray(branchIds)
@@ -68,60 +49,17 @@ async function get_pos_data(data) {
   }
 }
 
-async function uploadImg(file) {
-  console.log(file)
+// POST /upload: the file is checked (type from its bytes, unsafe content
+// refused), re-encoded and stored by file-service in its staging area; the URL
+// is a permanent file-service link. Saving a record with it claims the file.
+async function uploadImg(file, ctx = {}) {
   try {
-    if (!file || !file.buffer)
-      throw new Error("Invalid file input");
-
-    const MAX_SIZE = 10 * 1024 * 1024; // 10 MB
-
-    if (file.size > MAX_SIZE)
-      throw new Error("File exceeds 10MB limit");
-
-    const ext = file.originalname.split(".").pop().toLowerCase();
-
-    let buffer = file.buffer;
-    let outputName = `${Date.now()}-${file.originalname}`;
-
-    // ✔ Optimize only images
-    if (["jpg", "jpeg", "png", "webp"].includes(ext)) {
-      buffer = await sharp(file.buffer)
-        .resize({ width: 1800, withoutEnlargement: true })
-        .toFormat("webp", { quality: 80 })
-        .toBuffer();
-
-      outputName = `${Date.now()}-${file.originalname.replace(/\.[^/.]+$/, "")}.webp`;
-    }
-
-    // ✔ PDFs (compress)
-    else if (ext === "pdf") {
-      const pdfDoc = await PDFDocument.load(file.buffer);
-      const compressed = await pdfDoc.save({ useObjectStreams: true });
-      buffer = Buffer.from(compressed);
-    }
-
-    // ✔ OFFICE DOCS, CSV, TXT — do not modify
-    else {
-      buffer = Buffer.from(file.buffer);
-    }
-
-    // Upload to MinIO
-    await minioClient.putObject(
-      bucketName,
-      outputName,
-      buffer,
-      buffer.length,
-      { "Content-Type": file.mimetype }
-    );
-
-    const url = `${publicBaseUrl}/restaurant/file/${outputName}`;
-
-    return { success: true, fileUrl: url };
-
+    if (!file || !file.buffer) throw new Error("Invalid file input");
+    const [stored] = await files.stage(ctx, [file]);
+    return { success: true, fileUrl: stored.url, file_id: stored.file_id };
   } catch (err) {
-    console.error("Upload failed:", err);
-    return { success: false, message: err.message };
+    console.error("Upload failed:", err.message);
+    return { success: false, message: err.details?.[0]?.error || err.message };
   }
 }
 
@@ -317,35 +255,31 @@ async function updateMenuFav(menu_id, favorite) {
   }
 }
 
-async function uploadMultiple(files) {
-  if (!Array.isArray(files) || files.length === 0) {
+// POST /upload/multiple: all-or-nothing, like a single upload of every file.
+// file-service takes at most 10 per call, so larger batches go in chunks and
+// a failed chunk discards the ones already staged.
+async function uploadMultiple(uploads, ctx = {}) {
+  if (!Array.isArray(uploads) || uploads.length === 0) {
     throw new Error("No files received");
   }
 
-  const results = [];
-
-  for (const file of files) {
-    // Validate file
-    if (!file || !file.buffer) {
-      throw new Error("Invalid file received");
+  const stored = [];
+  try {
+    for (let i = 0; i < uploads.length; i += 10) {
+      stored.push(...await files.stage(ctx, uploads.slice(i, i + 10)));
     }
-
-    const uploaded = await uploadImg(file);
-
-    if (!uploaded.success) {
-      throw new Error(uploaded.message || "One or more file uploads failed");
-    }
-
-    results.push({
-      id: Date.now() + "-" + Math.floor(Math.random() * 1000000),
-      filename: file.originalname || `file-${Date.now()}`, // safe fallback
-      url: uploaded.fileUrl,
-      size: file.size || 0,
-      mimetype: file.mimetype ?? "application/octet-stream",
-    });
+  } catch (err) {
+    await files.quietly(files.discard(ctx, stored.map((f) => f.file_id)));
+    throw err;
   }
 
-  return results;
+  return stored.map((f, i) => ({
+    id: f.file_id,
+    filename: uploads[i].originalname || f.original_name,
+    url: f.url,
+    size: uploads[i].size || 0,
+    mimetype: f.mime_type,
+  }));
 }
 
 
@@ -719,16 +653,21 @@ async function getPurchaseCategoryData(branch_id) {
   }
 }
 
-async function deleteFileFromMinIO(fileName) {
+// DELETE /delete/file/:name — the app removing an upload before saving. Only
+// staged uploads no record has claimed can go this way (name = the file id in
+// the link); a saved record's files go with the record, and files from before
+// file-service are kept for the Phase 3 migration.
+async function deleteFileFromMinIO(fileName, ctx = {}) {
   try {
     if (!fileName) throw new Error("File name required");
 
-    await minioClient.removeObject(bucketName, fileName);
+    const fileId = files.isFileId(fileName) ? fileName : files.fileIdFromUrl(fileName);
+    if (fileId) await files.discard(ctx, [fileId]);
 
     return { success: true, message: "File deleted successfully" };
 
   } catch (err) {
-    console.error("MinIO Delete Error:", err);
+    console.error("File delete error:", err.message);
     return { success: false, message: err.message };
   }
 };
@@ -896,9 +835,9 @@ async function getInventorySummary(zodu_id, branch_id, filterType, start_date, e
 
 
 
-async function getVendorData(branch_id) {
+async function getVendorData(branch_id, zodu_id) {
   try {
-    const allVendorData = await repository.getVendor(branch_id);
+    const allVendorData = await repository.getVendor(branch_id, zodu_id);
     return {
       success: true,
       data: allVendorData,

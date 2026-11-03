@@ -8,29 +8,87 @@ if (process.env.NODE_ENV !== "production") {
   dotEnv.config();
 }
 
+const int = (v, d) => (Number.isFinite(parseInt(v, 10)) ? parseInt(v, 10) : d);
+const bool = (v, d = false) => (v === undefined || v === '' ? d : v === 'true');
 
 module.exports = {
+  NODE_ENV: process.env.NODE_ENV,
   PORT: process.env.PORT,
   DB_USERNAME: process.env.DB_USERNAME,
   DB_PASSWORD: process.env.DB_PASSWORD,
   DB_PORT: process.env.DB_PORT,
   DB_HOSTNAME: process.env.DB_HOSTNAME,
   DB_NAME: process.env.DB_NAME,
+  // Old HS256 secret: only verifies the refresh tokens issued before the ES256
+  // switch (legacy migration, until LEGACY_REFRESH_CUTOFF).
   APP_SECRET: process.env.APP_SECRET,
-  MINIO_HOST: process.env.MINIO_HOST || 'localhost',
-  MINIO_PORT: process.env.MINIO_PORT,
-  MINIO_ACCESSKEY: process.env.MINIO_ACCESSKEY,
-  MINIO_SECRETKEY: process.env.MINIO_SECRETKEY,
-  BUCKET_NAME: process.env.MINIO_BUCKET_NAME,
-  // Origin the stored file URLs are built against. These URLs are handed to
-  // browsers and invoice templates as plain <img src>, so it must be the public
-  // site, not an internal hostname: api.myzodu.com on UAT, api.zodu.in on prod.
-  PUBLIC_FILE_BASE_URL: process.env.PUBLIC_FILE_BASE_URL || 'https://api.myzodu.com',
-  JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || process.env.APP_SECRET,
+  // Files (logo, invoice images) live in file-service; utils/file-client.js
+  // reads FILE_SERVICE_URL straight from the environment.
+  FILE_SERVICE_URL: process.env.FILE_SERVICE_URL || 'http://file-service:4007',
   RESTAURANT_SERVICE_URL: process.env.RESTAURANT_SERVICE_URL || 'http://restaurant-service:4001',
   EMPLOYEE_SERVICE_URL: process.env.EMPLOYEE_SERVICE_URL || 'http://employee-service:4002',
   RETAIL_SERVICE_URL: process.env.RETAIL_SERVICE_URL || 'http://retail-service:3001',
   PAYROLL_SERVICE_URL: process.env.PAYROLL_SERVICE_URL || 'http://payroll-service:3005',
   CHECKLIST_SERVICE_URL: process.env.CHECKLIST_SERVICE_URL || 'http://checklist-service:3006',
+  // Service-to-service tokens (@zodu/security): INTERNAL_TOKEN is sent on this
+  // service's calls; INTERNAL_TOKEN_<CALLER> are accepted on /internal/*.
 
+  // ── Tokens (docs/security/auth.md) ─────────────────────────────────────────
+  // ES256 signing key (PKCS#8 PEM, or that PEM base64-encoded) and its key id.
+  JWT_PRIVATE_KEY: process.env.JWT_PRIVATE_KEY,
+  JWT_KID: process.env.JWT_KID,
+  // The key being rotated out: still published in the JWKS, never used to sign.
+  JWT_PREVIOUS_PUBLIC_KEY: process.env.JWT_PREVIOUS_PUBLIC_KEY,
+  JWT_PREVIOUS_KID: process.env.JWT_PREVIOUS_KID,
+  JWT_ISSUER: process.env.JWT_ISSUER,
+  JWT_AUDIENCE: process.env.JWT_AUDIENCE,
+  ACCESS_TOKEN_TTL_SECONDS: int(process.env.ACCESS_TOKEN_TTL_SECONDS, 15 * 60),
+  // A refresh token unused this long expires (idle timeout); a session never
+  // lives longer than SESSION_MAX_DAYS, however often it is refreshed.
+  REFRESH_IDLE_DAYS: int(process.env.REFRESH_IDLE_DAYS, 30),
+  SESSION_MAX_DAYS: int(process.env.SESSION_MAX_DAYS, 90),
+  // Parallel requests that all hit an expired access token refresh with the
+  // same token: inside this window they get the same successor instead of
+  // tripping reuse detection.
+  REFRESH_REUSE_GRACE_SECONDS: int(process.env.REFRESH_REUSE_GRACE_SECONDS, 30),
+  // Path of the web refresh cookie as the browser sees it (through the gateway).
+  REFRESH_COOKIE_PATH: process.env.REFRESH_COOKIE_PATH || '/auth/api',
+  // false until the client releases send X-Client-Platform (Phase 4 turns it on).
+  AUTH_REQUIRE_PLATFORM_HEADER: bool(process.env.AUTH_REQUIRE_PLATFORM_HEADER),
+  // Old HS256 refresh tokens are exchanged once until this date (YYYY-MM-DD). Unset: still accepted.
+  LEGACY_REFRESH_CUTOFF: process.env.LEGACY_REFRESH_CUTOFF,
+
+  // ── Login protection ───────────────────────────────────────────────────────
+  LOGIN_RATE_LIMIT_PER_MIN: int(process.env.LOGIN_RATE_LIMIT_PER_MIN, 20),
+  LOGIN_MAX_FAILURES: int(process.env.LOGIN_MAX_FAILURES, 5),
+  LOGIN_LOCKOUT_MINUTES: int(process.env.LOGIN_LOCKOUT_MINUTES, 15),
+  SIGNUP_RATE_LIMIT_PER_MIN: int(process.env.SIGNUP_RATE_LIMIT_PER_MIN, 5),
+
+  // ── Forgot password (one-time code by email or SMS) ────────────────────────
+  PASSWORD_RESET_RATE_LIMIT_PER_MIN: int(process.env.PASSWORD_RESET_RATE_LIMIT_PER_MIN, 10),
+  PASSWORD_RESET_CODE_TTL_SECONDS: int(process.env.PASSWORD_RESET_CODE_TTL_SECONDS, 10 * 60),
+  PASSWORD_RESET_RESEND_SECONDS: int(process.env.PASSWORD_RESET_RESEND_SECONDS, 60),
+  PASSWORD_RESET_MAX_SENDS_PER_HOUR: int(process.env.PASSWORD_RESET_MAX_SENDS_PER_HOUR, 5),
+  PASSWORD_RESET_MAX_ATTEMPTS: int(process.env.PASSWORD_RESET_MAX_ATTEMPTS, 5),
+  PASSWORD_RESET_TOKEN_TTL_SECONDS: int(process.env.PASSWORD_RESET_TOKEN_TTL_SECONDS, 10 * 60),
+
+  // Email (SMTP). The sender is noreply@zodu.in.
+  MAIL_FROM: process.env.MAIL_FROM || 'Zodu <noreply@zodu.in>',
+  SMTP_HOST: process.env.SMTP_HOST,
+  SMTP_PORT: int(process.env.SMTP_PORT, 587),
+  // true for port 465 (TLS from the start); 587 upgrades with STARTTLS.
+  SMTP_SECURE: bool(process.env.SMTP_SECURE),
+  SMTP_USER: process.env.SMTP_USER,
+  SMTP_PASS: process.env.SMTP_PASS,
+
+  // SMS (Twilio Messages API). Either a sender number or a Messaging Service.
+  TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN,
+  TWILIO_FROM_NUMBER: process.env.TWILIO_FROM_NUMBER,
+  TWILIO_MESSAGING_SERVICE_SID: process.env.TWILIO_MESSAGING_SERVICE_SID,
+  // Users' phone numbers are stored as 10 digits; this makes them E.164.
+  SMS_COUNTRY_CODE: process.env.SMS_COUNTRY_CODE || '+91',
+
+  REDIS_URL: process.env.REDIS_URL,
+  TRUST_PROXY: process.env.TRUST_PROXY,
 };

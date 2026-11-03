@@ -1,49 +1,26 @@
-const {
-  FormateData,
-  GeneratePassword,
-  GenerateSalt,
-  GenerateSignature,
-  ValidatePassword,
-} = require('../utils');
+const { FormateData } = require('../utils');
+const { hashPassword, passwordProblem } = require('../auth/password');
+const { revokeAllForUsers } = require('./session-service');
 
 const repository = require('../repository/auth-repo');
 const businessRepo = require('../repository/business-repo');
-const minio = require('../utils/minio');
+const files = require('../utils/file-client');
 const axios = require('axios');
-const jwt = require('jsonwebtoken');
-const { APP_SECRET, EMPLOYEE_SERVICE_URL, RESTAURANT_SERVICE_URL, RETAIL_SERVICE_URL } = require('../config');
-
-const REFRESH_SECRET  = APP_SECRET;
-const REFRESH_EXPIRY_DAYS = 7;
+const { createInternalHttp } = require('@zodu/security');
+const { EMPLOYEE_SERVICE_URL, RESTAURANT_SERVICE_URL, RETAIL_SERVICE_URL } = require('../config');
 
 // business_type → which service owns that company's units/GST/menu/inventory data
+// Calls to the other services' /internal routes carry this service's token.
+const internalHttp = createInternalHttp(axios, { timeout: 10_000 });
+
 function businessServiceUrlFor(business_type) {
   return String(business_type).toLowerCase() === 'retail' ? RETAIL_SERVICE_URL : RESTAURANT_SERVICE_URL;
 }
 
 // Non-blocking — seeding defaults must never fail a signup that already succeeded.
 function seedBranchDefaults(business_type, zodu_id, branch_id) {
-  axios.post(`${businessServiceUrlFor(business_type)}/internal/seed-defaults`, { zodu_id, branch_id })
+  internalHttp.post(`${businessServiceUrlFor(business_type)}/internal/seed-defaults`, { zodu_id, branch_id })
     .catch(err => console.error('[seed-defaults] failed (non-fatal):', err.message));
-}
-
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-function generateRefreshToken(user_id) {
-  if (!REFRESH_SECRET) {
-    throw new Error('JWT refresh secret is not configured');
-  }
-  return jwt.sign(
-    { sub: user_id },
-    REFRESH_SECRET,
-    { expiresIn: `${REFRESH_EXPIRY_DAYS}d` }
-  );
-}
-
-function refreshTokenExpiresAt() {
-  const d = new Date();
-  d.setDate(d.getDate() + REFRESH_EXPIRY_DAYS);
-  return d;
 }
 
 // ── CreateAccount ─────────────────────────────────────────────────────────────
@@ -51,6 +28,10 @@ function refreshTokenExpiresAt() {
 async function CreateAccount(userInputs) {
   const email = userInputs.email?.toLowerCase() || null;
   const { restaurant_name, phone_number, password, same_for_branch, business_type } = userInputs;
+
+  // The account created here owns the company (Admin role): 8 characters minimum.
+  const weak = passwordProblem(password, { owner: true });
+  if (weak) return FormateData({ error: weak });
 
   if (phone_number) {
     const phoneCheck = await repository.findPhnExist({ phone_number });
@@ -66,8 +47,7 @@ async function CreateAccount(userInputs) {
     }
   }
 
-  const salt          = await GenerateSalt();
-  const password_hash = await GeneratePassword(password, salt);
+  const password_hash = await hashPassword(password);
   const zodu_id       = await repository.getNextZoduId();
 
   // Whole signup (user, roles, access, company, default branch) is one
@@ -113,7 +93,7 @@ async function CreateAccount(userInputs) {
   }
 
   // Seed Admin employee in employee-service (non-blocking — failure must not break signup)
-  axios.post(`${EMPLOYEE_SERVICE_URL}/internal/employee/create-admin`, {
+  internalHttp.post(`${EMPLOYEE_SERVICE_URL}/internal/employee/create-admin`, {
     zodu_id,
     branch_id: 'B1',
     user_id:   createdData.user_id,
@@ -128,204 +108,23 @@ async function CreateAccount(userInputs) {
   return FormateData({ insertData: { user_id: createdData.user_id } });
 }
 
-// ── AccountLogin ──────────────────────────────────────────────────────────────
-
-async function AccountLogin(userInputs, meta = {}) {
-  const { phone_number, password } = userInputs;
-  const email = userInputs.email?.toLowerCase() || null;
-  // meta = { ip_address, user_agent } — passed in from the route
-
-  if ((!email && !phone_number) || !password) {
-    return FormateData({ error: 'Email/Phone and password are required' });
-  }
-
-  // 1. Fetch user — NOW includes password_hash, zodu_id, user_id, is_active
-  let result;
-  if (email) {
-    result = await repository.findEmailExist({ email });
-  } else {
-    result = await repository.findPhnExist({ phone_number });
-  }
-
-  const dummyHash = '$2b$12$invalidhashusedtopreventtimingattack0000000000000000';
-  const user      = result?.rows?.[0];
-  const isValid   = await ValidatePassword(password, user?.password_hash || dummyHash);
-
-  if (!user || !isValid) {
-    return FormateData({ error: 'Invalid credentials' });
-  }
-  if (user.is_deleted) {
-    return FormateData({ error: 'Account has been deactivated' });
-  }
-  if (!user.is_active) {
-    return FormateData({ error: 'Account is inactive' });
-  }
-
-  // 2. Issue access token (short-lived)
-  const accessToken = await GenerateSignature({
-    user_id:   user.user_id,
-    zodu_id:   user.zodu_id,
-    user_type: user.user_type,
-    email:     user.email,
-    phone:     user.phone,
-  });
-
-  // 3. Issue refresh token + persist session to tbl_user_sessions
-  const refreshToken = generateRefreshToken(user.user_id);
-  const expiresAt    = refreshTokenExpiresAt();
-
-  await repository.createSession({
-    user_id:       user.user_id,
-    refresh_token: refreshToken,
-    ip_address:    meta.ip_address,
-    user_agent:    meta.user_agent,
-    expires_at:    expiresAt,
-  });
-
-  // 4. Update last_login_at
-  await repository.updateLastLogin({ user_id: user.user_id });
-
-  // 5. Fetch all companies the user belongs to
-  const userCompanies = await repository.getUserCompanies({ user_id: user.user_id });
-
-  // 5a. Fetch employee_id + employee_code from employee-service (non-fatal)
-  let employeeInfo = null;
-  try {
-    const primaryCompany = userCompanies.find(c => c.is_primary) || userCompanies[0];
-    if (primaryCompany) {
-      const { data: empRes } = await axios.get(
-        `${EMPLOYEE_SERVICE_URL}/internal/employee/by-user`,
-        { params: { user_id: user.user_id, zodu_id: primaryCompany.zodu_id, branch_id: 'B1' } }
-      );
-      if (empRes.success) employeeInfo = empRes.data;
-    }
-  } catch (_) {}
-
-  // 6. For each company, fetch company details + branches from own DB
-  const companies = await Promise.all(
-    userCompanies.map(async (uc) => {
-      const [companyInfo, branches] = await Promise.all([
-        businessRepo.getCompany(uc.zodu_id).catch(() => null),
-        businessRepo.getBranches(uc.zodu_id).catch(() => []),
-      ]);
-
-      return {
-        zodu_id:          uc.zodu_id,
-        is_primary:       uc.is_primary,
-        store_name:       companyInfo?.business_name    ?? null,
-        company_name:     companyInfo?.business_name    ?? null,
-        owner_admin_name: companyInfo?.owner_admin_name ?? null,
-        gst_no:           companyInfo?.gst_no           ?? null,
-        address_line_1:   companyInfo?.address_line_1   ?? null,
-        address_line_2:   companyInfo?.address_line_2   ?? null,
-        city:             companyInfo?.city              ?? null,
-        district:         companyInfo?.district          ?? null,
-        state:            companyInfo?.state             ?? null,
-        pincode:          companyInfo?.pincode           ?? null,
-        account_number:   companyInfo?.account_number   ?? null,
-        account_type:     companyInfo?.account_type     ?? null,
-        ifsc_code: companyInfo?.ifsc_code ?? null,
-        business_type: companyInfo?.type ?? null,
-        branches, // each branch carries its own subscription_status / subscription_effective_status
-      };
-    })
-  );
-
-  return FormateData({
-    message: 'Login successful',
-    access_token:  accessToken,
-    refresh_token: refreshToken,
-    user: {
-      user_id:       user.user_id,
-      zodu_id:       user.zodu_id,
-      email:         user.email,
-      phone:         user.phone,
-      user_type: user.user_type,
-      login_user: user.login_user,
-      reporting_manager_id: employeeInfo?.reporting_manager_id ?? null,
-      employee_id:   employeeInfo?.employee_id   ?? null,
-      employee_code: employeeInfo?.employee_code ?? null,
-      employee_name: employeeInfo?.employee_name ?? null,
-      employee_branch : employeeInfo?.branch_id ?? null,
-    },
-    companies,
-  });
-}
-
-// ── RefreshToken ──────────────────────────────────────────────────────────────
-
-async function RefreshToken({ refresh_token }) {
-  if (!refresh_token) {
-    return FormateData({ error: 'Refresh token required' });
-  }
-
-  if (!REFRESH_SECRET) {
-    throw new Error('JWT refresh secret is not configured');
-  }
-
-  // 1. Verify JWT signature + expiry first (cheap, no DB hit)
-  let decoded;
-  try {
-    decoded = jwt.verify(refresh_token, REFRESH_SECRET);
-  } catch (err) {
-    return FormateData({ error: 'Invalid or expired refresh token' });
-  }
-
-  // 2. Check it exists in DB and is not revoked
-  const session = await repository.findSessionByRefreshToken({ refresh_token });
-  if (!session) {
-    return FormateData({ error: 'Session not found' });
-  }
-  if (session.is_revoked) {
-    return FormateData({ error: 'Session has been revoked' });
-  }
-  if (new Date(session.expires_at) < new Date()) {
-    return FormateData({ error: 'Session expired' });
-  }
-  if (!session.is_active || session.is_deleted) {
-    return FormateData({ error: 'Account inactive' });
-  }
-
-  // 3. Rotate — revoke old session, issue new tokens
-  await repository.revokeSession({ session_id: session.session_id });
-
-  const newAccessToken  = await GenerateSignature({
-    user_id:   session.user_id,
-    zodu_id:   session.zodu_id,
-    user_type: session.user_type,
-  });
-  const newRefreshToken = generateRefreshToken(session.user_id);
-  const expiresAt       = refreshTokenExpiresAt();
-
-  await repository.createSession({
-    user_id:       session.user_id,
-    refresh_token: newRefreshToken,
-    expires_at:    expiresAt,
-  });
-
-  return FormateData({
-    access_token:  newAccessToken,
-    refresh_token: newRefreshToken,
-  });
-}
-
-// ── Logout ────────────────────────────────────────────────────────────────────
-
-async function Logout({ refresh_token }) {
-  if (!refresh_token) {
-    return FormateData({ error: 'Refresh token required' });
-  }
-
-  const session = await repository.findSessionByRefreshToken({ refresh_token });
-  if (!session || session.is_revoked) {
-    return FormateData({ message: 'Already logged out' });
-  }
-
-  await repository.revokeSession({ session_id: session.session_id });
-  return FormateData({ message: 'Logged out successfully' });
-}
-
 // ── AddCompany ────────────────────────────────────────────────────────────────
+
+// ── Images in file-service ────────────────────────────────────────────────────
+// Logo and invoice images are 'link' modules: their URL (PUBLIC/files/v/<id>)
+// never changes, so it is also kept in the old *_url column. Everything that
+// reads those columns (invoice templates, print, other services) keeps
+// working; *_file_id is what owns the file.
+
+const LOGO = { module: 'branding', entityId: 'company', category: 'logo' };
+
+async function uploadImage(file, ctx, target) {
+  const [stored] = await files.upload(ctx, { ...target, files: [file] });
+  return stored;   // { file_id, url, ... }
+}
+
+// The rejection reason of the (single) file, else the overall message.
+const uploadError = (err) => err.details?.[0]?.error || err.message || 'Upload failed';
 
 async function AddCompany(userInputs, user_id, file = null) {
   const {
@@ -355,16 +154,18 @@ async function AddCompany(userInputs, user_id, file = null) {
 
   const zodu_id = await repository.getNextZoduId();
 
-  // The object key is namespaced by zodu_id, so the logo can only be uploaded
-  // once the id exists. A bad image fails the whole create rather than leaving
-  // a company the user thinks has a logo.
+  // The file lives under the zodu_id, so the logo can only be uploaded once
+  // the id exists. A bad image fails the whole create rather than leaving a
+  // company the user thinks has a logo.
   let logo_url = company_logo_url || null;
+  let logo_file_id = null;
   if (file) {
     try {
-      const { fileUrl } = await minio.uploadCompanyLogo(file, zodu_id);
-      logo_url = fileUrl;
+      const logo = await uploadImage(file, { userId: user_id, zoduId: zodu_id }, LOGO);
+      logo_url = logo.url;
+      logo_file_id = logo.file_id;
     } catch (err) {
-      const message = minio.describeError(err);
+      const message = uploadError(err);
       console.error('company logo upload failed:', message);
       return FormateData({ error: message });
     }
@@ -392,10 +193,12 @@ async function AddCompany(userInputs, user_id, file = null) {
       bank_branch,
       can_use_for_branch: same_for_branch,
       company_logo_url: logo_url,
+      company_logo_file_id: logo_file_id,
       type
     });
   } catch (err) {
     console.error('createcompany failed:', err.message);
+    if (logo_file_id) await files.quietly(files.remove({ userId: user_id, zoduId: zodu_id }, [logo_file_id]));
     return FormateData({ error: 'Failed to create company. Please try again.' });
   }
 
@@ -425,7 +228,7 @@ async function AddCompany(userInputs, user_id, file = null) {
   }
 
   // Seed Admin employee in employee-service (non-blocking — failure must not break company creation)
-  axios.post(`${EMPLOYEE_SERVICE_URL}/internal/employee/create-admin`, {
+  internalHttp.post(`${EMPLOYEE_SERVICE_URL}/internal/employee/create-admin`, {
     zodu_id,
     branch_id: 'B1',
     user_id,
@@ -433,7 +236,7 @@ async function AddCompany(userInputs, user_id, file = null) {
     email:     email        || null,
   }).catch(err => console.error('[employee-service] create-admin failed (non-fatal):', err.message));
 
-  return FormateData({ zodu_id, restaurant_name, company_logo_url: logo_url });
+  return FormateData({ zodu_id, restaurant_name, company_logo_url: logo_url, company_logo_file_id: logo_file_id });
 }
 
 async function AddBranch(userInputs, user_id) {
@@ -457,7 +260,7 @@ async function AddBranch(userInputs, user_id) {
     // branch_id), not just (user_id, zodu_id), so the same admin can have a
     // separate employee row per branch.
     const user = await repository.findUserById({ user_id }).catch(() => null);
-    axios.post(`${EMPLOYEE_SERVICE_URL}/internal/employee/create-admin`, {
+    internalHttp.post(`${EMPLOYEE_SERVICE_URL}/internal/employee/create-admin`, {
       zodu_id,
       branch_id: branch.branch_id,
       user_id,
@@ -496,29 +299,31 @@ async function EditCompany(userInputs, user_id, file = null) {
   // already-uploaded URL, or an explicit null/'' to clear it. Anything else
   // leaves the stored logo alone.
   const touchesLogo = Boolean(file) || company_logo_url !== undefined;
+  const ctx = { userId: user_id, zoduId: zodu_id };
   let logoField = {};
 
   if (touchesLogo) {
     if (file) {
       try {
-        const { fileUrl } = await minio.uploadCompanyLogo(file, zodu_id);
-        logoField = { company_logo_url: fileUrl };
+        const logo = await uploadImage(file, ctx, LOGO);
+        logoField = { company_logo_url: logo.url, company_logo_file_id: logo.file_id };
       } catch (err) {
-        const message = minio.describeError(err);
+        const message = uploadError(err);
         console.error('company logo upload failed:', message);
         return FormateData({ error: message });
       }
     } else {
-      logoField = { company_logo_url: company_logo_url || null };
+      logoField = { company_logo_url: company_logo_url || null, company_logo_file_id: null };
     }
   }
 
+  // Read the old logo before the update so the replaced file can be removed
+  // afterwards — only once the new one is safely committed.
+  const previous = touchesLogo
+    ? await businessRepo.getCompany(zodu_id).catch(() => null)
+    : null;
+
   try {
-    // Read the old URL before the update so the replaced object can be removed
-    // afterwards — only once the new URL is safely committed.
-    const previous = touchesLogo
-      ? await businessRepo.getCompany(zodu_id).catch(() => null)
-      : null;
 
     const company = await businessRepo.updateCompany(zodu_id, {
       ...rest,
@@ -528,8 +333,9 @@ async function EditCompany(userInputs, user_id, file = null) {
       ...(type !== undefined ? { type } : {}),
     });
 
-    if (touchesLogo && previous?.company_logo_url !== company?.company_logo_url) {
-      await minio.deleteFile(minio.keyFromUrl(previous?.company_logo_url));
+    const oldLogo = previous?.company_logo_file_id;
+    if (touchesLogo && oldLogo && oldLogo !== company?.company_logo_file_id) {
+      await files.quietly(files.remove(ctx, [oldLogo]));
     }
 
     return FormateData({
@@ -538,14 +344,16 @@ async function EditCompany(userInputs, user_id, file = null) {
     });
   } catch (err) {
     console.error('edit company failed:', err.message);
+    if (logoField.company_logo_file_id) await files.quietly(files.remove(ctx, [logoField.company_logo_file_id]));
     return FormateData({ error: 'Failed to update company. Please try again.' });
   }
 }
 
 // ── Company logo image ────────────────────────────────────────────────────────
-// Same contract as the invoice signature: the image lives in MinIO, tbl_business
-// only stores its URL, and the old object is removed only after the new URL is
-// committed so a failed upload never leaves the company without a logo.
+// Same contract as the invoice signature: the image lives in file-service,
+// tbl_business keeps its file id and stable URL, and the old file is removed
+// only after the new one is committed so a failed upload never leaves the
+// company without a logo.
 
 async function UploadCompanyLogo({ user_id, zodu_id, file }) {
   const userCompanies = await repository.getUserCompanies({ user_id });
@@ -559,15 +367,22 @@ async function UploadCompanyLogo({ user_id, zodu_id, file }) {
     const existing = await businessRepo.getCompany(zodu_id);
     if (!existing) return FormateData({ error: 'Company not found' });
 
-    const { fileUrl } = await minio.uploadCompanyLogo(file, zodu_id);
+    const ctx = { userId: user_id, zoduId: zodu_id };
+    const logo = await uploadImage(file, ctx, LOGO);
 
-    const company = await businessRepo.updateCompany(zodu_id, { company_logo_url: fileUrl });
+    let company;
+    try {
+      company = await businessRepo.updateCompany(zodu_id, { company_logo_url: logo.url, company_logo_file_id: logo.file_id });
+    } catch (err) {
+      await files.quietly(files.remove(ctx, [logo.file_id]));
+      throw err;
+    }
 
-    await minio.deleteFile(minio.keyFromUrl(existing.company_logo_url));
+    if (existing.company_logo_file_id) await files.quietly(files.remove(ctx, [existing.company_logo_file_id]));
 
     return FormateData({ message: 'Company logo uploaded successfully', company });
   } catch (err) {
-    const message = minio.describeError(err);
+    const message = uploadError(err);
     console.error('upload company logo failed:', message);
     return FormateData({ error: message });
   }
@@ -585,9 +400,11 @@ async function DeleteCompanyLogo({ user_id, zodu_id }) {
     const existing = await businessRepo.getCompany(zodu_id);
     if (!existing) return FormateData({ error: 'Company not found' });
 
-    const company = await businessRepo.updateCompany(zodu_id, { company_logo_url: null });
+    const company = await businessRepo.updateCompany(zodu_id, { company_logo_url: null, company_logo_file_id: null });
 
-    await minio.deleteFile(minio.keyFromUrl(existing.company_logo_url));
+    if (existing.company_logo_file_id) {
+      await files.quietly(files.remove({ userId: user_id, zoduId: zodu_id }, [existing.company_logo_file_id]));
+    }
 
     return FormateData({ message: 'Company logo removed successfully', company });
   } catch (err) {
@@ -651,7 +468,10 @@ async function DeleteBranch({ zodu_id, branch_id, user_id }) {
   }
 
   try {
+    // Members' tokens may name the deleted branch: every member signs in again.
+    const members = await repository.getCompanyUserIds({ zodu_id });
     const authResults = await businessRepo.purgeBranch(zodu_id, branch_id);
+    await revokeAllForUsers(members, 'branch_deleted');
     return FormateData({
       message: 'Branch deleted successfully',
       results: [...outcome.results, { service: 'auth-service', data: authResults }],
@@ -700,7 +520,10 @@ async function DeleteCompany({ zodu_id, user_id }) {
   }
 
   try {
+    // Collected before the purge removes tbl_user_companies.
+    const members = await repository.getCompanyUserIds({ zodu_id });
     const authResults = await businessRepo.purgeCompany(zodu_id);
+    await revokeAllForUsers(members, 'company_deleted');
     return FormateData({
       message: 'Company deleted successfully',
       results: [...outcome.results, { service: 'auth-service', data: authResults }],
@@ -817,25 +640,29 @@ async function EditPosSettings({ user_id, zodu_id, branch_id, ...fields }) {
 }
 
 // ── Invoice images: signature, watermark, receiver signature ──────────────────
-// Each image lives in MinIO; tbl_invoice_settings only stores its URL. The old
-// object is removed only after the new URL is committed, so a failed upload
+// Each image lives in file-service (module invoice-settings, one record per
+// document type); tbl_invoice_settings keeps its file id and stable URL. The
+// old file is removed only after the new one is committed, so a failed upload
 // never leaves the branch without its image.
 
 const INVOICE_IMAGES = {
   signature: {
     column: 'signature_url',
+    idColumn: 'signature_file_id',
+    category: 'signature',
     label: 'Signature',
-    upload: minio.uploadSignature,
   },
   watermark: {
     column: 'watermark_url',
+    idColumn: 'watermark_file_id',
+    category: 'watermark',
     label: 'Watermark',
-    upload: minio.uploadWatermark,
   },
   receiver_signature: {
     column: 'receiver_signature_url',
+    idColumn: 'receiver_signature_file_id',
+    category: 'receiver-signature',
     label: 'Receiver signature',
-    upload: minio.uploadReceiverSignature,
   },
 };
 
@@ -852,18 +679,27 @@ async function UploadInvoiceImage({ kind, user_id, zodu_id, branch_id, file, doc
   if (error) return FormateData({ error });
 
   try {
+    const ctx = { userId: user_id, zoduId: zodu_id, branchId: branch_id };
     const existing = await businessRepo.getInvoiceSettings(zodu_id, branch_id, document_type);
-    const { fileUrl } = await image.upload(file, zodu_id, branch_id);
+    const stored = await uploadImage(file, ctx, {
+      module: 'invoice-settings', entityId: document_type, category: image.category,
+    });
 
-    const settings = await businessRepo.upsertInvoiceSettings(zodu_id, branch_id, {
-      [image.column]: fileUrl,
-    }, document_type);
+    let settings;
+    try {
+      settings = await businessRepo.upsertInvoiceSettings(zodu_id, branch_id, {
+        [image.column]: stored.url,
+      }, document_type, { [image.idColumn]: stored.file_id });
+    } catch (err) {
+      await files.quietly(files.remove(ctx, [stored.file_id]));
+      throw err;
+    }
 
-    await minio.deleteFile(minio.keyFromUrl(existing?.[image.column]));
+    if (existing?.[image.idColumn]) await files.quietly(files.remove(ctx, [existing[image.idColumn]]));
 
     return FormateData({ message: `${image.label} uploaded successfully`, settings });
   } catch (err) {
-    const message = minio.describeError(err);
+    const message = uploadError(err);
     console.error(`upload invoice ${kind} failed:`, message);
     return FormateData({ error: message });
   }
@@ -886,9 +722,11 @@ async function DeleteInvoiceImage({ kind, user_id, zodu_id, branch_id, document_
 
     const settings = await businessRepo.upsertInvoiceSettings(zodu_id, branch_id, {
       [image.column]: null,
-    }, document_type);
+    }, document_type, { [image.idColumn]: null });
 
-    await minio.deleteFile(minio.keyFromUrl(existing?.[image.column]));
+    if (existing?.[image.idColumn]) {
+      await files.quietly(files.remove({ userId: user_id, zoduId: zodu_id, branchId: branch_id }, [existing[image.idColumn]]));
+    }
 
     return FormateData({ message: `${image.label} removed successfully`, settings });
   } catch (err) {
@@ -971,9 +809,6 @@ async function GetRoleAccess({ user_id, zodu_id, branch_id }) {
 
 module.exports = {
   CreateAccount,
-  AccountLogin,
-  RefreshToken,
-  Logout,
   AddCompany,
   AddBranch,
   EditCompany,

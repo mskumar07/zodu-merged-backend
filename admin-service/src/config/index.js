@@ -18,12 +18,13 @@ module.exports = {
 
   APP_SECRET: process.env.APP_SECRET,
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '8h',
+  // iss / aud of the admin console's tokens (src/middleware/auth.js).
+  ADMIN_TOKEN: { issuer: 'zodu-admin', audience: 'zodu-admin-console' },
 
   CORS_ORIGIN: process.env.CORS_ORIGIN || '*',
 
-  // Shared secret every downstream service call carries as `x-internal-key`.
-  // Each service must validate it on its /internal (or /admin) routes.
-  INTERNAL_SERVICE_KEY: process.env.INTERNAL_SERVICE_KEY,
+  // INTERNAL_TOKEN (this service's X-Internal-Token on downstream /internal
+  // calls) is read by @zodu/security straight from the environment.
 
   // Same env-driven service discovery pattern used by api-gateway / auth-service.
   SERVICES: {

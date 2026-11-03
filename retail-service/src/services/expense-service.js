@@ -78,7 +78,6 @@ exports.createExpense = async (data) => {
     return { success: true, data: expense };
   } catch (err) {
     await client.query("ROLLBACK");
-    console.log("Error creating expense:", err);
     return { success: false, message: err.message };
   } finally {
     client.release();
@@ -136,19 +135,20 @@ exports.getExpenseSummary = async ({ zodu_id, branch_id }) => {
   }
 };
 
-exports.updateExpense = async (expense_id, data) => {
+// tenant: { zodu_id, branch_id } of the request (src/security/request.js)
+exports.updateExpense = async (expense_id, data, tenant) => {
   const client = await conn.connect();
   try {
     await client.query("BEGIN");
 
-    const old = await repo.getExpenseByIdForUpdate(client, expense_id);
+    const old = await repo.getExpenseByIdForUpdate(client, expense_id, tenant.zodu_id);
     if (!old) {
       await client.query("ROLLBACK");
       return { success: false, message: "Expense not found" };
     }
 
-    await repo.deleteExpenseLineItems(client, expense_id);
-    await repo.updateExpense(client, expense_id, data);
+    await repo.deleteExpenseLineItems(client, expense_id, old.zodu_id);
+    await repo.updateExpense(client, expense_id, { ...data, zodu_id: old.zodu_id, branch_id: old.branch_id }, old.zodu_id);
 
     if (data.items && data.items.length > 0) {
       await repo.createExpenseLineItems(client, data.items, expense_id, data.category_id, old.zodu_id);
@@ -181,20 +181,20 @@ exports.updateExpense = async (expense_id, data) => {
   }
 };
 
-exports.deleteExpense = async (expense_id) => {
+exports.deleteExpense = async (expense_id, tenant) => {
   const client = await conn.connect();
   try {
     await client.query("BEGIN");
 
-    const expense = await repo.getExpenseByIdForUpdate(client, expense_id);
+    const expense = await repo.getExpenseByIdForUpdate(client, expense_id, tenant.zodu_id);
     if (!expense) {
       await client.query("ROLLBACK");
       return { success: false, message: "Expense not found" };
     }
 
-    await repo.deleteExpenseLineItems(client, expense_id);
-    await repo.deleteExpensePayments(client, expense_id);
-    await repo.deleteExpense(client, expense_id);
+    await repo.deleteExpenseLineItems(client, expense_id, expense.zodu_id);
+    await repo.deleteExpensePayments(client, expense_id, expense.zodu_id);
+    await repo.deleteExpense(client, expense_id, expense.zodu_id);
 
     await client.query("COMMIT");
     return { success: true, message: "Deleted successfully" };
@@ -206,12 +206,20 @@ exports.deleteExpense = async (expense_id) => {
   }
 };
 
-exports.markPayment = async (expense_id, data) => {
+exports.markPayment = async (expense_id, data, tenant) => {
   const client = await conn.connect();
   try {
     await client.query("BEGIN");
 
-    await repo.createExpensePayment(client, { expense_id, ...data });
+    const expense = await repo.getExpenseByIdForUpdate(client, expense_id, tenant.zodu_id);
+    if (!expense) {
+      await client.query("ROLLBACK");
+      return { success: false, message: "Expense not found" };
+    }
+
+    await repo.createExpensePayment(client, {
+      ...data, expense_id, zodu_id: expense.zodu_id, branch_id: expense.branch_id,
+    });
 
     const updated = await client.query(
       `UPDATE tbl_expense
@@ -223,9 +231,9 @@ exports.markPayment = async (expense_id, data) => {
                ELSE 'partial'
              END,
            updated_at = NOW()
-       WHERE expense_id = $2
+       WHERE expense_id = $2 AND zodu_id = $3
        RETURNING *`,
-      [data.paid_amount, expense_id]
+      [data.paid_amount, expense_id, expense.zodu_id]
     );
 
     await client.query("COMMIT");

@@ -1,14 +1,16 @@
+// Token, company/branch and permissions: src/security/rules.js.
 const roleService      = require('../services/role-service');
 const RequestValidator = require('../utils/requestValidator');
 const schema           = require('../schema/role-schema');
-// const { ValidateSignature } = require('../utils');
 
 const router = require('express').Router();
+const { requireInternal } = require('@zodu/security');
+const fromEmployee = requireInternal('employee');
 
 // ── CREATE ROLE ───────────────────────────────────────────────────────────────
 // POST /api/roles
 // Body: { zodu_id, branch_id, role_name, description, permissions[] }
-router.post('/api/roles', /* ValidateSignature, */ async (req, res) => {
+router.post('/api/roles', async (req, res) => {
   try {
     const { errors, input } = await RequestValidator(schema.createRole, req.body);
     if (errors) return res.status(400).json({ success: false, errors });
@@ -23,7 +25,7 @@ router.post('/api/roles', /* ValidateSignature, */ async (req, res) => {
 
 // ── GET ALL ROLES ─────────────────────────────────────────────────────────────
 // GET /api/roles?zodu_id=Z001&branch_id=B001
-router.get('/api/roles', /* ValidateSignature, */ async (req, res) => {
+router.get('/api/roles', async (req, res) => {
   try {
     const { zodu_id, branch_id } = req.query;
     if (!zodu_id)   return res.status(400).json({ success: false, error: 'zodu_id is required' });
@@ -38,7 +40,7 @@ router.get('/api/roles', /* ValidateSignature, */ async (req, res) => {
 
 // ── GET SINGLE ROLE WITH PERMISSIONS ─────────────────────────────────────────
 // GET /api/roles/:role_id?zodu_id=Z001&branch_id=B001
-router.get('/api/roles/:role_id', /* ValidateSignature, */ async (req, res) => {
+router.get('/api/roles/:role_id', async (req, res) => {
   try {
     const { zodu_id, branch_id } = req.query;
     if (!zodu_id)   return res.status(400).json({ success: false, error: 'zodu_id is required' });
@@ -54,7 +56,7 @@ router.get('/api/roles/:role_id', /* ValidateSignature, */ async (req, res) => {
 // ── UPDATE ROLE ───────────────────────────────────────────────────────────────
 // PUT /api/roles/:role_id
 // Body: { zodu_id, branch_id, role_name?, description?, permissions[]? }
-router.put('/api/roles/:role_id', /* ValidateSignature, */ async (req, res) => {
+router.put('/api/roles/:role_id', async (req, res) => {
   try {
     const { errors, input } = await RequestValidator(schema.updateRole, req.body);
     if (errors) return res.status(400).json({ success: false, errors });
@@ -70,7 +72,7 @@ router.put('/api/roles/:role_id', /* ValidateSignature, */ async (req, res) => {
 // ── DELETE ROLE ───────────────────────────────────────────────────────────────
 // DELETE /api/roles/:role_id
 // Body: { zodu_id, branch_id }
-router.delete('/api/roles/:role_id', /* ValidateSignature, */ async (req, res) => {
+router.delete('/api/roles/:role_id', async (req, res) => {
   try {
     const { zodu_id, branch_id } = req.body;
     if (!zodu_id)   return res.status(400).json({ success: false, error: 'zodu_id is required' });
@@ -86,7 +88,7 @@ router.delete('/api/roles/:role_id', /* ValidateSignature, */ async (req, res) =
 
 // ── GET ALL MODULES ───────────────────────────────────────────────────────────
 // GET /api/modules
-router.get('/api/modules', /* ValidateSignature, */ async (req, res) => {
+router.get('/api/modules', async (req, res) => {
   try {
     const result = await roleService.getModules(req.query.business_type);
     return res.status(200).json(result);
@@ -95,23 +97,22 @@ router.get('/api/modules', /* ValidateSignature, */ async (req, res) => {
   }
 });
 
-// ── INTERNAL — called by employee-service (no JWT, internal network only) ─────
+// ── INTERNAL — called by employee-service only (its X-Internal-Token) ────────
 
-router.post('/internal/employee/create-user', async (req, res) => {
+router.post('/internal/employee/create-user', fromEmployee, async (req, res) => {
   try {
-    console.log('Creating employee user:', req.body);
     const { errors, input } = await RequestValidator(schema.createEmployeeUser, req.body);
     if (errors) return res.status(400).json({ success: false, errors });
 
     const result = await roleService.createEmployeeUser(input);
     return res.status(result.success ? 201 : 400).json(result);
   } catch (err) {
-    const status = err.message.includes('already registered') ? 409 : 500;
+    const status = err.status || (err.message.includes('already registered') ? 409 : 500);
     return res.status(status).json({ success: false, error: err.message });
   }
 });
 
-router.get('/internal/employee/:user_id/role', async (req, res) => {
+router.get('/internal/employee/:user_id/role', fromEmployee, async (req, res) => {
   try {
     const result = await roleService.getEmployeeRole(req.params.user_id);
     return res.status(200).json(result);
@@ -120,7 +121,7 @@ router.get('/internal/employee/:user_id/role', async (req, res) => {
   }
 });
 
-router.put('/internal/employee/:user_id/role', async (req, res) => {
+router.put('/internal/employee/:user_id/role', fromEmployee, async (req, res) => {
   try {
     const { errors, input } = await RequestValidator(schema.updateEmployeeRole, req.body);
     if (errors) return res.status(400).json({ success: false, errors });
@@ -134,7 +135,7 @@ router.put('/internal/employee/:user_id/role', async (req, res) => {
 
 // POST /internal/employee/check-duplicate
 // Body: { email?, phone?, exclude_user_id }
-router.post('/internal/employee/check-duplicate', async (req, res) => {
+router.post('/internal/employee/check-duplicate', fromEmployee, async (req, res) => {
   try {
     const result = await roleService.checkDuplicate(req.body);
     return res.status(200).json(result);
@@ -145,12 +146,12 @@ router.post('/internal/employee/check-duplicate', async (req, res) => {
 
 // PUT /internal/employee/:user_id/update-user
 // Updates email, phone, password in tbl_users (only fields present in body)
-router.put('/internal/employee/:user_id/update-user', async (req, res) => {
+router.put('/internal/employee/:user_id/update-user', fromEmployee, async (req, res) => {
   try {
     const result = await roleService.updateEmployeeUser(req.params.user_id, req.body);
     return res.status(200).json(result);
   } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(err.status || 500).json({ success: false, error: err.message });
   }
 });
 
@@ -158,7 +159,7 @@ router.put('/internal/employee/:user_id/update-user', async (req, res) => {
 // Body: { user_ids: [uuid], zodu_id, branch_id, with_count? }
 // → { data: { [user_id]: { has_password, has_role, login_user } }, login_user_count? }
 // login_user_count (only when with_count) = users with login_user = true in that company + branch.
-router.post('/internal/employee/login-status', async (req, res) => {
+router.post('/internal/employee/login-status', fromEmployee, async (req, res) => {
   try {
     const { user_ids, zodu_id, branch_id, with_count } = req.body;
     if (!Array.isArray(user_ids) || !zodu_id || !branch_id) {
@@ -174,7 +175,7 @@ router.post('/internal/employee/login-status', async (req, res) => {
 // PUT /internal/employee/login-details
 // Body: { user_id, zodu_id, branch_id, role_id?, password?, email?, phone?, ... } — sets only what is sent.
 // user_id is reserved by employee-service; if no tbl_users row has it yet, the row is created with that id.
-router.put('/internal/employee/login-details', async (req, res) => {
+router.put('/internal/employee/login-details', fromEmployee, async (req, res) => {
   try {
     const { errors, input } = await RequestValidator(schema.setEmployeeLogin, req.body);
     if (errors) return res.status(400).json({ success: false, errors });
@@ -182,12 +183,12 @@ router.put('/internal/employee/login-details', async (req, res) => {
     const result = await roleService.setEmployeeLogin(input);
     return res.status(200).json(result);
   } catch (err) {
-    const status = err.message === 'Role not found' ? 404 : err.message.includes('already registered') ? 409 : (err.message.includes('phone is required') || err.message.includes('Password is required')) ? 400 : 500;
+    const status = err.status || (err.message === 'Role not found' ? 404 : err.message.includes('already registered') ? 409 : (err.message.includes('phone is required') || err.message.includes('Password is required')) ? 400 : 500);
     return res.status(status).json({ success: false, error: err.message });
   }
 });
 
-router.put('/internal/employee/:user_id/deactivate', async (req, res) => {
+router.put('/internal/employee/:user_id/deactivate', fromEmployee, async (req, res) => {
   try {
     console.log('Deactivating employee user:', req.params.user_id);
     const result = await roleService.deactivateEmployee(req.params.user_id);

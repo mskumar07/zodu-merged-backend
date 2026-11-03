@@ -3,6 +3,9 @@ const router = express.Router();
 const service = require("../services/vendor-service");
 const RequestValidator = require("../utils/requestValidator");
 const vSchema = require("../schema/validation-schema");
+const owned = require("../security/owned");
+
+router.param("id", owned.param("tbl_vendor", "id"));
 
 router.post("/", async (req, res) => {
   try {

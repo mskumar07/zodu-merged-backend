@@ -1,10 +1,10 @@
 const axios = require('axios');
+const { createInternalHttp } = require('@zodu/security');
 const { AUTH_SERVICE_URL } = require('../config');
 
-const base = `${AUTH_SERVICE_URL}/internal`;
-
-const client = axios.create({
-  baseURL: base,
+// auth-service /internal routes; every call carries this service's X-Internal-Token.
+const client = createInternalHttp(axios, {
+  baseURL: `${AUTH_SERVICE_URL}/internal`,
   timeout: 10000,
   headers: { 'Content-Type': 'application/json' },
 });

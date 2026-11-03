@@ -3,6 +3,10 @@ const RequestValidator = require("../utils/requestValidator");
 const router = express.Router();
 const schema = require("../schema/retail-schema");
 const service = require("../services/menu-service");
+const owned = require("../security/owned");
+
+router.param("item_uuid", owned.param("tbl_menu_items", "item_uuid"));
+router.param("inventory_uuid", owned.param("tbl_inventory", "inventory_uuid"));
 
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -13,7 +17,6 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 // ─────────────────────────────────────────────────────────────
 router.post("/add/menu_item", async (req, res) => {
   try {
-    console.log("[menu] create request:", req.body);
  
     const { errors, input } = await RequestValidator(schema.createSchema, req.body);
     if (errors) {
@@ -51,11 +54,9 @@ router.put("/edit/menu_item/:item_uuid", async (req, res) => {
       return res.status(400).json({ success: false, error: "Invalid item_uuid format" });
     }
  
-    console.log("[menu] edit request:", item_uuid, req.body);
  
     const { errors, input } = await RequestValidator(schema.editSchema, req.body);
     if (errors) {
-      console.log(errors)
       return res.status(400).json({ success: false, errors });
     }
  
@@ -73,7 +74,6 @@ router.put("/edit/menu_item/:item_uuid", async (req, res) => {
       data:    result.data,
     });
   } catch (error) {
-    console.log(error)
     console.error("[menu] edit error:", error);
     return res.status(500).json({ success: false, error: error.message });
   }
@@ -122,7 +122,6 @@ router.get("/menu_items", async (req, res) => {
       return res.status(400).json({ success: false, message: result.message });
     }
  
-    console.log("result",result)
     return res.status(200).json({
       success:     true,
       total:       result.total,
@@ -322,7 +321,7 @@ router.get('/inventory/:inventory_uuid', async (req, res) => {
   }
 });
 
-router.post('/inventory/adjust', async (req, res) => {
+router.post('/inventory/adjust', owned.inBody('inventory_uuid', 'tbl_inventory', 'inventory_uuid'), async (req, res) => {
   try {
     const {
       inventory_uuid,

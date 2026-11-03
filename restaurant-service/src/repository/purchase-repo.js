@@ -1,4 +1,5 @@
 const conn = require("../database/connection");
+const attachments = require("../utils/attachments");
 
 
 
@@ -67,12 +68,14 @@ exports.createPurchase = async (client, data) => {
       data.paid_amount || 0,
       data.payment_status || "pending",
       data.notes || null,
-      data.attachment_url ? JSON.stringify(data.attachment_url) : null,
+      null,   // attachments: stored below, once the trigger has set purchase_id
       data.due_date || null,
       data.invoice_bill_no || null,
     ]
   );
-  return rows[0];
+  return attachments.storeAfterInsert(client, {
+    table: 'tbl_purchase', idColumn: 'purchase_id', row: rows[0], attachments: data.attachment_url, module: 'purchase',
+  });
 };
 
 exports.createPurchaseItems = async (client, items, purchase_id, zodu_id) => {
@@ -329,7 +332,7 @@ const { rows: items } = await conn.query(
        AND r.original_purchase_id = pi.purchase_id
        AND ri.original_item_id = pi.purchase_item_id
    ) rt ON TRUE
-   WHERE pi.purchase_id = $1
+   WHERE pi.purchase_id = $1 AND pi.zodu_id = $2
    ORDER BY pi.purchase_item_id ASC`,
   [purchase.purchase_id, purchase.zodu_id, purchase.branch_id]
 );
@@ -347,9 +350,9 @@ console.log(items)
        pp.status,
        pp.created_at
      FROM tbl_purchase_payment pp
-     WHERE pp.purchase_id = $1
+     WHERE pp.purchase_id = $1 AND pp.zodu_id = $2
      ORDER BY pp.payment_date ASC, pp.created_at ASC`,
-    [purchase.purchase_id]
+    [purchase.purchase_id, purchase.zodu_id]
   );
 
   // ── 4. Returns / debit notes against this purchase ───────────
@@ -393,11 +396,12 @@ exports.hasReturns = async (client, purchase_id, zodu_id) => {
   return rowCount > 0;
 };
 
-// Used inside transactions — must use the client
-exports.getPurchaseByIdForUpdate = async (client, purchase_id) => {
+// Used inside transactions — must use the client. purchase_id is unique per
+// company only, so every query on it also names the company.
+exports.getPurchaseByIdForUpdate = async (client, purchase_id, zodu_id) => {
   const { rows: purchaseRows } = await client.query(
-    `SELECT * FROM tbl_purchase WHERE purchase_id = $1 FOR UPDATE`,
-    [purchase_id]
+    `SELECT * FROM tbl_purchase WHERE purchase_id = $1 AND zodu_id = $2 FOR UPDATE`,
+    [purchase_id, zodu_id]
   );
   const purchase = purchaseRows[0];
   if (!purchase) return null;
@@ -414,29 +418,29 @@ exports.getPurchaseByIdForUpdate = async (client, purchase_id) => {
        mi.menu_type
      FROM tbl_purchase_items tpi
      LEFT JOIN tbl_menu_items mi ON mi.menu_id = tpi.item_id
-     WHERE tpi.purchase_id = $1`,
-    [purchase_id]
+     WHERE tpi.purchase_id = $1 AND tpi.zodu_id = $2`,
+    [purchase_id, zodu_id]
   );
 
   return { ...purchase, items };
 };
 
-exports.getPurchaseItems = async (client, purchase_id) => {
+exports.getPurchaseItems = async (client, purchase_id, zodu_id) => {
   const { rows } = await client.query(
-    `SELECT * FROM tbl_purchase_items WHERE purchase_id = $1`,
-    [purchase_id]
+    `SELECT * FROM tbl_purchase_items WHERE purchase_id = $1 AND zodu_id = $2`,
+    [purchase_id, zodu_id]
   );
   return rows;
 };
 
-exports.deletePurchaseItems = async (client, purchase_id) => {
+exports.deletePurchaseItems = async (client, purchase_id, zodu_id) => {
   await client.query(
-    `DELETE FROM tbl_purchase_items WHERE purchase_id = $1`,
-    [purchase_id]
+    `DELETE FROM tbl_purchase_items WHERE purchase_id = $1 AND zodu_id = $2`,
+    [purchase_id, zodu_id]
   );
 };
 
-exports.updatePurchase = async (client, purchase_id, data) => {
+exports.updatePurchase = async (client, purchase_id, data, zodu_id) => {
   const totalAmount = Number(data.total_amount) || 0;
   const paidAmount  = Number(data.paid_amount) || 0;
 
@@ -456,32 +460,35 @@ exports.updatePurchase = async (client, purchase_id, data) => {
          attachment_url   = $6,
          updated_at       = NOW(),
           invoice_bill_no  = $9
-     WHERE purchase_id = $7::varchar`,   // ✅ FIX HERE
+     WHERE purchase_id = $7::varchar AND zodu_id = $10`,
     [
       data.vendor_id || null,
       data.purchase_date,
       totalAmount,
       paidAmount,
       data.notes || null,
-      data.attachment_url ? JSON.stringify(data.attachment_url) : null,
+      data.attachment_url
+        ? JSON.stringify(await attachments.storedAttachments(client, { table: 'tbl_purchase', idColumn: 'purchase_id', id: purchase_id, data: data, module: 'purchase' }))
+        : null,
       String(purchase_id), // ✅ FORCE STRING
       data.due_date || null,
       data.invoice_bill_no || null,
+      zodu_id,
     ]
   );
 };
 
-exports.deletePurchasePayments = async (client, purchase_id) => {
+exports.deletePurchasePayments = async (client, purchase_id, zodu_id) => {
   await client.query(
-    `DELETE FROM tbl_purchase_payment WHERE purchase_id = $1`,
-    [purchase_id]
+    `DELETE FROM tbl_purchase_payment WHERE purchase_id = $1 AND zodu_id = $2`,
+    [purchase_id, zodu_id]
   );
 };
 
-exports.deletePurchase = async (client, purchase_id) => {
+exports.deletePurchase = async (client, purchase_id, zodu_id) => {
   await client.query(
-    `UPDATE tbl_purchase SET cancelled_purchase = true, updated_at = NOW() WHERE purchase_id = $1`,
-    [purchase_id]
+    `UPDATE tbl_purchase SET cancelled_purchase = true, updated_at = NOW() WHERE purchase_id = $1 AND zodu_id = $2`,
+    [purchase_id, zodu_id]
   );
 };
 
