@@ -885,6 +885,7 @@ const ledgerSchema = Joi.object({
   method:   Joi.string()
                .valid('cash', 'upi', 'card', 'bank transfer', 'store credit', 'all')
                .default('all'),
+  search:   Joi.string().trim().allow('').optional(),
   page:     Joi.number().integer().min(1).default(1),
   limit:    Joi.number().integer().min(1).max(100).default(20),
 }).options({ allowUnknown: true });

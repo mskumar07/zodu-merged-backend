@@ -94,6 +94,8 @@ exports.getPurchases = async ({
   payment_status,
   cancelled_purchase,
   search,
+  from_date,
+  to_date,
 } = {}) => {
   const conditions = [`p.cancelled_purchase = $1`];
   const values = [cancelled_purchase || false];
@@ -122,6 +124,19 @@ exports.getPurchases = async ({
     conditions.push(`(${byPurchase})`);
     returnConditions.push(`(${byPurchase} OR r.return_id ILIKE $${idx})`);
     values.push(`%${search}%`);
+    idx++;
+  }
+  // Date range (inclusive): purchases by purchase_date, returns by their own return_date.
+  if (from_date) {
+    conditions.push(`p.purchase_date::date >= $${idx}::date`);
+    returnConditions.push(`r.return_date::date >= $${idx}::date`);
+    values.push(from_date);
+    idx++;
+  }
+  if (to_date) {
+    conditions.push(`p.purchase_date::date <= $${idx}::date`);
+    returnConditions.push(`r.return_date::date <= $${idx}::date`);
+    values.push(to_date);
     idx++;
   }
 

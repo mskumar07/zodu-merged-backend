@@ -130,7 +130,7 @@ exports.createExpenseLineItems = async (client, items, expense_id, category_id, 
   }
 };
 
-exports.getExpenses = async ({ zodu_id, branch_id, category_id, vendor_id, payment_status, search, page, limit } = {}) => {
+exports.getExpenses = async ({ zodu_id, branch_id, category_id, vendor_id, payment_status, search, from_date, to_date, page, limit } = {}) => {
   const conditions = [];
   const values = [];
   let idx = 1;
@@ -145,6 +145,8 @@ exports.getExpenses = async ({ zodu_id, branch_id, category_id, vendor_id, payme
     values.push(`%${search}%`);
     idx++;
   }
+  if (from_date) { conditions.push(`e.expense_date::date >= $${idx++}::date`); values.push(from_date); }
+  if (to_date)   { conditions.push(`e.expense_date::date <= $${idx++}::date`); values.push(to_date); }
 
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
