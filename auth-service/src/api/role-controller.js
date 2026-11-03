@@ -90,7 +90,7 @@ router.delete('/api/roles/:role_id', async (req, res) => {
 // GET /api/modules
 router.get('/api/modules', async (req, res) => {
   try {
-    const result = await roleService.getModules();
+    const result = await roleService.getModules(req.query.business_type);
     return res.status(200).json(result);
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });

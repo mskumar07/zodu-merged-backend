@@ -149,7 +149,18 @@ async function markKotOrderReady(zodu_id, branch_id, api_order_id) {
   }
 }
 
+async function markKotItemReady(zodu_id, branch_id, api_order_id, item_name) {
+  try {
+    const updatedItems = await repository.markKotItemReady(zodu_id, branch_id, api_order_id, item_name);
+    if (updatedItems.length === 0) return { success: false, message: "No pending item found for this order" };
+    return { success: true, updatedItems };
+  } catch (error) {
+    console.error("markKotItemReady Error", error);
+    return { success: false, message: error.message };
+  }
+}
+
 module.exports = {
   getReportCategory, getReportServices, getSingleOrder, get_ordered_data,
-  createOrder, updateOrder, getKotList, markKotOrderReady,
+  createOrder, updateOrder, getKotList, markKotOrderReady, markKotItemReady,
 };

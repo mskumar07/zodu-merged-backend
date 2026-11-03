@@ -144,6 +144,13 @@ async function inTransaction(work) {
   }
 }
 
+// return_date is a YYYY-MM-DD string (Joi .raw()), so a string compare is a date compare.
+function assertReturnDateNotBeforePurchase(return_date, purchase) {
+  if (return_date && purchase.purchase_date_iso && String(return_date).slice(0, 10) < purchase.purchase_date_iso) {
+    throw ValidationError(`Return date cannot be before the purchase date (${purchase.purchase_date_iso})`);
+  }
+}
+
 // Locks the purchase, then the return (same order everywhere, so two writes on the
 // same purchase can never deadlock), and returns both.
 async function lockPurchaseAndReturn(client, { return_uuid, zodu_id, branch_id }) {
@@ -160,13 +167,14 @@ async function lockPurchaseAndReturn(client, { return_uuid, zodu_id, branch_id }
 async function createPurchaseReturn(dto) {
   const {
     original_purchase_id, zodu_id, branch_id, return_type = "PURCHASE_RETURN", return_reason,
-    refund_type, refund_payment, notes, created_by, items,
+    refund_type, refund_payment, notes, created_by, items,return_date
   } = dto;
 
   return inTransaction(async (client) => {
     const purchase = await repo.findPurchaseForUpdate(client, original_purchase_id, zodu_id, branch_id);
     if (!purchase) throw NotFoundError("Original purchase not found");
     if (purchase.cancelled_purchase) throw ValidationError("This purchase is cancelled");
+    assertReturnDateNotBeforePurchase(return_date, purchase);
 
     const [purchaseItems, returnedRows] = await Promise.all([
       repo.findPurchaseItems(client, original_purchase_id, zodu_id, branch_id),
@@ -194,7 +202,7 @@ async function createPurchaseReturn(dto) {
       subtotal, total_tax: totalTax, return_amount: total,
       adjusted_amount: adjustedAmount, refund_due: refundDue,
       refunded_amount: refundNow, refund_status: refundStatus,
-      created_by,
+      created_by,return_date: return_date
     });
 
     await repo.insertItems(client, row.return_uuid, lines);
@@ -245,11 +253,12 @@ async function createPurchaseReturn(dto) {
 // received stay recorded even if the return shrinks below them; the difference
 // shows up as `excess_refund`.
 async function updatePurchaseReturn(dto) {
-  const { return_uuid, zodu_id, branch_id, return_type, return_reason, refund_type, notes, items } = dto;
+  const { return_uuid, zodu_id, branch_id, return_type, return_reason, refund_type, notes, items,return_date } = dto;
 
   return inTransaction(async (client) => {
     const { purchase, ret } = await lockPurchaseAndReturn(client, { return_uuid, zodu_id, branch_id });
     const purchaseId = purchase.purchase_id;
+    assertReturnDateNotBeforePurchase(return_date, purchase);
 
     const [purchaseItems, otherReturnedRows, oldItems] = await Promise.all([
       repo.findPurchaseItems(client, purchaseId, zodu_id, branch_id),
@@ -267,7 +276,7 @@ async function updatePurchaseReturn(dto) {
     const refundStatus = refundStatusFor(refundDue, refunded);
 
     await repo.updateReturn(client, {
-      return_uuid, return_type, return_reason, notes, refund_type,
+      return_uuid, return_type, return_reason, notes, refund_type, return_date,
       subtotal, total_tax: totalTax, return_amount: total,
       adjusted_amount: adjustedAmount, refund_due: refundDue, refund_status: refundStatus,
     });
@@ -320,6 +329,11 @@ async function recordRefund(dto) {
     if (outstanding <= 0) throw ValidationError("No refund is pending for this return");
     if (refund_amount > outstanding) {
       throw ValidationError(`Refund amount exceeds the pending refund of ${outstanding.toFixed(2)}`);
+    }
+
+    // refund_date is a YYYY-MM-DD string (Joi .raw()), so a string compare is a date compare.
+    if (refund_date && ret.return_date_iso && String(refund_date).slice(0, 10) < ret.return_date_iso) {
+      throw ValidationError(`Refund date cannot be before the return date (${ret.return_date_iso})`);
     }
 
     const payment = await repo.insertRefund(client, {
