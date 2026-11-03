@@ -8,6 +8,7 @@
 //   POST /internal/delete   { file_ids } | { module, entity_id }   soft delete
 //   POST /internal/claim    { file_ids, module, entity_id, category? }   staged uploads → the record
 //   POST /internal/discard  { file_ids }                    drop staged uploads nobody claimed
+//   POST /internal/sign-links  { urls }                     stored /files/v/:id and old file URLs → expiring links
 //
 // X-Zodu-Id may be absent only for module=uploads (the old anonymous /upload routes).
 
@@ -18,7 +19,7 @@ const { acceptFiles } = require('../middleware/upload');
 const { getModule } = require('../storage/modules');
 const STATUS_CODES = require('../utils/error/status-codes');
 
-function createInternalRouter({ files, requireInternal, limits, uploadSlots }) {
+function createInternalRouter({ files, links, requireInternal, limits, uploadSlots }) {
   const router = express.Router();
   router.use(requireInternal);
 
@@ -62,6 +63,13 @@ function createInternalRouter({ files, requireInternal, limits, uploadSlots }) {
     const { file_ids } = validate(schema.batchUrlsBody, req.body || {});
     const rows = await files.getAuthorisedFiles(req.ctx, file_ids);
     res.json({ success: true, data: await files.urlsFor(req.ctx, rows, 'resolve', { presignStreamOnly: true }) });
+  });
+
+  // [{ url, signed }] for each signable URL among `urls`; anything else is left out.
+  router.post('/sign-links', express.json({ limit: '256kb' }), async (req, res) => {
+    const { urls } = validate(schema.signLinksBody, req.body || {});
+    const data = urls.map((url) => ({ url, signed: links.sign(url) })).filter((u) => u.signed);
+    res.json({ success: true, data });
   });
 
   router.post('/claim', express.json({ limit: '16kb' }), async (req, res) => {

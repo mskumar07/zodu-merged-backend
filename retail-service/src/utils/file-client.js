@@ -26,7 +26,7 @@ const TIMEOUT_MS = 30_000;
 const FILE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const UUID_RE = '([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})';
 // The URL forms file-service hands out, each naming the file_id:
-//   .../files/v/<id>             stable link (link modules, staged uploads)
+//   .../files/v/<id>[?exp=&sig=]  link modules, staged uploads (signed in responses)
 //   .../files/<id>/content       authorised stream
 //   .../<key path>/<id>.<ext>?X-Amz-…   presigned (objects are named after their file_id)
 const FILE_URLS = [
@@ -35,6 +35,27 @@ const FILE_URLS = [
   new RegExp(`/${UUID_RE}\\.[a-z0-9]{2,5}\\?(?=.*X-Amz-Signature=)`, 'i'),
 ];
 const URL_KEYS = ['url', 'fileUrl', 'file_url'];
+// Stored URLs that work only signed (?exp=&sig=, expiring): /files/v/<id>
+// (logo, invoice images, menu photos, staged uploads) and old URLs from before
+// file-service (<origin>/<service>/file/<key>). Responses carry them signed;
+// file-service refuses them unsigned.
+const SIGNED_URLS = [
+  new RegExp(`^https?://[^/?#]+/files/v/${UUID_RE}(?:\\?[^#]*)?$`, 'i'),
+  /^https?:\/\/[^/?#]+\/(?:auth|employee|restaurant|retail|checklist)\/file\/[^?#]+(?:\?[^#]*)?$/i,
+];
+const isSignableUrl = (v) => typeof v === 'string' && v.length <= 2048 && SIGNED_URLS.some((re) => re.test(v));
+
+// A request body with the signatures taken off those URLs, so a record saved
+// from a response stores the plain URL it always had.
+function unsignLinks(value, depth = 0) {
+  if (typeof value === 'string') return isSignableUrl(value) ? value.split('?')[0] : value;
+  if (!value || typeof value !== 'object' || depth > 12 || Buffer.isBuffer(value)) return value;
+  if (Array.isArray(value)) return value.map((v) => unsignLinks(v, depth + 1));
+  if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) return value;
+  const out = {};
+  for (const [k, v] of Object.entries(value)) out[k] = unsignLinks(v, depth + 1);
+  return out;
+}
 
 class FileServiceError extends Error {
   constructor(status, message, details) {
@@ -91,9 +112,15 @@ async function upload(ctx, { module, entityId, category, files }) {
 // staging area until the record claims them. No tenant needed.
 const stage = (ctx, files) => upload(ctx, { module: 'uploads', files });
 
-const claim = (ctx, { module, entityId, category, fileIds }) => (fileIds.length
-  ? call('/internal/claim', { ctx, json: { module, entity_id: String(entityId), file_ids: fileIds, ...(category && { category }) } })
-  : []);
+// entityId: the saved record's id. Claim after the record has one (ids the
+// database generates exist only after the INSERT), never "undefined".
+const claim = (ctx, { module, entityId, category, fileIds }) => {
+  if (!fileIds.length) return [];
+  if (entityId == null || entityId === '') {
+    return Promise.reject(new FileServiceError(400, `No record id to file the ${module} files under`));
+  }
+  return call('/internal/claim', { ctx, json: { module, entity_id: String(entityId), file_ids: fileIds, ...(category && { category }) } });
+};
 
 // → Map(file_id → url). Unknown, foreign and deleted ids are missing.
 async function resolve(ctx, fileIds) {
@@ -102,6 +129,18 @@ async function resolve(ctx, fileIds) {
   for (let i = 0; i < ids.length; i += 100) {
     for (const f of await call('/internal/resolve', { ctx, json: { file_ids: ids.slice(i, i + 100) } })) {
       map.set(f.file_id, f.url);
+    }
+  }
+  return map;
+}
+
+// → Map(stored URL → signed URL). Other URLs are missing.
+async function signLinks(ctx, urls) {
+  const list = [...new Set(urls.filter(isSignableUrl))];
+  const map = new Map();
+  for (let i = 0; i < list.length; i += 100) {
+    for (const u of await call('/internal/sign-links', { ctx, json: { urls: list.slice(i, i + 100) } })) {
+      map.set(u.url, u.signed);
     }
   }
   return map;
@@ -157,7 +196,7 @@ function refOf(entry) {
 
 // Before saving a record: claim every uploaded file in `entries` into the
 // record and return the entries to store. Old URLs (not file-service links)
-// are kept as they are; links to files that can't be claimed (another tenant's,
+// are kept, without their response signature; links to files that can't be claimed (another tenant's,
 // another record's, deleted) are dropped.
 async function toRefs(ctx, entries, { module, entityId, category }) {
   if (entries == null) return entries;
@@ -170,7 +209,7 @@ async function toRefs(ctx, entries, { module, entityId, category }) {
   const out = [];
   list.forEach((entry, i) => {
     const { id, urlKey } = refs[i];
-    if (!id) { out.push(entry); return; }
+    if (!id) { out.push(unsignLinks(entry)); return; }
     if (!claimed.has(id)) return;
     if (typeof entry === 'string' || entry.as_string) {
       out.push({ file_id: id, file_ctx: fileCtx(ctx), as_string: true });
@@ -205,14 +244,18 @@ const refIds = (entries) => (Array.isArray(entries) ? entries : [])
 // ── responses ──────────────────────────────────────────────────────────────
 const isRef = (v) => v && typeof v === 'object' && !Array.isArray(v) && isFileId(v.file_id) && typeof v.file_ctx === 'string';
 
-function collect(value, found, depth = 0) {
+// found: file refs; links (optional Set): signable URLs, wherever they appear.
+function collect(value, found, depth = 0, links = null) {
+  if (links && isSignableUrl(value)) { links.add(value); return; }
   if (!value || typeof value !== 'object' || depth > 12) return;
   if (isRef(value)) { found.push(value); return; }
   if (value instanceof Date || Buffer.isBuffer(value)) return;
-  for (const v of Array.isArray(value) ? value : Object.values(value)) collect(v, found, depth + 1);
+  for (const v of Array.isArray(value) ? value : Object.values(value)) collect(v, found, depth + 1, links);
 }
 
-function rebuild(value, urls, depth = 0) {
+// Signable URLs without a signed form (file-service unreachable) stay as they are.
+function rebuild(value, urls, depth = 0, signed = null) {
+  if (signed && typeof value === 'string') return signed.get(value) ?? value;
   if (!value || typeof value !== 'object' || depth > 12 || value instanceof Date || Buffer.isBuffer(value)) return value;
   if (isRef(value)) {
     const url = urls.get(value.file_id) ?? null;
@@ -220,19 +263,27 @@ function rebuild(value, urls, depth = 0) {
     const { file_ctx: _c, url_key: key, as_string: _s, ...rest } = value;
     return { ...rest, [key || 'url']: url };
   }
-  if (Array.isArray(value)) return value.map((v) => rebuild(v, urls, depth + 1));
+  if (Array.isArray(value)) return value.map((v) => rebuild(v, urls, depth + 1, signed));
   if (typeof value.toJSON === 'function') return value;
   const out = {};
-  for (const [k, v] of Object.entries(value)) out[k] = rebuild(v, urls, depth + 1);
+  for (const [k, v] of Object.entries(value)) out[k] = rebuild(v, urls, depth + 1, signed);
   return out;
 }
 
 // Replaces every file ref in `value` with a fresh URL (one resolve call per
-// company/branch). Refs that can't be resolved get url null.
+// company/branch), and signs every stored /files/v or old file URL. Refs that
+// can't be resolved get url null.
 async function fileUrls(value, ctxExtra = {}) {
   const found = [];
-  collect(value, found);
-  if (!found.length) return value;
+  const links = new Set();
+  collect(value, found, 0, links);
+  if (!found.length && !links.size) return value;
+  const signing = links.size
+    ? signLinks(ctxExtra, [...links]).catch((err) => {
+      console.warn('[file-service] could not sign file links:', err.message);
+      return new Map();
+    })
+    : null;
   const groups = new Map();
   for (const ref of found) {
     if (!groups.has(ref.file_ctx)) groups.set(ref.file_ctx, []);
@@ -243,19 +294,24 @@ async function fileUrls(value, ctxExtra = {}) {
     const [zoduId, branchId] = scope.split('/');
     for (const [id, url] of await resolve({ ...ctxExtra, zoduId, branchId: branchId || null }, ids)) urls.set(id, url);
   }));
-  return rebuild(value, urls);
+  return rebuild(value, urls, 0, signing && await signing);
 }
 
 // Express middleware: every JSON response goes through fileUrls(), so all read
 // paths (lists, details, reports) answer with fresh URLs without each query
 // knowing about file-service. If file-service is down the refs come back with
 // url null instead of failing the whole response.
+//
+// /files/v and old file URLs: signed in responses, and unsigned again in parsed
+// request bodies (multipart fields go through toRefs, or are re-signed when read).
 function fileUrlsMiddleware(req, res, next) {
+  if (req.body && typeof req.body === 'object') req.body = unsignLinks(req.body);
   const json = res.json.bind(res);
   res.json = (body) => {
     const found = [];
-    collect(body, found);
-    if (!found.length) return json(body);
+    const links = new Set();
+    collect(body, found, 0, links);
+    if (!found.length && !links.size) return json(body);
     fileUrls(body, { clientIp: req.ip })
       .then(json, (err) => {
         console.warn('[file-service] could not resolve file URLs:', err.message);
@@ -278,6 +334,6 @@ function requestCtx(req, { zoduId, branchId, userId } = {}) {
 
 module.exports = {
   FileServiceError,
-  upload, stage, claim, claimUrl, resolve, remove, removeEntity, discard, quietly,
-  toRefs, refIds, ref, ctxOfRef, fileUrls, fileUrlsMiddleware, fileIdFromUrl, isFileId, requestCtx,
+  upload, stage, claim, claimUrl, resolve, signLinks, remove, removeEntity, discard, quietly,
+  toRefs, refIds, ref, ctxOfRef, fileUrls, fileUrlsMiddleware, fileIdFromUrl, isFileId, isSignableUrl, unsignLinks, requestCtx,
 };

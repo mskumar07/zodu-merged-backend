@@ -165,6 +165,7 @@ function makeApp(overrides = {}) {
     CORS_ORIGINS: [],
     TRUST_PROXY: false,
     LEGACY_BUCKET_NAME: 'zodu',
+    FILE_LINK_SECRET: 'l'.repeat(40),
     ...overrides.config,
   };
   const app = createApp({

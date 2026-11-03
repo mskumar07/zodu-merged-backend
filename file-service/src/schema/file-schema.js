@@ -30,6 +30,10 @@ exports.batchUrlsBody = Joi.object({
   file_ids: fileIds,
 });
 
+exports.signLinksBody = Joi.object({
+  urls: Joi.array().items(Joi.string().max(2048)).min(1).max(100).required(),
+});
+
 // Internal routes: the module and record come from the query, the user context from headers.
 exports.internalTarget = Joi.object({
   module: moduleName,

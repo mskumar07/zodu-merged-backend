@@ -91,9 +91,11 @@ function createRequireInternal(tokens) {
     const branchId = req.get('X-Branch-Id') || null;
     const userId = req.get('X-User-Id') || null;
     const clientIp = req.get('X-Client-Ip') || null;
-    // Anonymous staging: uploading to the staging area and discarding unclaimed staged files.
-    const staging = (req.path === '/upload' && req.query.module === 'uploads') || req.path === '/discard';
-    if (zoduId ? !SAFE_ID.test(zoduId) : !staging) return next(ValidationError('X-Zodu-Id header is required'));
+    // No tenant: uploading to the staging area, discarding unclaimed staged
+    // files, and signing stored file URLs (the signature only proves we issued it).
+    const untenanted = (req.path === '/upload' && req.query.module === 'uploads') || req.path === '/discard'
+      || req.path === '/sign-links';
+    if (zoduId ? !SAFE_ID.test(zoduId) : !untenanted) return next(ValidationError('X-Zodu-Id header is required'));
     if (branchId && !BRANCH_ID.test(branchId)) return next(ValidationError('Invalid X-Branch-Id header'));
     if (userId && !/^[A-Za-z0-9_.:@-]{1,100}$/.test(userId)) return next(ValidationError('Invalid X-User-Id header'));
     if (clientIp && !/^[0-9A-Fa-f:.]{2,45}$/.test(clientIp)) return next(ValidationError('Invalid X-Client-Ip header'));

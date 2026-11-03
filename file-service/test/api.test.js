@@ -72,14 +72,12 @@ test('branch module with a token without a branch is 400; tenant module goes to 
   assert.match(row.object_key, /^Z001\/_shared\/branding\/E1\/logo\/[0-9a-f-]{36}\.png$/);   // logos keep their format (printed on invoices)
 });
 
-test('key layout, date folders, UUID names; original name only as metadata', async () => {
+test('key layout: record folder, UUID names; original name only as metadata', async () => {
   const { app, repo, storage } = makeApp();
   const res = await upload(app, { module: 'expense', entity: 'EXP1001', files: [[PNG, '../../bill "march".png']] });
   assert.equal(res.status, 201);
   const row = repo.rows.get(res.body.data[0].file_id);
-  const now = new Date();
-  const ym = `${now.getUTCFullYear()}/${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
-  assert.match(row.object_key, new RegExp(`^Z001/B1/expense/EXP1001/${ym}/[0-9a-f-]{36}\\.png$`));
+  assert.match(row.object_key, new RegExp(`^Z001/B1/expense/EXP1001/[0-9a-f-]{36}\\.png$`));
   assert.equal(row.original_name, 'bill march.png');
   assert.equal(row.uploaded_by, USERS.admin);
   assert.match(storage.objects.get(row.object_key).meta['Content-Disposition'], /^inline; filename="bill march.png"/);
@@ -396,8 +394,8 @@ test('batch URLs: max 100, foreign / missing / malformed ids left out', async ()
     .send({ file_ids: [mine, foreign, menu, '00000000-0000-4000-8000-000000000000', 'nope'] });
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.data.map((d) => d.file_id), [mine, menu]);
-  assert.equal(res.body.data[1].url, `https://api.test/files/v/${menu}`);
-  assert.equal(res.body.data[1].expires_in_seconds, null);
+  assert.match(res.body.data[1].url, new RegExp(`^https://api\\.test/files/v/${menu}\\?exp=\\d+&sig=`));
+  assert.equal(res.body.data[1].expires_in_seconds, 900);
   const tooMany = await request(app).post('/urls').set(asAdmin()).send({ file_ids: Array(101).fill(mine) });
   assert.equal(tooMany.status, 400);
 });
@@ -423,15 +421,20 @@ test('content stream: headers per type, sandboxed except PDF, logged', async () 
   assert.deepEqual(repo.log.map((l) => l.action), ['content', 'content', 'content']);
 });
 
-test('/v/:id serves link modules with a long cache and 404s private ones', async () => {
+test('/v/:id serves link modules only with a valid signature, and 404s private ones', async () => {
   const { app } = makeApp();
   const menu = await seed(app, { module: 'menu-items' });
   const expense = await seed(app);
-  const ok = await request(app).get(`/v/${menu}`);
+  const [{ url }] = (await request(app).post('/urls').set(asAdmin()).send({ file_ids: [menu] })).body.data;
+  const q = new URL(url).search;
+  const ok = await request(app).get(`/v/${menu}${q}`);
   assert.equal(ok.status, 200);
-  assert.equal(ok.headers['cache-control'], 'public, max-age=31536000, immutable');
+  assert.match(ok.headers['cache-control'], /^private, max-age=\d+$/);
   assert.equal(ok.headers['cross-origin-resource-policy'], 'cross-origin');
   assert.equal(ok.headers['content-type'], 'image/webp');
+  assert.equal((await request(app).get(`/v/${menu}`)).status, 404, 'unsigned');
+  assert.equal((await request(app).get(`/v/${menu}?exp=9999999999&sig=x`)).status, 404, 'forged');
+  assert.equal((await request(app).get(`/v/${expense}${q}`)).status, 404, 'another file');
   assert.equal((await request(app).get(`/v/${expense}`)).status, 404);
   assert.equal((await request(app).get('/v/not-a-uuid')).status, 404);
   assert.equal((await request(app).get('/v/00000000-0000-4000-8000-000000000000')).status, 404);

@@ -82,17 +82,45 @@ test('fileUrlsMiddleware answers with the old shapes and fresh URLs', async () =
     }],
   }));
   app.get('/plain', (_req, res) => res.json({ a: 1 }));
+  app.get('/old', (_req, res) => res.json({ item: { image_url: 'http://localhost:5001/restaurant/file/1712-tea.webp', other: 'https://cdn.test/a.png' } }));
+  app.get('/logo', (_req, res) => res.json({ company_logo_url: `http://localhost:5001/files/v/${f.file_id}` }));
 
   const res = await request(app).get('/x');
   const row = res.body.data[0];
   assert.match(row.attachment_url[0].file_url, /X-Amz-Expires=900/);
   assert.equal(row.attachment_url[0].file_id, f.file_id);
   assert.equal(row.attachment_url[0].file_ctx, undefined);
-  assert.equal(row.attachment_url[1], 'https://api.myzodu.com/checklist/file/old.pdf');
+  // old URLs go out signed (same URL plus an expiring signature)
+  assert.match(row.attachment_url[1], /^https:\/\/api\.myzodu\.com\/checklist\/file\/old\.pdf\?exp=\d+&sig=[\w-]{43}$/);
   assert.match(row.photo, /X-Amz-Expires=900/);
   assert.equal(row.gone.url, null);
   assert.equal(row.created_at, '2026-01-01T00:00:00.000Z');
   assert.deepEqual((await request(app).get('/plain')).body, { a: 1 });
+  const old = (await request(app).get('/old')).body.item;
+  assert.match(old.image_url, /^http:\/\/localhost:5001\/restaurant\/file\/1712-tea\.webp\?exp=\d+&sig=/);
+  assert.equal(old.other, 'https://cdn.test/a.png');
+  // a stored /files/v link (logo, invoice images, menu photos) goes out signed too
+  const logo = (await request(app).get('/logo')).body.company_logo_url;
+  assert.match(logo, new RegExp(`^http://localhost:5001/files/v/${f.file_id}\\?exp=\\d+&sig=[\\w-]{43}$`));
+});
+
+test('request bodies lose the signature on /files/v and old URLs, nothing else changes', async () => {
+  const app = express();
+  app.use(express.json());
+  app.use(client.fileUrlsMiddleware);
+  // what the route sees (sent as text: a JSON response would be signed again)
+  app.post('/save', (req, res) => res.type('text').send(JSON.stringify(req.body)));
+  const body = {
+    item: { image_url: 'https://api.myzodu.com/restaurant/file/1712-tea.webp?exp=1793639700&sig=abc', price: 10 },
+    list: ['http://localhost:5001/auth/file/logo.png?exp=1&sig=x', 'https://cdn.test/a.png?v=2', null],
+    company_logo_url: 'http://localhost:5001/files/v/0b6a3f1e-0000-4000-8000-000000000000?exp=1&sig=y',
+  };
+  const res = await request(app).post('/save').send(body);
+  assert.deepEqual(JSON.parse(res.text), {
+    item: { image_url: 'https://api.myzodu.com/restaurant/file/1712-tea.webp', price: 10 },
+    list: ['http://localhost:5001/auth/file/logo.png', 'https://cdn.test/a.png?v=2', null],
+    company_logo_url: 'http://localhost:5001/files/v/0b6a3f1e-0000-4000-8000-000000000000',
+  });
 });
 
 test('file-service down: refs come back with url null, the response still succeeds', async () => {
@@ -106,8 +134,10 @@ test('file-service down: refs come back with url null, the response still succee
   const app = express();
   app.use(down.fileUrlsMiddleware);
   app.get('/x', (_req, res) => res.json({ a: [{ file_id: '00000000-0000-4000-8000-000000000000', file_ctx: 'Z001/B1', url_key: 'url', n: 1 }] }));
+  app.get('/old', (_req, res) => res.json({ logo: 'https://api.myzodu.com/auth/file/logo.png' }));
   const res = await request(app).get('/x');
   assert.equal(res.status, 200);
   assert.deepEqual(res.body, { a: [{ file_id: '00000000-0000-4000-8000-000000000000', n: 1, url: null }] });
+  assert.deepEqual((await request(app).get('/old')).body, { logo: 'https://api.myzodu.com/auth/file/logo.png' });
   await assert.rejects(down.stage({}, [multerFile(PNG, 'a.png', 'image/png')]), { status: 503 });
 });

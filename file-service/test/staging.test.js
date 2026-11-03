@@ -5,6 +5,10 @@ const request = require('supertest');
 const {
   makeApp, token, USERS, INTERNAL_TOKEN, PNG, pdf,
 } = require('./helpers');
+const { createSignedLinks } = require('../src/storage/signed-links');
+
+// The /v/ path (with its ?exp=&sig=) of a signed https://api.test/files/v/<id> URL.
+const vPath = (url) => new URL(url).pathname.replace(/^\/files/, '') + new URL(url).search;
 
 const svc = (extra = {}) => ({ 'X-Internal-Token': INTERNAL_TOKEN, 'X-Client-Ip': '203.0.113.9', ...extra });
 const tenant = (branch = 'B1') => svc({ 'X-Zodu-Id': 'Z001', 'X-Branch-Id': branch, 'X-User-Id': USERS.admin });
@@ -19,14 +23,15 @@ async function stage(app, headers = svc(), files = [[PNG, 'bill.png']]) {
 
 const claim = (app, body, headers = tenant()) => request(app).post('/internal/claim').set(headers).send(body);
 
-test('anonymous staged upload: under _staging, served as a stable link', async () => {
+test('anonymous staged upload: under _staging, served by its signed link', async () => {
   const { app, repo } = makeApp();
   const [f] = await stage(app);
   const row = repo.rows.get(f.file_id);
   assert.match(row.object_key, /^_staging\/uploads\/anon\/\d{4}\/\d{2}\/[0-9a-f-]{36}\.png$/);   // keeps its format until claimed
   assert.equal(row.zodu_id, '_staging');
-  assert.equal(f.url, `https://api.test/files/v/${f.file_id}`);
-  assert.equal((await request(app).get(`/v/${f.file_id}`)).status, 200);
+  assert.match(f.url, new RegExp(`^https://api\\.test/files/v/${f.file_id}\\?exp=\\d+&sig=[\\w-]{43}$`));
+  assert.equal((await request(app).get(vPath(f.url))).status, 200);
+  assert.equal((await request(app).get(`/v/${f.file_id}`)).status, 404, 'not without the signature');
 });
 
 test('staging needs no tenant, every other internal call does', async () => {
@@ -54,7 +59,7 @@ test('claim into a private module: new key, same id, link stops working, URL is 
   assert.match(res.body.data[0].url, /X-Amz-Expires=900/);
 
   const row = repo.rows.get(f.file_id);
-  assert.match(row.object_key, /^Z001\/B1\/expense\/EXP12\/\d{4}\/\d{2}\/[0-9a-f-]{36}\.pdf$/);
+  assert.match(row.object_key, /^Z001\/B1\/expense\/EXP12\/[0-9a-f-]{36}\.pdf$/);
   assert.deepEqual([row.zodu_id, row.branch_id, row.module, row.entity_id], ['Z001', 'B1', 'expense', 'EXP12']);
   assert.equal(storage.objects.has(before), false);
   assert.equal(storage.objects.has(row.object_key), true);
@@ -65,20 +70,20 @@ test('claim into a link module keeps the same stable URL', async () => {
   const { app } = makeApp();
   const [f] = await stage(app);
   const res = await claim(app, { file_ids: [f.file_id], module: 'menu-items', entity_id: 'M1' });
-  assert.equal(res.body.data[0].url, f.url);
-  assert.equal((await request(app).get(`/v/${f.file_id}`)).status, 200);
+  assert.equal(res.body.data[0].url.split('?')[0], f.url.split('?')[0]);
+  assert.equal((await request(app).get(vPath(res.body.data[0].url))).status, 200);
 });
 
 test('claim into menu-items converts the staged picture to webp; other modules keep it', async () => {
   const { app, repo, storage } = makeApp();
   const [f] = await stage(app);
-  await claim(app, { file_ids: [f.file_id], module: 'menu-items', entity_id: 'M1' });
+  const claimed = await claim(app, { file_ids: [f.file_id], module: 'menu-items', entity_id: 'M1' });
   const row = repo.rows.get(f.file_id);
   assert.equal(row.mime_type, 'image/webp');
   assert.equal(row.original_name, 'bill.webp');
   assert.match(row.object_key, /\.webp$/);
   assert.equal(row.size_bytes, storage.objects.get(row.object_key).buffer.length);
-  const served = await request(app).get(`/v/${f.file_id}`);
+  const served = await request(app).get(vPath(claimed.body.data[0].url));
   assert.equal(served.status, 200);
   assert.equal(served.headers['content-type'], 'image/webp');
 
@@ -154,31 +159,36 @@ test('staged uploads from one address share the per-user upload limit', async ()
   assert.equal(other.status, 201);
 });
 
-test('legacy URLs stream from the old bucket with long caching and 304s', async () => {
+test('signed legacy URLs stream from the old bucket with private caching and 304s', async () => {
   const { app, storage } = makeApp();
   storage.internal.legacy.set('1712-menu.webp', { buffer: Buffer.from('RIFF....WEBP') });
   storage.internal.legacy.set('checklist-attachments/abc/17-report final.pdf', { buffer: pdf() });
   storage.internal.legacy.set('evil.html', { buffer: Buffer.from('<script>alert(1)</script>') });
+  // what the services' responses carry: the stored URL plus ?exp=&sig=
+  const links = createSignedLinks({ secret: 'l'.repeat(40), ttlSeconds: 900 });
+  const signed = (path) => `/legacy/${path}?${links.sign(`https://api.test/restaurant/file/${path}`).split('?')[1]}`;
 
-  const img = await request(app).get('/legacy/1712-menu.webp');
+  assert.equal((await request(app).get('/legacy/1712-menu.webp')).status, 404);
+
+  const img = await request(app).get(signed('1712-menu.webp'));
   assert.equal(img.status, 200);
   assert.equal(img.headers['content-type'], 'image/webp');
-  assert.equal(img.headers['cache-control'], 'public, max-age=31536000, immutable');
+  assert.match(img.headers['cache-control'], /^private, max-age=\d+$/);
   assert.equal(img.headers.etag, '"etag-1"');
   assert.match(img.headers['content-disposition'], /^inline;/);
 
-  const again = await request(app).get('/legacy/1712-menu.webp').set('If-None-Match', '"etag-1"');
+  const again = await request(app).get(signed('1712-menu.webp')).set('If-None-Match', '"etag-1"');
   assert.equal(again.status, 304);
 
-  const nested = await request(app).get('/legacy/checklist-attachments/abc/17-report%20final.pdf');
+  const nested = await request(app).get(signed('checklist-attachments/abc/17-report%20final.pdf'));
   assert.equal(nested.status, 200);
   assert.match(nested.headers['content-disposition'], /filename="17-report final.pdf"/);
 
-  const html = await request(app).get('/legacy/evil.html');
+  const html = await request(app).get(signed('evil.html'));
   assert.equal(html.headers['content-type'], 'application/octet-stream');
   assert.match(html.headers['content-disposition'], /^attachment;/);
   assert.equal(html.headers['content-security-policy'], "default-src 'none'; sandbox");
 
-  assert.equal((await request(app).get('/legacy/missing.png')).status, 404);
+  assert.equal((await request(app).get(signed('missing.png'))).status, 404);
   assert.equal((await request(app).get('/legacy/a/../b.png')).status, 404);
 });

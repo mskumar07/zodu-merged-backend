@@ -7,8 +7,19 @@ const ctx = { zoduId: 'Z001', branchId: 'B1' };
 const UUID = '[0-9a-f-]{36}';
 
 test('branch module key: zodu → branch → module → record → uuid', () => {
+  const key = buildKey({ ...ctx, module: 'expense', entityId: 'EXP-B1-001', mimeType: 'image/png' });
+  assert.match(key, new RegExp(`^Z001/B1/expense/EXP-B1-001/${UUID}\\.png$`));
+});
+
+test('menu-items: images directly in the module folder, no folder per item', () => {
   const key = buildKey({ ...ctx, module: 'menu-items', entityId: 'M1', mimeType: 'image/png' });
-  assert.match(key, new RegExp(`^Z001/B1/menu-items/M1/${UUID}\\.png$`));
+  assert.match(key, new RegExp(`^Z001/B1/menu-items/${UUID}\\.png$`));
+});
+
+test('a missing record id ("undefined" / "null") is refused, not used as a folder', () => {
+  for (const entityId of ['undefined', 'null', 'UNDEFINED', undefined, '']) {
+    assert.throws(() => buildKey({ ...ctx, module: 'purchase', entityId, mimeType: 'image/png' }), (e) => e.status === 400);
+  }
 });
 
 test('two uploads for the same record share the folder but never the file name', () => {
@@ -23,7 +34,7 @@ test('tenant-scoped module goes to _shared, branch ignored', () => {
   assert.match(key, new RegExp(`^Z001/_shared/branding/LOGO/${UUID}\\.webp$`));
 });
 
-test('category and date partition', () => {
+test('category folders; no date folders for records', () => {
   const now = new Date(Date.UTC(2026, 2, 5));
   assert.match(
     buildKey({ ...ctx, module: 'employee', entityId: 'EMP7', category: 'profile', mimeType: 'image/jpeg' }),
@@ -31,11 +42,11 @@ test('category and date partition', () => {
   );
   assert.match(
     buildKey({ ...ctx, module: 'invoice', entityId: 'INV9', mimeType: 'application/pdf', now }),
-    new RegExp(`^Z001/B1/invoice/INV9/2026/03/${UUID}\\.pdf$`),
+    new RegExp(`^Z001/B1/invoice/INV9/${UUID}\\.pdf$`),
   );
   assert.match(
     buildKey({ ...ctx, module: 'purchase', entityId: 'PUR1', category: 'bill', mimeType: 'application/pdf', now }),
-    new RegExp(`^Z001/B1/purchase/PUR1/bill/2026/03/${UUID}\\.pdf$`),
+    new RegExp(`^Z001/B1/purchase/PUR1/bill/${UUID}\\.pdf$`),
   );
 });
 

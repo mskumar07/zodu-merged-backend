@@ -2,7 +2,8 @@
 // whole folder convention can be unit-tested without a running server.
 //
 // Layout:
-//   {zoduId}/{branchId}/{module}/{entityId}[/{category}][/{yyyy}/{mm}]/{uuid}.{ext}
+//   {zoduId}/{branchId}/{module}/{entityId}[/{category}]/{uuid}.{ext}    e.g. purchase/PUR-B1-001/bill/…
+//   {zoduId}/{branchId}/menu-items/{uuid}.{ext}                          modules without entity folders
 //   {zoduId}/_shared/{module}/{entityId}[/{category}]/{uuid}.{ext}
 //   _staging/uploads/{zoduId|anon}/{yyyy}/{mm}/{uuid}.{ext}     ← not yet claimed by a record
 //
@@ -36,11 +37,15 @@ function scopePrefix({ zoduId, branchId, scope = 'branch' }) {
   return `${zoduId}/${branchId}/`;
 }
 
-// Prefix for one record — deleting this prefix removes all of the record's files.
+// Folder for one record's files (the module folder itself for modules
+// without entity folders). "undefined" / "null" are a missing id turned into
+// text by the caller, never a record.
 function entityPrefix({ zoduId, branchId, module, entityId }) {
   const mod = getModule(module);
   assertSafeId('entityId', entityId);
-  return `${scopePrefix({ zoduId, branchId, scope: mod.scope })}${module}/${entityId}/`;
+  if (/^(undefined|null)$/i.test(String(entityId))) throw httpError(400, 'Invalid entityId: the record id is missing');
+  const base = `${scopePrefix({ zoduId, branchId, scope: mod.scope })}${module}/`;
+  return mod.entityFolder === false ? base : `${base}${entityId}/`;
 }
 
 // fileId: the file's tbl_files id, used as the object name so a key (and a

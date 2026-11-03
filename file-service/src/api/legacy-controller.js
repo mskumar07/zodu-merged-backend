@@ -3,9 +3,11 @@
 // gateway sends /auth|employee|restaurant|retail|checklist/file/* here, so the
 // services no longer need MinIO credentials. Read-only, from the old bucket.
 //
-// Same exposure as the old unauthenticated /file/:name routes, with their
-// caching (a key never changes once written: one-year immutable cache, ETag,
-// 304 on revalidation), plus nosniff / sandbox headers they lacked.
+// Only with a valid ?exp=&sig= (storage/signed-links.js): API responses carry
+// these URLs signed, so a bare or expired link is a 404 like an unknown key.
+// allowUnsigned (FILE_LINKS_UNSIGNED=true) reopens the old public access for
+// a rollout. Cached privately until the link expires (ETag, 304 on revalidation),
+// with nosniff / sandbox headers.
 //
 // Phase 3 replaces this with tbl_files.legacy_url lookups and the link/private
 // rules, once the objects are migrated into the new bucket.
@@ -20,12 +22,14 @@ const INLINE = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'a
 // Never let an old object render as a page in our origin.
 const SCRIPTABLE = /^(text\/html|application\/xhtml|image\/svg|text\/xml|application\/xml|application\/javascript|text\/javascript)/;
 
-function createLegacyRouter({ storage, legacyBucket, limits, frameAncestors = [] }) {
+function createLegacyRouter({ storage, legacyBucket, links, allowUnsigned = false, limits, frameAncestors = [] }) {
   const router = express.Router();
 
   router.get('/*key', limits.publicLinks, async (req, res) => {
     const key = [].concat(req.params.key).join('/');
     if (!key || key.length > 1024 || key.includes('..') || key.startsWith('/')) throw NotFoundError();
+    const validFor = links.checkLegacy(key, req.query);
+    if (!validFor && !allowUnsigned) throw NotFoundError();
 
     let stat;
     try {
@@ -36,7 +40,7 @@ function createLegacyRouter({ storage, legacyBucket, limits, frameAncestors = []
     }
 
     const etag = `"${stat.etag}"`;
-    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.setHeader('Cache-Control', validFor ? `private, max-age=${validFor}` : 'public, max-age=31536000, immutable');
     res.setHeader('ETag', etag);
     res.setHeader('Last-Modified', new Date(stat.lastModified).toUTCString());
     if (req.get('If-None-Match') === etag) return res.status(304).end();

@@ -24,7 +24,7 @@ function createFileRouter({ files, requireUser, limits, uploadSlots }) {
   // ── public stable links ──────────────────────────────────────────────────
   router.get('/v/:fileId', limits.publicLinks, async (req, res) => {
     req.logFields = { fileId: req.params.fileId };
-    await files.streamPublic(req.params.fileId, res);
+    await files.streamPublic(req.params.fileId, res, req.query);
   });
 
   router.use(limits.api, requireUser);

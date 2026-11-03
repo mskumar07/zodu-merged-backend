@@ -12,6 +12,14 @@ function checkConfig() {
   const missing = ['MINIO_ACCESSKEY', 'MINIO_SECRETKEY', 'INTERNAL_TOKEN', 'DB_HOSTNAME']
     .filter((k) => !config[k]);
   if ((config.NODE_ENV === 'production' || config.AUTH_CHECK_REVOKED_SESSIONS) && !config.REDIS_URL) missing.push('REDIS_URL');
+  if (String(config.FILE_LINK_SECRET || '').length < 32) {
+    if (config.NODE_ENV === 'production') missing.push('FILE_LINK_SECRET (32+ characters)');
+    else {
+      // Local only: links stop working when the process restarts.
+      config.FILE_LINK_SECRET = require('crypto').randomBytes(32).toString('hex');
+      logger.warn('FILE_LINK_SECRET not set: using a random one for this process (local use only)');
+    }
+  }
   if (missing.length) throw new Error(`Missing configuration: ${missing.join(', ')}`);
   if (!Object.keys(config.INTERNAL_TOKENS).length) {
     logger.warn('No INTERNAL_TOKEN_<CALLER> configured (min 32 chars): /internal/* will refuse every call');

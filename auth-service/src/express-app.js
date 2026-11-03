@@ -23,6 +23,8 @@ applySecurity(app, {
   trustProxy: process.env.TRUST_PROXY || 'loopback, linklocal, uniquelocal',
 });
 app.use(httpLogger);
+// Old logo / invoice image URLs in responses go out signed (expiring).
+app.use(require('./utils/file-client').fileUrlsMiddleware);
 
 // Public keys for the access tokens (gateway: /auth/.well-known/jwks.json).
 // The other services fetch them over the internal network.

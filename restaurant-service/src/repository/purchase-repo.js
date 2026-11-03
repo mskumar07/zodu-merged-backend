@@ -68,14 +68,14 @@ exports.createPurchase = async (client, data) => {
       data.paid_amount || 0,
       data.payment_status || "pending",
       data.notes || null,
-      data.attachment_url
-        ? JSON.stringify(await attachments.storedAttachments(client, { table: 'tbl_purchase', idColumn: 'purchase_id', id: data.purchase_id, data: data, module: 'purchase' }))
-        : null,
+      null,   // attachments: stored below, once the trigger has set purchase_id
       data.due_date || null,
       data.invoice_bill_no || null,
     ]
   );
-  return rows[0];
+  return attachments.storeAfterInsert(client, {
+    table: 'tbl_purchase', idColumn: 'purchase_id', row: rows[0], attachments: data.attachment_url, module: 'purchase',
+  });
 };
 
 exports.createPurchaseItems = async (client, items, purchase_id, zodu_id) => {

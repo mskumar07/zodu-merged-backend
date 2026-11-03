@@ -7,8 +7,12 @@
 //                  (file-inspector.js), never taken from the browser.
 //   maxSizeMb      per-file size limit
 //   categories     optional sub-folders inside a record (e.g. employee profile vs documents)
-//   datePartition  add yyyy/mm to the path for high-volume modules
-//   access         'link'    → also served by the unauthenticated, cacheable GET /files/v/:fileId
+//   datePartition  add yyyy/mm to the path (the staging area, which is purged by age)
+//   entityFolder   false: files sit directly in the module folder (menu-items); the
+//                  record is still kept in tbl_files.entity_id
+//   access         'link'    → URL is /files/v/:fileId, which the services store. It is
+//                              served without an Authorization header, but only with the
+//                              expiring ?exp=&sig= every response adds (signed-links.js)
 //                  'private' → only through a presigned URL or the authorised stream
 //   streamOnly     private files that never get a presigned URL: only GET /files/:fileId/content
 //   permission     tbl_modules.module_name the caller needs: read to download,
@@ -87,15 +91,15 @@ const MODULES = {
   [STAGING]:          { scope: 'staging', allowedTypes: [...IMAGES, ...DOCS],          maxSizeMb: 10, datePartition: true, access: 'link', internalOnly: true, transform: DOCUMENT },
   'branding':         { scope: 'tenant', allowedTypes: IMAGES,                        maxSizeMb: 5,  categories: ['logo'], access: 'link', permission: PERM.SETTINGS, transform: LOGO },
   'invoice-settings': { scope: 'branch', allowedTypes: [MIME.PNG, MIME.WEBP, MIME.JPEG], maxSizeMb: 5, categories: ['signature', 'watermark', 'receiver-signature'], access: 'link', permission: PERM.SETTINGS },
-  'menu-items':       { scope: 'branch', allowedTypes: IMAGES,                        maxSizeMb: 5,  access: 'link', permission: PERM.MENU, transform: PHOTO },
-  'expense':          { scope: 'branch', allowedTypes: [...IMAGES, ...DOCS],          maxSizeMb: 10, datePartition: true, access: 'private', permission: PERM.EXPENSE, keepOnDelete: true, transform: DOCUMENT },
-  'purchase':         { scope: 'branch', allowedTypes: [...IMAGES, ...DOCS],          maxSizeMb: 10, categories: ['order', 'bill'], datePartition: true, access: 'private', permission: PERM.PURCHASE, keepOnDelete: true, transform: DOCUMENT },
-  'customer-payment': { scope: 'branch', allowedTypes: [...IMAGES, ...PDF],           maxSizeMb: 10, datePartition: true, access: 'private', permission: PERM.CUSTOMER, keepOnDelete: true, transform: DOCUMENT },
+  'menu-items':       { scope: 'branch', allowedTypes: IMAGES,                        maxSizeMb: 5,  entityFolder: false, access: 'link', permission: PERM.MENU, transform: PHOTO },
+  'expense':          { scope: 'branch', allowedTypes: [...IMAGES, ...DOCS],          maxSizeMb: 10, access: 'private', permission: PERM.EXPENSE, keepOnDelete: true, transform: DOCUMENT },
+  'purchase':         { scope: 'branch', allowedTypes: [...IMAGES, ...DOCS],          maxSizeMb: 10, categories: ['order', 'bill'], access: 'private', permission: PERM.PURCHASE, keepOnDelete: true, transform: DOCUMENT },
+  'customer-payment': { scope: 'branch', allowedTypes: [...IMAGES, ...PDF],           maxSizeMb: 10, access: 'private', permission: PERM.CUSTOMER, keepOnDelete: true, transform: DOCUMENT },
   // Aadhaar / PAN: never a presigned URL (it could be forwarded); only the authorised stream.
   'employee':         { scope: 'branch', allowedTypes: [...IMAGES, MIME.PDF, MIME.DOC, MIME.DOCX], maxSizeMb: 10, categories: ['profile', 'documents'], access: 'private', streamOnly: true, permission: PERM.STAFF, transform: DOCUMENT },
-  'checklist':        { scope: 'branch', allowedTypes: [...IMAGES, ...DOCS],          maxSizeMb: 10, categories: ['attachments', 'items'], datePartition: true, access: 'private', permission: PERM.CHECKLIST, transform: DOCUMENT },
-  'invoice':          { scope: 'branch', allowedTypes: PDF,                           maxSizeMb: 10, datePartition: true, access: 'private', permission: PERM.SALES, keepOnDelete: true },
-  'reports':          { scope: 'branch', allowedTypes: [MIME.PDF, MIME.XLSX, MIME.CSV], maxSizeMb: 25, categories: ['gst', 'sales', 'stock', 'purchase', 'expense', 'inventory'], datePartition: true, access: 'private', permission: PERM.REPORTS, keepOnDelete: true },
+  'checklist':        { scope: 'branch', allowedTypes: [...IMAGES, ...DOCS],          maxSizeMb: 10, categories: ['attachments', 'items'], access: 'private', permission: PERM.CHECKLIST, transform: DOCUMENT },
+  'invoice':          { scope: 'branch', allowedTypes: PDF,                           maxSizeMb: 10, access: 'private', permission: PERM.SALES, keepOnDelete: true },
+  'reports':          { scope: 'branch', allowedTypes: [MIME.PDF, MIME.XLSX, MIME.CSV], maxSizeMb: 25, categories: ['gst', 'sales', 'stock', 'purchase', 'expense', 'inventory'], access: 'private', permission: PERM.REPORTS, keepOnDelete: true },
   'documents':        { scope: 'tenant', allowedTypes: [...IMAGES, ...DOCS],          maxSizeMb: 10, access: 'private', permission: PERM.SETTINGS, transform: DOCUMENT },
 };
 

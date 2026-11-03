@@ -43,7 +43,7 @@ for (const shop of ['retail', 'restaurant']) {
 
     const one = await service.uploadImg(mf(PNG, 'bill.png', 'image/png'), { clientIp: '203.0.113.5' });
     assert.equal(one.success, true);
-    assert.match(one.fileUrl, /\/files\/v\/[0-9a-f-]{36}$/);
+    assert.match(one.fileUrl, /\/files\/v\/[0-9a-f-]{36}\?exp=\d+&sig=[\w-]{43}$/);
     const bad = await service.uploadImg(mf(Buffer.from('<svg/>'), 'x.svg'), {});
     assert.equal(bad.success, false);
 
@@ -76,6 +76,19 @@ for (const shop of ['retail', 'restaurant']) {
     assert.deepEqual([row.zodu_id, row.branch_id, row.module, row.entity_id], ['Z001', 'B1', 'expense', 'EXP_24-25_7']);
     assert.equal((await request(fs.app).get(`/v/${many[0].id}`)).status, 404, 'private after the claim');
 
+    // purchase / expense ids come from a database trigger: the files are claimed
+    // after the INSERT, under the generated id (never purchase/undefined/)
+    const gen = await service.uploadMultiple([mf(PNG, 'gen.png', 'image/png')], {});
+    const genDb = { query: async (_sql, params) => ({ rows: [{ purchase_id: params[1], zodu_id: params[2], branch_id: 'B1', attachment_url: params[0] }] }) };
+    const inserted = { purchase_id: 'PUR-B1-007', zodu_id: 'Z001', branch_id: 'B1', attachment_url: null };
+    const saved = await attachments.storeAfterInsert(genDb, { table: 'tbl_purchase', idColumn: 'purchase_id', row: inserted, attachments: gen, module: 'purchase' });
+    assert.match(fs.repo.rows.get(gen[0].id).object_key, /^Z001\/B1\/purchase\/PUR-B1-007\/[0-9a-f-]{36}\.png$/);
+    assert.equal(JSON.parse(saved.attachment_url)[0].file_id, gen[0].id);
+    const noId = await service.uploadMultiple([mf(PNG, 'noid.png', 'image/png')], {});
+    const kept = await attachments.storedAttachments(db, { table: 'tbl_purchase', idColumn: 'purchase_id', id: undefined, data: { zodu_id: 'Z001', branch_id: 'B1', attachment_url: noId }, module: 'purchase' });
+    assert.deepEqual(kept, noId, 'no id: kept as sent, not claimed');
+    assert.equal(fs.repo.rows.get(noId[0].id).module, 'uploads');
+
     // edit without zodu_id: tenant read from the row; resaving the shown response keeps the files
     const shown = await files.fileUrls(stored);
     assert.match(shown[0].url, /X-Amz-Expires=900/);
@@ -84,6 +97,8 @@ for (const shop of ['retail', 'restaurant']) {
       table: 'tbl_expense', idColumn: 'expense_id', id: 'EXP/24-25/7', data: { attachment_url: shown }, module: 'expense',
     });
     assert.deepEqual(again.map((e) => e.file_id), stored.map((e) => e.file_id));
+    assert.match(shown[2].url, /\?exp=\d+&sig=/);
+    assert.deepEqual(again[2], legacy, 'the old URL is stored without its signature');
     // ambiguous id across companies: left as sent
     const twoRows = { query: async () => ({ rows: [{}, {}] }) };
     const asSent = await attachments.storedAttachments(twoRows, {
@@ -100,7 +115,9 @@ for (const shop of ['retail', 'restaurant']) {
     assert.match(att[0].url, /X-Amz-Expires=900/);
     assert.equal(att[0].filename, 'p0.png');
     assert.equal(att[0].file_ctx, undefined);
-    assert.deepEqual(att[2], legacy);
+    // the old URL goes out signed; saving it back stores it like before (re-signed on every read)
+    assert.equal(att[2].url.split('?')[0], legacy.url);
+    assert.match(att[2].url, /\?exp=\d+&sig=[\w-]{43}$/);
 
     // deleting the record soft-deletes its files, old entries untouched
     await attachments.removeStored(stored);
@@ -112,7 +129,9 @@ for (const shop of ['retail', 'restaurant']) {
     await flush();
     const img = fs.repo.rows.get(files.fileIdFromUrl(one.fileUrl));
     assert.equal(img.module, 'menu-items');
-    assert.equal((await request(fs.app).get(`/v/${img.file_id}`)).status, 200);
+    assert.match(img.object_key, /^Z001\/B1\/menu-items\/[0-9a-f-]{36}\.webp$/, 'no folder per item');
+    assert.equal((await request(fs.app).get(`/v/${img.file_id}${new URL(one.fileUrl).search}`)).status, 200);
+    assert.equal((await request(fs.app).get(`/v/${img.file_id}`)).status, 404, 'not without the signature');
   });
 }
 
@@ -142,7 +161,7 @@ test('employee: document upload stores file_id, responses carry fresh URLs, dele
   // profile_photo_url as the SQL builds it
   const list = await files.fileUrls([{ profile_photo_url: { file_id: docs[1].file_id, file_ctx: 'Z001/B1', as_string: true } }, { profile_photo_url: 'https://old/employee/file/x.webp' }]);
   assert.match(list[0].profile_photo_url, /X-Amz-Expires=900/);
-  assert.equal(list[1].profile_photo_url, 'https://old/employee/file/x.webp');
+  assert.match(list[1].profile_photo_url, /^https:\/\/old\/employee\/file\/x\.webp\?exp=\d+&sig=/);
 
   await assert.rejects(
     service.uploadDocument('EMP1', { zodu_id: 'Z001', branch_id: 'B1', document_type: 'x', file: mf(PNG, 'a.pdf', 'application/pdf') }, 'u', ctx),
@@ -191,7 +210,7 @@ test('checklist: attachments upload, edit keeps stored files, delete removes', a
   assert.ok(files.isFileId(stored[0].file_id));
   assert.equal(fs.repo.rows.get(dropped).status, 'deleted');
 
-  await service.deleteAttachment(id, stored[0].id);
+  await service.deleteAttachment(id, stored[0].id, { zodu_id: 'Z001', branch_id: 'B1' });
   assert.equal(stored.length, 0);
   assert.equal([...fs.repo.rows.values()].filter((r) => r.module === 'checklist' && r.status === 'ready').length, 0);
 });

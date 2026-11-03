@@ -97,6 +97,8 @@ test('old /{service}/file/* URLs go read-only to file-service /legacy', async ()
     '/retail/file/1712-bill.webp': '/legacy/1712-bill.webp',
     '/employee/file/1712-pan.webp': '/legacy/1712-pan.webp',
     '/checklist/file/checklist-attachments/abc/17-a%20b.pdf': '/legacy/checklist-attachments/abc/17-a%20b.pdf',
+    // the expiring signature file-service checks
+    '/restaurant/file/1712-tea.webp?exp=1793639700&sig=ab-_c': '/legacy/1712-tea.webp?exp=1793639700&sig=ab-_c',
   };
   for (const [p, expected] of Object.entries(cases)) {
     const res = await request(app).get(p);

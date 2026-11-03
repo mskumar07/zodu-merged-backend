@@ -106,13 +106,13 @@ exports.createExpense = async (client, data) => {
       totalAmount,
       paidAmount,
       data.notes          || null,
-      data.attachment_url
-        ? JSON.stringify(await attachments.storedAttachments(client, { table: 'tbl_expense', idColumn: 'expense_id', id: data.expense_id, data: data, module: 'expense' }))
-        : null,
+      null,   // attachments: stored below, once the trigger has set expense_id
       data.due_date       || null,
     ]
   );
-  return rows[0];
+  return attachments.storeAfterInsert(client, {
+    table: 'tbl_expense', idColumn: 'expense_id', row: rows[0], attachments: data.attachment_url, module: 'expense',
+  });
 };
 
 exports.createExpenseLineItems = async (client, items, expense_id, category_id, zodu_id) => {

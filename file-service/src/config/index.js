@@ -32,9 +32,14 @@ module.exports = {
   // Old shared bucket, read-only: serves URLs stored before file-service
   // (GET /legacy/*). Empty disables the route.
   LEGACY_BUCKET_NAME: process.env.LEGACY_BUCKET_NAME ?? 'zodu',
+  // Signs /files/v/:id and old /{service}/file/* URLs into expiring links
+  // (storage/signed-links.js). At least 32 characters, the same on every instance.
+  FILE_LINK_SECRET: process.env.FILE_LINK_SECRET,
+  // true: those URLs also work unsigned (public, as before). Only for a rollout.
+  FILE_LINKS_UNSIGNED: process.env.FILE_LINKS_UNSIGNED === 'true',
   PRESIGNED_URL_TTL: int(process.env.PRESIGNED_URL_TTL, 900),
 
-  // Public origin of the gateway; stable /files/v/:fileId links are built on it.
+  // Public origin of the gateway; /files/v/:fileId links are built on it.
   PUBLIC_FILE_BASE_URL: (process.env.PUBLIC_FILE_BASE_URL || 'http://localhost:5001').replace(/\/+$/, ''),
 
   AUTH_SERVICE_URL: process.env.AUTH_SERVICE_URL || 'http://auth-service:4000',

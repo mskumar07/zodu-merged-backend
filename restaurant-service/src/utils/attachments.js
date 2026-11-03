@@ -15,7 +15,8 @@ const files = require('./file-client');
 const { optionalAuth } = require('./access-token');
 
 // file-service ids are [A-Za-z0-9_-]{1,64}; record ids like "PUR/24-25/001" are mapped onto that.
-const entityKey = (id) => String(id).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64);
+// No id → null (the claim is refused), never the text "undefined".
+const entityKey = (id) => (id == null || id === '' ? null : String(id).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64));
 
 // Company/branch of a record. Edit requests may omit them: read the row then,
 // unless the id is not unique on its own (ids are unique per company only).
@@ -39,6 +40,23 @@ async function storedAttachments(db, { table, idColumn, id, data, module }) {
     console.warn(`[file-service] attachments of ${table} ${id} kept as sent:`, err.message);
     return value;
   }
+}
+
+// For records whose id the database generates on INSERT (purchase / expense
+// ids from the trigger): insert without attachments, then call this with the
+// inserted row and the attachments the client sent. Claims the files into
+// <module>/<generated id>/ and stores the refs on the row; returns the row.
+async function storeAfterInsert(db, { table, idColumn, row, attachments: value, module }) {
+  if (!row || !Array.isArray(value) || !value.length) return row;
+  const stored = await storedAttachments(db, {
+    table, idColumn, id: row[idColumn], module,
+    data: { zodu_id: row.zodu_id, branch_id: row.branch_id, attachment_url: value },
+  });
+  const { rows } = await db.query(
+    `UPDATE ${table} SET attachment_url = $1 WHERE ${idColumn} = $2 AND zodu_id = $3 RETURNING *`,
+    [JSON.stringify(stored), row[idColumn], row.zodu_id],
+  );
+  return rows[0] || row;
 }
 
 // After a record is deleted: soft-delete its stored files (accounting files
@@ -67,4 +85,4 @@ async function uploadCtx(req) {
   return files.requestCtx(req, { zoduId: auth?.zoduId, userId: auth?.userId });
 }
 
-module.exports = { storedAttachments, removeStored, claimImage, uploadCtx, entityKey };
+module.exports = { storedAttachments, storeAfterInsert, removeStored, claimImage, uploadCtx, entityKey };

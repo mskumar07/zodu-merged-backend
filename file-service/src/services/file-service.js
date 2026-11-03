@@ -19,9 +19,9 @@ const { fileResponseHeaders } = require('../utils/file-headers');
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isFileId = (v) => typeof v === 'string' && UUID.test(v);
 
-function createFileService({ repo, storage, config }) {
+function createFileService({ repo, storage, config, links }) {
   const { internal, signer, bucket } = storage;
-  const { PRESIGNED_URL_TTL, PUBLIC_FILE_BASE_URL } = config;
+  const { PRESIGNED_URL_TTL, PUBLIC_FILE_BASE_URL, FILE_LINKS_UNSIGNED } = config;
 
   // ── context helpers ──────────────────────────────────────────────────────
   // Branch modules need a branch; tenant modules live in _shared (branch null).
@@ -156,11 +156,13 @@ function createFileService({ repo, storage, config }) {
     });
   }
 
-  const stableUrl = (row) => `${PUBLIC_FILE_BASE_URL}/files/v/${row.file_id}`;
+  // /files/v/:id with an expiring signature. The services store it without
+  // (they strip ?exp=&sig= on save) and sign it again on every response.
+  const stableUrl = (row) => links.sign(`${PUBLIC_FILE_BASE_URL}/files/v/${row.file_id}`);
   const contentUrl = (row) => `${PUBLIC_FILE_BASE_URL}/files/${row.file_id}/content`;
   const isLink = (row) => getModule(row.module).access === 'link';
   const isStreamOnly = (row) => Boolean(getModule(row.module).streamOnly);
-  const expiresIn = (row) => (isLink(row) || isStreamOnly(row) ? null : PRESIGNED_URL_TTL);
+  const expiresIn = (row) => (isStreamOnly(row) ? null : PRESIGNED_URL_TTL);
 
   // 'link' files: their permanent cacheable URL. Stream-only files: the
   // authorised /content URL (needs the Authorization header). Other private
@@ -190,14 +192,14 @@ function createFileService({ repo, storage, config }) {
 
   async function urlsFor(ctx, rows, action, opts = {}) {
     const out = await Promise.all(rows.map(async (row) => {
-      const presigned = !isLink(row) && (!isStreamOnly(row) || Boolean(opts.presignStreamOnly));
+      const expiring = isLink(row) || !isStreamOnly(row) || Boolean(opts.presignStreamOnly);
       return {
         file_id: row.file_id,
         module: row.module,
         mime_type: row.mime_type,
         original_name: row.original_name,
         url: await urlFor(row, opts),
-        expires_in_seconds: presigned ? PRESIGNED_URL_TTL : null,
+        expires_in_seconds: expiring ? PRESIGNED_URL_TTL : null,
       };
     }));
     await logIssued(ctx, rows, action, opts);
@@ -315,15 +317,18 @@ function createFileService({ repo, storage, config }) {
     pipe(stream, res);
   }
 
-  // GET /files/v/:fileId — 'link' modules only, no auth. The unguessable UUID is
-  // the protection, which is why private modules answer 404 here.
-  async function streamPublic(fileId, res) {
+  // GET /files/v/:fileId?exp=&sig= — 'link' modules only, no Authorization
+  // header (an <img> can't send one): the signature from an API response is
+  // the proof. Unsigned, expired, private or unknown → 404, so ids can't be probed.
+  async function streamPublic(fileId, res, query = {}) {
     if (!isFileId(fileId)) throw NotFoundError();
+    const validFor = links.checkStable(fileId, query);
+    if (!validFor && !FILE_LINKS_UNSIGNED) throw NotFoundError();
     const row = await repo.findReady(fileId);
     if (!row || !isLink(row)) throw NotFoundError();
     const stream = await openObject(row);
     sendHeaders(res, row);
-    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.setHeader('Cache-Control', validFor ? `private, max-age=${validFor}` : 'public, max-age=31536000, immutable');
     pipe(stream, res);
   }
 

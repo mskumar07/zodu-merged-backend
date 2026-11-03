@@ -4135,14 +4135,14 @@ exports.createPurchaseOrder = async (orderData) => {
       branch_id,
       purchase_date,
       purchase_type,
-      JSON.stringify((await attachments.storedAttachments(conn, {
-        table: 'tbl_purchase', idColumn: 'purchase_id', id: purchase_id, data: orderData, module: 'purchase',
-      })) || null),
+      null,   // attachments: stored below, under the purchase_id the row ended up with
       payment_type,
       notes
     ]);
 
-    const purchaseRow = purchaseResult.rows[0];
+    const purchaseRow = await attachments.storeAfterInsert(conn, {
+      table: 'tbl_purchase', idColumn: 'purchase_id', row: purchaseResult.rows[0], attachments: attachment_url, module: 'purchase',
+    });
 
     // ensure payment master
     const paymentRow = await exports.ensurePaymentForSource({
