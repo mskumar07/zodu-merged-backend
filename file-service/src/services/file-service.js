@@ -15,13 +15,14 @@ const { onScan } = require('../storage/scan');
 const { buildKey, assertKeyBelongsTo, httpError } = require('../storage/key-builder');
 const { NotFoundError, ValidationError } = require('../utils/error/errors');
 const { fileResponseHeaders } = require('../utils/file-headers');
+const { linkCacheHeaders } = require('../storage/link-access');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isFileId = (v) => typeof v === 'string' && UUID.test(v);
 
 function createFileService({ repo, storage, config, links }) {
   const { internal, signer, bucket } = storage;
-  const { PRESIGNED_URL_TTL, PUBLIC_FILE_BASE_URL, FILE_LINKS_UNSIGNED } = config;
+  const { PRESIGNED_URL_TTL, PUBLIC_FILE_BASE_URL } = config;
 
   // ── context helpers ──────────────────────────────────────────────────────
   // Branch modules need a branch; tenant modules live in _shared (branch null).
@@ -127,7 +128,7 @@ function createFileService({ repo, storage, config, links }) {
         original_name: row.original_name,
         mime_type: row.mime_type,
         size_kb: Math.round(Number(row.size_bytes) / 1024),
-        url: await urlFor(row),
+        url: await urlFor(row, { userId: ctx.userId }),
       })));
     } catch (err) {
       if (stored.length) await internal.removeObjects(bucket, stored).catch(() => {});
@@ -156,9 +157,10 @@ function createFileService({ repo, storage, config, links }) {
     });
   }
 
-  // /files/v/:id with an expiring signature. The services store it without
-  // (they strip ?exp=&sig= on save) and sign it again on every response.
-  const stableUrl = (row) => links.sign(`${PUBLIC_FILE_BASE_URL}/files/v/${row.file_id}`);
+  // /files/v/:id with an expiring signature, for the user it is issued to. The
+  // services store it without (they strip ?exp=&u=&sig= on save) and sign it
+  // again on every response.
+  const stableUrl = (row, userId) => links.sign(`${PUBLIC_FILE_BASE_URL}/files/v/${row.file_id}`, userId);
   const contentUrl = (row) => `${PUBLIC_FILE_BASE_URL}/files/${row.file_id}/content`;
   const isLink = (row) => getModule(row.module).access === 'link';
   const isStreamOnly = (row) => Boolean(getModule(row.module).streamOnly);
@@ -172,8 +174,8 @@ function createFileService({ repo, storage, config, links }) {
   // that can't send an Authorization header with a link yet (Phase 2), so
   // stream-only files get a presigned URL there too. Drop it once clients
   // use *_file_id with /files/:id/content.
-  function urlFor(row, { presignStreamOnly = false } = {}) {
-    if (isLink(row)) return stableUrl(row);
+  function urlFor(row, { presignStreamOnly = false, userId = null } = {}) {
+    if (isLink(row)) return stableUrl(row, userId);
     if (isStreamOnly(row) && !presignStreamOnly) return contentUrl(row);
     return presign(row);
   }
@@ -198,7 +200,7 @@ function createFileService({ repo, storage, config, links }) {
         module: row.module,
         mime_type: row.mime_type,
         original_name: row.original_name,
-        url: await urlFor(row, opts),
+        url: await urlFor(row, { ...opts, userId: ctx.userId }),
         expires_in_seconds: expiring ? PRESIGNED_URL_TTL : null,
       };
     }));
@@ -317,18 +319,17 @@ function createFileService({ repo, storage, config, links }) {
     pipe(stream, res);
   }
 
-  // GET /files/v/:fileId?exp=&sig= — 'link' modules only, no Authorization
-  // header (an <img> can't send one): the signature from an API response is
-  // the proof. Unsigned, expired, private or unknown → 404, so ids can't be probed.
-  async function streamPublic(fileId, res, query = {}) {
+  // GET /files/v/:fileId?exp=&sig= — 'link' modules only. Who may open it is
+  // decided by the caller (storage/link-access.js: the signature, plus the
+  // owner's Bearer token with FILE_LINKS_REQUIRE_AUTH). Private or unknown →
+  // 404, so ids can't be probed.
+  async function streamPublic(fileId, res, access) {
     if (!isFileId(fileId)) throw NotFoundError();
-    const validFor = links.checkStable(fileId, query);
-    if (!validFor && !FILE_LINKS_UNSIGNED) throw NotFoundError();
     const row = await repo.findReady(fileId);
     if (!row || !isLink(row)) throw NotFoundError();
     const stream = await openObject(row);
     sendHeaders(res, row);
-    res.setHeader('Cache-Control', validFor ? `private, max-age=${validFor}` : 'public, max-age=31536000, immutable');
+    linkCacheHeaders(res, access);
     pipe(stream, res);
   }
 

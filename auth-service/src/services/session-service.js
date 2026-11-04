@@ -246,6 +246,8 @@ async function login(input, { req, platform }) {
   await repo.updateLastLogin({ user_id: user.user_id });
   const profile = await buildProfile(user, userCompanies);
   recordEvent(req, 'login_success', { userId: user.user_id, zoduId: ctx.zoduId, platform });
+  // Image links in this response (company logos) are signed for this user.
+  if (req) req.fileLinkUserId = user.user_id;
 
   return {
     status: 200,

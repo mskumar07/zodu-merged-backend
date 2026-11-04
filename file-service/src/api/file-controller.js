@@ -1,6 +1,7 @@
 // Public API, mounted at /files by the gateway (the gateway strips the prefix).
 //
-//   GET    /v/:fileId                  link modules only, no auth, cacheable
+//   GET    /v/:fileId?exp=&sig=        link modules only: signed link (+ its owner's
+//                                      Bearer token with FILE_LINKS_REQUIRE_AUTH)
 //   POST   /urls                       batch URLs (max 100), foreign ids left out
 //   GET    /:fileId/url[?download=1]   presigned GET, 15 min
 //   GET    /:fileId/content            stream through the API
@@ -17,14 +18,17 @@ const schema = require('../schema/file-schema');
 const { assertPermission, hasPermission } = require('../middleware/context');
 const { acceptFiles } = require('../middleware/upload');
 const STATUS_CODES = require('../utils/error/status-codes');
+const { NotFoundError } = require('../utils/error/errors');
 
-function createFileRouter({ files, requireUser, limits, uploadSlots }) {
+function createFileRouter({ files, links, linkAccess, requireUser, limits, uploadSlots }) {
   const router = express.Router();
 
   // ── public stable links ──────────────────────────────────────────────────
   router.get('/v/:fileId', limits.publicLinks, async (req, res) => {
     req.logFields = { fileId: req.params.fileId };
-    await files.streamPublic(req.params.fileId, res, req.query);
+    if (!files.isFileId(req.params.fileId)) throw NotFoundError();
+    const access = await linkAccess(req, links.checkStable(req.params.fileId, req.query));
+    await files.streamPublic(req.params.fileId, res, access);
   });
 
   router.use(limits.api, requireUser);

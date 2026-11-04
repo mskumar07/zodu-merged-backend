@@ -68,7 +68,8 @@ function createInternalRouter({ files, links, requireInternal, limits, uploadSlo
   // [{ url, signed }] for each signable URL among `urls`; anything else is left out.
   router.post('/sign-links', express.json({ limit: '256kb' }), async (req, res) => {
     const { urls } = validate(schema.signLinksBody, req.body || {});
-    const data = urls.map((url) => ({ url, signed: links.sign(url) })).filter((u) => u.signed);
+    // Signed for the user in X-User-Id (the end user the calling service answers).
+    const data = urls.map((url) => ({ url, signed: links.sign(url, req.ctx.userId) })).filter((u) => u.signed);
     res.json({ success: true, data });
   });
 

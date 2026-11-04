@@ -49,7 +49,9 @@ let common;
 function commonPasswords() {
   if (!common) {
     const file = path.join(__dirname, '..', '..', 'data', 'common-passwords.txt');
-    common = new Set(fs.readFileSync(file, 'utf8').split('\n').filter(Boolean));
+    // \r?\n: a Windows checkout (git autocrlf) gives the file CRLF line endings;
+    // splitting on \n alone left a \r on every entry and nothing ever matched.
+    common = new Set(fs.readFileSync(file, 'utf8').split(/\r?\n/).map((p) => p.trim()).filter(Boolean));
   }
   return common;
 }

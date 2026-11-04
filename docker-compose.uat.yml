@@ -219,6 +219,9 @@ services:
       # Refuse tokens of revoked sessions (auth-service's Redis deny-list; needs REDIS_URL).
       AUTH_CHECK_REVOKED_SESSIONS: ${AUTH_CHECK_REVOKED_SESSIONS:-false}
       PORT: 4007
+      # Image links need the Bearer token of the user they were issued to. Off until
+      # web / desktop / mobile builds that send it are released (FILE_LINKS_REQUIRE_AUTH=true).
+      FILE_LINKS_REQUIRE_AUTH: ${FILE_LINKS_REQUIRE_AUTH:-false}
       DB_HOSTNAME: 72.60.206.59
       DB_PORT: 5432
       DB_NAME: file_service

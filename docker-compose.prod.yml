@@ -219,6 +219,9 @@ services:
       # Refuse tokens of revoked sessions (auth-service's Redis deny-list; needs REDIS_URL).
       AUTH_CHECK_REVOKED_SESSIONS: ${AUTH_CHECK_REVOKED_SESSIONS:-false}
       PORT: 4007
+      # Image links need the Bearer token of the user they were issued to. Off until
+      # web / desktop / mobile builds that send it are released (FILE_LINKS_REQUIRE_AUTH=true).
+      FILE_LINKS_REQUIRE_AUTH: ${FILE_LINKS_REQUIRE_AUTH:-false}
       MINIO_BUCKET_NAME: zodu-files
       PRESIGNED_URL_TTL: 900
       PUBLIC_FILE_BASE_URL: https://api.zodu.in

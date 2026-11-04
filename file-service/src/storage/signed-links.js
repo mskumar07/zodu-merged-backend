@@ -9,6 +9,10 @@
 //
 // exp is rounded up to a whole window, so a URL stays the same (and cacheable)
 // for one TTL window and is valid for one to two windows.
+//
+// A link signed for a user carries &u=<userId>, covered by the signature. With
+// FILE_LINKS_REQUIRE_AUTH it only opens with that user's Bearer token, so a
+// copied link is useless to anyone else (storage/link-access.js).
 
 const crypto = require('crypto');
 
@@ -18,10 +22,13 @@ const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const STABLE_URL = new RegExp(`^(https?://[^/?#]+/files/v/)(${UUID})(?:\\?[^#]*)?$`, 'i');
 const LEGACY_URL = new RegExp(`^(https?://[^/?#]+/(?:${SERVICES.join('|')})/file/)([^?#]+)(?:\\?[^#]*)?$`, 'i');
 const MAX_URL = 2048;
+const USER_ID = /^[A-Za-z0-9_.:@-]{1,100}$/;
 
 function createSignedLinks({ secret, ttlSeconds, now = Date.now }) {
   const key = Buffer.from(String(secret));
-  const mac = (subject, exp) => crypto.createHmac('sha256', key).update(`${subject}\n${exp}`).digest('base64url');
+  const mac = (subject, exp, userId) => crypto.createHmac('sha256', key)
+    .update(userId ? `${subject}\n${exp}\nu:${userId}` : `${subject}\n${exp}`)
+    .digest('base64url');
 
   // The object key a legacy URL path names (segments are URL-encoded), else null.
   const keyOf = (path) => {
@@ -43,22 +50,29 @@ function createSignedLinks({ secret, ttlSeconds, now = Date.now }) {
     return objectKey ? { base: m[1] + m[2], subject: `legacy\n${objectKey}` } : null;
   }
 
-  // Stored URL → the same URL with a fresh ?exp=&sig=, or null if it is neither kind.
-  function sign(url) {
+  // Stored URL → the same URL with a fresh ?exp=[&u=]&sig=, or null if it is
+  // neither kind. userId: the user the link is issued to (left out if unknown).
+  function sign(url, userId = null) {
     const s = subjectOf(url);
     if (!s) return null;
     const exp = (Math.floor(now() / 1000 / ttlSeconds) + 2) * ttlSeconds;
-    return `${s.base}?exp=${exp}&sig=${mac(s.subject, exp)}`;
+    const uid = userId != null && USER_ID.test(String(userId)) ? String(userId) : null;
+    return uid
+      ? `${s.base}?exp=${exp}&u=${encodeURIComponent(uid)}&sig=${mac(s.subject, exp, uid)}`
+      : `${s.base}?exp=${exp}&sig=${mac(s.subject, exp)}`;
   }
 
-  // Seconds the link is still valid, or 0 if it is not a valid link for subject.
-  function check(subject, { exp, sig } = {}) {
-    if (typeof exp !== 'string' || typeof sig !== 'string' || !/^\d{1,12}$/.test(exp)) return 0;
+  // { validFor: seconds left, userId: who it was issued to, or null }, or null
+  // if it is not a valid link for subject.
+  function check(subject, { exp, sig, u } = {}) {
+    if (typeof exp !== 'string' || typeof sig !== 'string' || !/^\d{1,12}$/.test(exp)) return null;
+    if (u !== undefined && (typeof u !== 'string' || !USER_ID.test(u))) return null;
     const left = Number(exp) - Math.floor(now() / 1000);
-    if (left <= 0 || left > 2 * ttlSeconds) return 0;
-    const want = Buffer.from(mac(subject, exp));
+    if (left <= 0 || left > 2 * ttlSeconds) return null;
+    const want = Buffer.from(mac(subject, exp, u || null));
     const got = Buffer.from(sig);
-    return got.length === want.length && crypto.timingSafeEqual(got, want) ? left : 0;
+    if (got.length !== want.length || !crypto.timingSafeEqual(got, want)) return null;
+    return { validFor: left, userId: u || null };
   }
 
   return {
