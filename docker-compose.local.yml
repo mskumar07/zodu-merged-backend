@@ -1,0 +1,49 @@
+# Local development: the Redis and MinIO that `npm start` expects on this PC.
+#
+#   docker compose -f docker-compose.local.yml up -d
+#
+# Redis   localhost:6380   (REDIS_URL=redis://localhost:6380 in the service .env files)
+# MinIO   localhost:9000   API, http://localhost:9001 web console
+#
+# MinIO's login is MINIO_ACCESSKEY / MINIO_SECRETKEY from file-service/.env, so
+# that file must exist first (the secret key needs 8+ characters). Both buckets
+# file-service needs (zodu-files, zodu) are created on start. Storage starts
+# empty and stays in the zodu-local-minio volume; `down -v` deletes it.
+name: zodu-local
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    container_name: zodu-local-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis-data:/data
+
+  minio:
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+    container_name: zodu-local-minio
+    restart: unless-stopped
+    env_file:
+      - ./file-service/.env
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        export MINIO_ROOT_USER="$$MINIO_ACCESSKEY" MINIO_ROOT_PASSWORD="$$MINIO_SECRETKEY"
+        minio server /data --console-address :9001 &
+        until mc alias set local http://localhost:9000 "$$MINIO_ACCESSKEY" "$$MINIO_SECRETKEY" >/dev/null 2>&1; do sleep 1; done
+        mc mb --ignore-existing local/$${MINIO_BUCKET_NAME:-zodu-files} local/$${LEGACY_BUCKET_NAME:-zodu}
+        wait
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
+volumes:
+  redis-data:
+    name: zodu-local-redis
+  minio-data:
+    name: zodu-local-minio
