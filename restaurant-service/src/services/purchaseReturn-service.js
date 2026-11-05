@@ -1,6 +1,6 @@
 const repo = require("../repository/purchaseReturn-repo");
 const pool = require("../database/connection");
-const { generatePurchaseReturnId } = require("../utils/generateId");
+const { nextReturnId } = require("../utils/generateId");
 const { NotFoundError, ValidationError } = require("../utils/error/errors");
 
 const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
@@ -195,7 +195,10 @@ async function createPurchaseReturn(dto) {
       : 0;
     const refundStatus = refundStatusFor(refundDue, refundNow);
 
-    const returnId = generatePurchaseReturnId();
+    // RET/<purchase id> or DN/<purchase id> (utils/generateId.js).
+    const returnId = await nextReturnId(client, {
+      kind: "purchase", returnType: return_type, docId: original_purchase_id, zoduId: zodu_id, branchId: branch_id,
+    });
     const row = await repo.insertReturn(client, {
       return_id: returnId, return_type, zodu_id, branch_id, original_purchase_id,
       return_reason, notes, refund_type: refund_type || null,
@@ -275,8 +278,15 @@ async function updatePurchaseReturn(dto) {
     const refunded = Number(ret.refunded_amount);
     const refundStatus = refundStatusFor(refundDue, refunded);
 
+    // A changed type gets a number with its own prefix (RET/ <-> DN/).
+    const renumbered = return_type && return_type !== ret.return_type
+      ? await nextReturnId(client, {
+        kind: "purchase", returnType: return_type, docId: purchaseId, zoduId: zodu_id, branchId: branch_id, excludeUuid: return_uuid,
+      })
+      : null;
+
     await repo.updateReturn(client, {
-      return_uuid, return_type, return_reason, notes, refund_type, return_date,
+      return_uuid, return_id: renumbered, return_type, return_reason, notes, refund_type, return_date,
       subtotal, total_tax: totalTax, return_amount: total,
       adjusted_amount: adjustedAmount, refund_due: refundDue, refund_status: refundStatus,
     });

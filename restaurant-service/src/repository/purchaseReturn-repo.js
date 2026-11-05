@@ -134,14 +134,15 @@ exports.updateReturn = async (client, p) => {
          adjusted_amount = $9,
          refund_due      = $10,
          refund_status   = $11,
-         return_date     = $12
+         return_date     = $12,
+         return_id       = COALESCE($13, return_id)
      WHERE return_uuid   = $1
      RETURNING return_amount, adjusted_amount, refund_due, refunded_amount, refund_status`,
     [
       p.return_uuid, p.return_type ?? null, p.return_reason ?? null, p.notes ?? null, p.refund_type ?? null,
       p.subtotal.toFixed(2), p.total_tax.toFixed(2), p.return_amount.toFixed(2),
       p.adjusted_amount.toFixed(2), p.refund_due.toFixed(2), p.refund_status,
-      p.return_date ?? null
+      p.return_date ?? null, p.return_id ?? null
     ]
   );
   return rows[0];
@@ -212,7 +213,7 @@ exports.findReturnPurchaseId = async (client, returnUuid, zoduId, branchId) => {
 exports.findReturnForUpdate = async (client, returnUuid, zoduId, branchId) => {
   const { rows } = await client.query(
     `SELECT
-        return_uuid, return_id, original_purchase_id,
+        return_uuid, return_id, return_type, original_purchase_id,
         return_amount, refund_due, refunded_amount, refund_status,
         TO_CHAR(return_date, 'YYYY-MM-DD') AS return_date_iso
      FROM tbl_purchase_returns

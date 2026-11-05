@@ -405,6 +405,12 @@ apply "$RETAIL_DB"     retail-service/migrations/sale_return_discount.sql
 # refunds received from the vendor.
 apply "$RETAIL_DB"     retail-service/migrations/purchase_return.sql
 apply "$RESTAURANT_DB" restaurant-service/migrations/purchase_return.sql
+
+# retail + restaurant — return / note numbers from the document they are against
+# (RET/, CN/, DN/ + invoice or purchase id): wider return_id, sale return numbers
+# unique per company + branch.
+apply "$RETAIL_DB"     retail-service/migrations/return_ids_from_document.sql
+apply "$RESTAURANT_DB" restaurant-service/migrations/return_ids_from_document.sql
 # restaurant-service — drops tbl_kot_list's FK to tbl_tmp_orders. createKOT
 # now also runs for Takeaway/Delivery orders, which never get a tbl_tmp_orders
 # row (they write straight to tbl_orders), so the FK 500s on every such insert.

@@ -681,12 +681,13 @@ exports.getStockHistoryRepo = async ({
 
       COALESCE(
         CASE
-          -- A deleted return's row is gone, but its id is in the ledger note, so the
-          -- history still shows RET-... / PRT-... after the return is deleted.
+          -- A deleted return's row is gone, but its id is in the ledger note
+          -- ("... return <id>[ edited] - ..."), so the history still shows it
+          -- (RET/..., CN/..., DN/..., or an older RET-... / PRT-...).
           WHEN l.transaction_type IN ('SALE_RETURN', 'SALE_RETURN_EDITED', 'SALE_RETURN_DELETED')
-            THEN COALESCE(sr.return_id::TEXT, substring(l.notes from 'RET-[A-Z0-9]+-[A-Z0-9]+'))
+            THEN COALESCE(sr.return_id::TEXT, substring(l.notes from '[Rr]eturn (\\S+)(?: edited)? - '))
           WHEN l.transaction_type IN ('PURCHASE_RETURN', 'PURCHASE_RETURN_EDITED', 'PURCHASE_RETURN_DELETED')
-            THEN COALESCE(pr.return_id::TEXT, substring(l.notes from 'PRT-[A-Z0-9]+-[A-Z0-9]+'))
+            THEN COALESCE(pr.return_id::TEXT, substring(l.notes from '[Rr]eturn (\\S+)(?: edited)? - '))
           WHEN l.transaction_type IN ('sale', 'sale_update', 'sale_update_reverse', 'sale_deleted', 'sale_edit_qty_changed', 'sale_edit_item_added', 'sale_edit_item_removed', 'sale_edit_item_replaced', 'quotation_converted_to_sale')
             THEN s.sale_id::TEXT
           WHEN l.transaction_type IN ('purchase', 'purchase_item_added', 'purchase_item_qty_updated', 'purchase_item_removed', 'purchase_delete')

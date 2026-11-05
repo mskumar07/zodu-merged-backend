@@ -175,10 +175,11 @@ exports.getStockHistoryRepo = async ({
         CASE
           WHEN l.transaction_type IN ('purchase', 'purchase_item_added', 'purchase_item_qty_updated', 'purchase_item_removed', 'purchase_cancel')
             THEN p.purchase_id::TEXT
-          -- A deleted return's row is gone, but its id is in the ledger note, so the
-          -- history still shows PRT-... after the return is deleted.
+          -- A deleted return's row is gone, but its id is in the ledger note
+          -- ("... return <id>[ edited] - ..."), so the history still shows it
+          -- (RET/..., DN/..., or an older PRT-...).
           WHEN l.transaction_type IN ('PURCHASE_RETURN', 'PURCHASE_RETURN_EDITED', 'PURCHASE_RETURN_DELETED')
-            THEN COALESCE(pr.return_id::TEXT, substring(l.notes from 'PRT-[A-Z0-9]+-[A-Z0-9]+'))
+            THEN COALESCE(pr.return_id::TEXT, substring(l.notes from '[Rr]eturn (\\S+)(?: edited)? - '))
           WHEN l.transaction_type IN ('sale', 'sale_cancel', 'quotation_converted_to_sale')
             THEN o.public_order_no
         END,

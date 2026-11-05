@@ -282,6 +282,7 @@ class SaleReturnRepository {
       return_uuid, return_type, return_reason, refund_type, notes,
       total_items, subtotal, total_tax, return_amount,
       adjusted_amount, refund_due, refund_status, discount_amount, round_off,return_date,
+      return_id,
     } = payload;
 
     await client.query(
@@ -299,13 +300,15 @@ class SaleReturnRepository {
            refund_status   = $12,
            discount_amount = $13,
            round_off       = $14,
-           return_date     = $15
+           return_date     = $15,
+           return_id       = COALESCE($16, return_id)
        WHERE return_uuid   = $1`,
       [
         return_uuid, return_type ?? null, return_reason ?? null, refund_type ?? null, notes ?? null,
         total_items, subtotal.toFixed(2), total_tax.toFixed(2), return_amount.toFixed(2),
         adjusted_amount.toFixed(2), refund_due.toFixed(2), refund_status,
         discount_amount.toFixed(2), round_off.toFixed(2), return_date || null,
+        return_id ?? null,
       ]
     );
   }
@@ -315,7 +318,7 @@ class SaleReturnRepository {
   async findReturnForUpdate(client, returnUuid, zoduId, branchId) {
     const { rows } = await client.query(
       `SELECT
-          return_uuid, return_id, original_sale_id, return_amount,
+          return_uuid, return_id, return_type, original_sale_id, return_amount,
           refund_due, refunded_amount, refund_status,
           TO_CHAR(return_date, 'YYYY-MM-DD') AS return_date_iso
        FROM tbl_sale_returns
