@@ -26,7 +26,8 @@ function parseTrustProxy(value) {
   return list(value);
 }
 
-const ALLOWED_HEADERS = ['Content-Type', 'Authorization', 'X-Branch-Id', 'X-Client-Platform', 'X-Request-Id'];
+const ALLOWED_HEADERS = ['Content-Type', 'Authorization', 'X-Branch-Id', 'X-Client-Platform', 'X-Request-Id',
+  'X-User-Id', 'X-Zodu-Id', 'X-User-Type'];   // the last three: AUTH_DISABLED dev mode only
 const EXPOSED_HEADERS = ['Content-Disposition', 'Retry-After', 'RateLimit-Limit', 'RateLimit-Remaining',
   'RateLimit-Reset', 'X-Request-Id'];
 

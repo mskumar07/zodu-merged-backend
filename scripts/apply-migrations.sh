@@ -53,6 +53,7 @@ case "$ENV" in
     RESTAURANT_DB=restaurant_service
     CHECKLIST_DB=checklist-service
     EMPLOYEE_DB=employee-service
+    ATTENDANCE_DB=attendance-service
     PAYROLL_DB=payroll-service
     ADMIN_DB=admin_service
     FILE_DB=file_service
@@ -73,6 +74,7 @@ case "$ENV" in
     RESTAURANT_DB=restaurant-service
     CHECKLIST_DB=checklist-service
     EMPLOYEE_DB=employee-service
+    ATTENDANCE_DB=attendance-service
     PAYROLL_DB=payroll-service
     ADMIN_DB=admin_service
     FILE_DB=file_service
@@ -91,6 +93,7 @@ case "$ENV" in
     RESTAURANT_DB=restaurant_service
     CHECKLIST_DB=checklist-service
     EMPLOYEE_DB=employee_service
+    ATTENDANCE_DB=attendance-service
     PAYROLL_DB=payroll-service
     ADMIN_DB=admin_service
     FILE_DB=file_service
@@ -415,6 +418,19 @@ apply "$EMPLOYEE_DB" employee-service/migrations/employee_faces.sql
 
 # employee-service — documents keep a file-service file_id (Phase 2).
 apply "$EMPLOYEE_DB" employee-service/migrations/file_service_file_ids.sql
+
+# attendance-service — only the attendance app's APIs (employees, attendance). Its database is a
+# restore of the employee-service backup, so these three are normally already in it; they are
+# idempotent (DROP ... IF EXISTS / IF NOT EXISTS / ADD COLUMN IF NOT EXISTS), so running them
+# once more is a harmless no-op and just records them under the attendance-service/ path.
+apply "$ATTENDANCE_DB" attendance-service/migrations/employee_unique_per_branch.sql
+apply "$ATTENDANCE_DB" attendance-service/migrations/employee_code_unique_per_branch.sql
+apply "$ATTENDANCE_DB" attendance-service/migrations/file_service_file_ids.sql
+# Leave + holidays (tbl_leave_types / tbl_leave_requests / tbl_holidays, default leave types per
+# branch, tbl_attendance.leave_request_id). leave_purge_functions.sql REPLACES fn_purge_branch /
+# fn_purge_company, so it must stay after leave_management.sql.
+apply "$ATTENDANCE_DB" attendance-service/migrations/leave_management.sql
+apply "$ATTENDANCE_DB" attendance-service/migrations/leave_purge_functions.sql
 
 # Older rows were written before PUBLIC_FILE_BASE_URL existed, so they carry
 # whatever origin the code defaulted to at the time (myzodu.com, zodu.in, ...).
