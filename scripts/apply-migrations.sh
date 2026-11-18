@@ -54,6 +54,7 @@ case "$ENV" in
     CHECKLIST_DB=checklist-service
     CHECKLIST_V2_DB=checklist_v2_service
     EMPLOYEE_DB=employee-service
+    ATTENDANCE_DB=attendance-service
     PAYROLL_DB=payroll-service
     ADMIN_DB=admin_service
     FILE_DB=file_service
@@ -75,6 +76,7 @@ case "$ENV" in
     CHECKLIST_DB=checklist-service
     CHECKLIST_V2_DB=checklist_v2_service
     EMPLOYEE_DB=employee-service
+    ATTENDANCE_DB=attendance-service
     PAYROLL_DB=payroll-service
     ADMIN_DB=admin_service
     FILE_DB=file_service
@@ -94,6 +96,7 @@ case "$ENV" in
     CHECKLIST_DB=checklist-service
     CHECKLIST_V2_DB=checklist_v2_service
     EMPLOYEE_DB=employee_service
+    ATTENDANCE_DB=attendance-service
     PAYROLL_DB=payroll-service
     ADMIN_DB=admin_service
     FILE_DB=file_service
@@ -425,6 +428,27 @@ apply "$EMPLOYEE_DB" employee-service/migrations/employee_faces.sql
 
 # employee-service — documents keep a file-service file_id (Phase 2).
 apply "$EMPLOYEE_DB" employee-service/migrations/file_service_file_ids.sql
+
+# attendance-service — only the attendance app's APIs (employees, attendance). Its database is a
+# restore of the employee-service backup, so these three are normally already in it; they are
+# idempotent (DROP ... IF EXISTS / IF NOT EXISTS / ADD COLUMN IF NOT EXISTS), so running them
+# once more is a harmless no-op and just records them under the attendance-service/ path.
+apply "$ATTENDANCE_DB" attendance-service/migrations/employee_unique_per_branch.sql
+apply "$ATTENDANCE_DB" attendance-service/migrations/employee_code_unique_per_branch.sql
+apply "$ATTENDANCE_DB" attendance-service/migrations/file_service_file_ids.sql
+# Leave + holidays (tbl_leave_types / tbl_leave_requests / tbl_holidays, default leave types per
+# branch, tbl_attendance.leave_request_id).
+apply "$ATTENDANCE_DB" attendance-service/migrations/leave_management.sql
+# Leave Settings → Leave Types: paid / carry forward / encashment / applicability / effective-from
+# columns on tbl_leave_types (needs leave_management.sql first).
+apply "$ATTENDANCE_DB" attendance-service/migrations/leave_types_settings.sql
+# Shift Allocation Engine → Shift Templates: tbl_shift_templates.
+apply "$ATTENDANCE_DB" attendance-service/migrations/shift_templates.sql
+# Leave → Holidays: 'Restricted Holiday' type and applicable_to / department_ids on tbl_holidays.
+apply "$ATTENDANCE_DB" attendance-service/migrations/holidays_settings.sql
+# fn_purge_branch / fn_purge_company for the leave tables and tbl_shift_templates (was leave_purge_functions.sql;
+# renamed so it runs once more with the shift templates added). REPLACES the earlier versions; keep it last.
+apply "$ATTENDANCE_DB" attendance-service/migrations/leave_shift_purge_functions.sql
 
 # Older rows were written before PUBLIC_FILE_BASE_URL existed, so they carry
 # whatever origin the code defaulted to at the time (myzodu.com, zodu.in, ...).

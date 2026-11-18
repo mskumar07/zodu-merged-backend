@@ -139,6 +139,7 @@ app.use(['/files', ...[...LEGACY_FILE_SERVICES].map((s) => `/${s}/file`)], (req,
 const AUTH_SERVICE_URL       = process.env.AUTH_SERVICE_URL       || 'http://auth-service:4000';
 const RETAIL_SERVICE_URL     = process.env.RETAIL_SERVICE_URL     || 'http://retail-service:4001';
 const EMPLOYEE_SERVICE_URL   = process.env.EMPLOYEE_SERVICE_URL   || 'http://employee-service:4002';
+const ATTENDANCE_SERVICE_URL = process.env.ATTENDANCE_SERVICE_URL || 'http://attendance-service:4008';
 const RESTAURANT_SERVICE_URL = process.env.RESTAURANT_SERVICE_URL || 'http://restaurant-service:4003';
 const CHECKLIST_SERVICE_URL  = process.env.CHECKLIST_SERVICE_URL  || 'http://checklist-service:4005';
 const CHECKLIST_V2_SERVICE_URL = process.env.CHECKLIST_V2_SERVICE_URL || 'http://checklist-v2-service:3008';
@@ -184,6 +185,7 @@ app.use('/checklist', proxy(CHECKLIST_SERVICE_URL, 'checklist-service'));
 // the service's heartbeat keeps the stream inside PROXY_TIMEOUT_MS.
 app.use('/checklist-v2', proxy(CHECKLIST_V2_SERVICE_URL, 'checklist-v2-service'));
 app.use('/employee', proxy(EMPLOYEE_SERVICE_URL, 'employee-service'));
+app.use('/attendance', proxy(ATTENDANCE_SERVICE_URL, 'attendance-service'));
 app.use('/restaurant', proxy(RESTAURANT_SERVICE_URL, 'restaurant-service'));
 // Admin console. admin-service has no public port; the gateway is its only door.
 app.use('/admin', proxy(ADMIN_SERVICE_URL, 'admin-service'));

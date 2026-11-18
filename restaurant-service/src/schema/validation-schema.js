@@ -273,7 +273,8 @@ const vendor_create_v2 = Joi.object({
   ...zodu_branch,
   vendor_name:      Joi.string().max(150).required(),
   company_name:     Joi.string().max(150).required(),
-  vendor_phone:     Joi.string().pattern(/^[0-9]{7,15}$/).required(),
+  // Optional: the form's Mobile Number can be left empty (sent as null or ""); a number that is given must be 7-15 digits.
+  vendor_phone:     Joi.string().pattern(/^[0-9]{7,15}$/).optional().allow(null, ""),
   vendor_email:     Joi.string().email({ tlds: { allow: false } }).optional().allow(null, ""),
   gst:              Joi.string().max(20).optional().allow(null, ""),
   vendor_address:   Joi.string().max(255).optional().allow(null, ""),
@@ -288,7 +289,7 @@ const vendor_create_v2 = Joi.object({
 const vendor_update_v2 = Joi.object({
   vendor_name:      Joi.string().max(150).optional(),
   company_name:     Joi.string().max(150).optional(),
-  vendor_phone:     Joi.string().pattern(/^[0-9]{7,15}$/).optional(),
+  vendor_phone:     Joi.string().pattern(/^[0-9]{7,15}$/).optional().allow(null, ""),
   vendor_email:     Joi.string().email({ tlds: { allow: false } }).optional().allow(null, ""),
   gst:              Joi.string().max(20).optional().allow(null, ""),
   vendor_address:   Joi.string().max(255).optional().allow(null, ""),
