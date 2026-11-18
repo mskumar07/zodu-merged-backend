@@ -83,6 +83,17 @@ describe('blocked paths', () => {
     expect(seen.length).toBe(before);
   });
 
+  test('an empty path segment (missing id) is refused, not collapsed into shifted params', async () => {
+    const res = await request(app).get('/retail/get/category/S//Z042');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Empty path segment/);
+    const { hasEmptySegment } = require('../gateway');
+    expect(hasEmptySegment('//retail/api/x')).toBe(false);          // base URL ending in '/'
+    expect(hasEmptySegment('/retail/get/category/S/B1/Z042')).toBe(false);
+    expect(hasEmptySegment('/retail/api/items/')).toBe(false);      // trailing slash
+    expect(hasEmptySegment('/retail/api//items')).toBe(true);
+  });
+
   test('isBlockedPath allows ordinary paths', () => {
     expect(isBlockedPath('/auth/api/login', 'POST')).toBe(false);
     expect(isBlockedPath('/retail/api/sales/INV%2F001', 'GET')).toBe(false);

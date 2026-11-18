@@ -91,6 +91,34 @@ How to read it:
 | PATCH | `/api/checklists` | `checklist:edit` |
 | DELETE | `/api/checklists` | `checklist:delete` |
 
+## checklist-v2-service (gateway `/checklist-v2`)
+
+Rules: `checklist-v2-service/src/security/rules.js`. Ownership (own runs, own
+notifications, being the reviewer) is checked in the handlers: a run of a
+colleague is 403, a run of another company 404.
+
+| Method | Path | Who |
+|---|---|---|
+| GET | `/api/categories` | any signed-in user |
+| GET | `/api/runs`, `/api/runs/summary`, `/api/runs/review-queue`, `/api/runs/:id` | any signed-in user (own runs; the team view needs `checklist:read`) |
+| PUT, POST, DELETE | `/api/runs/:id/items/:itemId[/photos[/:photoId]]` | any signed-in user (assignee, or `checklist:edit`) |
+| POST | `/api/runs/:id/(complete-all\|submit\|review)` | any signed-in user (assignee; review: the reviewer or `checklist:edit`, never one's own run) |
+| POST | `/api/runs/:id/reassign` | `checklist:edit` |
+| GET | `/api/dashboard/my` | any signed-in user |
+| GET | `/api/dashboard/team` | `checklist:read` |
+| GET, POST, PUT, DELETE | `/api/notifications*`, `/api/notification-preferences` (incl. the SSE stream) | any signed-in user (own only) |
+| POST | `/api/categories`, `/api/checklists/schedule-preview` | `checklist:create` |
+| POST | `/api/checklists/:id/(duplicate\|images)` | `checklist:create` |
+| PUT | `/api/categories/:id` (rename / recolour) | `checklist:edit` |
+| DELETE | `/api/categories/:id` | `checklist:delete` |
+| PATCH | `/api/checklists/:id/status` | `checklist:edit` |
+| DELETE | `/api/checklists/:id/images/:imageId` | `checklist:edit` |
+| GET | `/api/checklists` | `checklist:read` |
+| POST | `/api/checklists` | `checklist:create` |
+| PUT | `/api/checklists` | `checklist:edit` |
+| PATCH | `/api/checklists` | `checklist:edit` |
+| DELETE | `/api/checklists` | `checklist:delete` |
+
 ## retail-service (gateway `/retail`)
 
 | Method | Path | Who |

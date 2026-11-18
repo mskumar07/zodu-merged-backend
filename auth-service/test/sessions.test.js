@@ -134,6 +134,17 @@ describe('sessions are revoked when access changes', () => {
     expect((await refresh(refresh_token)).status).toBe(401);
   });
 
+  test('attendance-service manages employee logins with its own token, nothing else', async () => {
+    const e = await employee();
+    const fromAttendance = { 'X-Internal-Token': process.env.INTERNAL_TOKEN_ATTENDANCE };
+    const res = await api().put('/internal/employee/login-details').set(fromAttendance)
+      .send({ user_id: e.user_id, zodu_id: e.zodu_id, branch_id: 'B1', password: 'attendance set passphrase' });
+    expect(res.status).toBe(200);
+    expect((await login({ ...e, password: 'attendance set passphrase' })).status).toBe(200);
+    // Routes for other callers stay closed to it.
+    expect((await api().get(`/internal/company/${e.zodu_id}`).set(fromAttendance)).status).toBe(403);
+  });
+
   test('employee passwords follow the policy: common ones are refused', async () => {
     const e = await employee();
     const res = await api().put('/internal/employee/login-details').set(fromEmployee)

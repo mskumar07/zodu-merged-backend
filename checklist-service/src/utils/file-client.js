@@ -302,8 +302,9 @@ async function fileUrls(value, ctxExtra = {}) {
 // knowing about file-service. If file-service is down the refs come back with
 // url null instead of failing the whole response.
 //
-// /files/v and old file URLs: signed in responses, and unsigned again in parsed
-// request bodies (multipart fields go through toRefs, or are re-signed when read).
+// /files/v and old file URLs: signed in responses for the requesting user, and
+// unsigned again in parsed request bodies (multipart fields go through toRefs,
+// or are re-signed when read).
 function fileUrlsMiddleware(req, res, next) {
   if (req.body && typeof req.body === 'object') req.body = unsignLinks(req.body);
   const json = res.json.bind(res);
@@ -312,7 +313,10 @@ function fileUrlsMiddleware(req, res, next) {
     const links = new Set();
     collect(body, found, 0, links);
     if (!found.length && !links.size) return json(body);
-    fileUrls(body, { clientIp: req.ip })
+    // Links are signed for the user this response is for (req.auth from
+    // authenticate(); req.fileLinkUserId where a route signs the user in).
+    const userId = req.auth?.userId ?? req.user?.user_id ?? req.fileLinkUserId ?? null;
+    fileUrls(body, { clientIp: req.ip, userId })
       .then(json, (err) => {
         console.warn('[file-service] could not resolve file URLs:', err.message);
         json(rebuild(body, new Map()));

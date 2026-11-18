@@ -89,8 +89,20 @@ function isBlockedPath(rawPath, method = 'GET') {
 
 const notFound = (res) => res.status(404).json({ error: 'Not found' });
 
+// An empty segment ('/a//b') is a missing id in the client's URL. The proxy would
+// collapse it to '/a/b', shifting every later parameter into the wrong place
+// (e.g. /get/category/S//Z042 arriving as zodu_id=S, branch_id=Z042). Refuse it.
+// Leading slashes ('//retail/...', from a base URL ending in '/') are harmless.
+function hasEmptySegment(rawPath) {
+  return /\/\//.test(rawPath.replace(/^\/+/, '/'));
+}
+
 app.use((req, res, next) => {
-  if (isBlockedPath(req.originalUrl.split('?')[0], req.method)) return notFound(res);
+  const rawPath = req.originalUrl.split('?')[0];
+  if (isBlockedPath(rawPath, req.method)) return notFound(res);
+  if (hasEmptySegment(rawPath)) {
+    return res.status(400).json({ error: 'Empty path segment: a required id is missing from the URL' });
+  }
   // Only services talk to each other with these headers; a client must never set them.
   delete req.headers['x-internal-token'];
   delete req.headers['x-internal-key'];
@@ -130,6 +142,7 @@ const EMPLOYEE_SERVICE_URL   = process.env.EMPLOYEE_SERVICE_URL   || 'http://emp
 const ATTENDANCE_SERVICE_URL = process.env.ATTENDANCE_SERVICE_URL || 'http://attendance-service:4008';
 const RESTAURANT_SERVICE_URL = process.env.RESTAURANT_SERVICE_URL || 'http://restaurant-service:4003';
 const CHECKLIST_SERVICE_URL  = process.env.CHECKLIST_SERVICE_URL  || 'http://checklist-service:4005';
+const CHECKLIST_V2_SERVICE_URL = process.env.CHECKLIST_V2_SERVICE_URL || 'http://checklist-v2-service:3008';
 const ADMIN_SERVICE_URL      = process.env.ADMIN_SERVICE_URL      || 'http://admin-service:4006';
 const FILE_SERVICE_URL       = process.env.FILE_SERVICE_URL       || 'http://file-service:4007';
 
@@ -168,6 +181,9 @@ for (const service of LEGACY_FILE_SERVICES) {
 app.use('/auth', proxy(AUTH_SERVICE_URL, 'auth-service'));
 app.use('/retail', proxy(RETAIL_SERVICE_URL, 'retail-service'));
 app.use('/checklist', proxy(CHECKLIST_SERVICE_URL, 'checklist-service'));
+// Checklist v2. Also carries the notification stream (SSE): no compression here, and
+// the service's heartbeat keeps the stream inside PROXY_TIMEOUT_MS.
+app.use('/checklist-v2', proxy(CHECKLIST_V2_SERVICE_URL, 'checklist-v2-service'));
 app.use('/employee', proxy(EMPLOYEE_SERVICE_URL, 'employee-service'));
 app.use('/attendance', proxy(ATTENDANCE_SERVICE_URL, 'attendance-service'));
 app.use('/restaurant', proxy(RESTAURANT_SERVICE_URL, 'restaurant-service'));
@@ -192,4 +208,4 @@ if (require.main === module) {
   setServerTimeouts(server, { requestTimeout: 300_000 });
 }
 
-module.exports = { app, isBlockedPath };
+module.exports = { app, isBlockedPath, hasEmptySegment };

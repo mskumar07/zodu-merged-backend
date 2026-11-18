@@ -394,7 +394,7 @@ test('batch URLs: max 100, foreign / missing / malformed ids left out', async ()
     .send({ file_ids: [mine, foreign, menu, '00000000-0000-4000-8000-000000000000', 'nope'] });
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.data.map((d) => d.file_id), [mine, menu]);
-  assert.match(res.body.data[1].url, new RegExp(`^https://api\\.test/files/v/${menu}\\?exp=\\d+&sig=`));
+  assert.match(res.body.data[1].url, new RegExp(`^https://api\\.test/files/v/${menu}\\?exp=\\d+&u=[^&]+&sig=`));
   assert.equal(res.body.data[1].expires_in_seconds, 900);
   const tooMany = await request(app).post('/urls').set(asAdmin()).send({ file_ids: Array(101).fill(mine) });
   assert.equal(tooMany.status, 400);

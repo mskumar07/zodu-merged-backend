@@ -14,12 +14,18 @@ app.use(httpLogger);
 app.set('router options', { strict: false });
 
 // Service-to-service routes: auth-service only (its X-Internal-Token), except the
-// user → employee lookup, which checklist-service also uses (own-task checks).
+// user → employee lookup, which checklist-service and checklist-v2-service also use
+// (own-task checks), and the employee directory, which only checklist-v2 syncs.
 const fromAuth = requireInternal('auth');
-const fromAuthOrChecklist = requireInternal('auth', 'checklist');
-app.use('/internal',
-  (req, res, next) => (req.method === 'GET' && req.path === '/employee/by-user' ? fromAuthOrChecklist : fromAuth)(req, res, next),
-  require('./api/internal-controller'));
+const fromAuthOrChecklists = requireInternal('auth', 'checklist', 'checklist_v2');
+const fromChecklistV2 = requireInternal('checklist_v2');
+function internalCaller(req) {
+  if (req.method !== 'GET') return fromAuth;
+  if (req.path === '/employee/by-user') return fromAuthOrChecklists;
+  if (req.path === '/employees/directory') return fromChecklistV2;
+  return fromAuth;
+}
+app.use('/internal', (req, res, next) => internalCaller(req)(req, res, next), require('./api/internal-controller'));
 
 // Customer routes: access token, company/branch from the token, route permissions.
 app.use(security.middleware);

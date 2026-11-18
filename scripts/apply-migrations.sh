@@ -52,6 +52,7 @@ case "$ENV" in
     RETAIL_DB=retail_restaurant_service
     RESTAURANT_DB=restaurant_service
     CHECKLIST_DB=checklist-service
+    CHECKLIST_V2_DB=checklist_v2_service
     EMPLOYEE_DB=employee-service
     ATTENDANCE_DB=attendance-service
     PAYROLL_DB=payroll-service
@@ -73,6 +74,7 @@ case "$ENV" in
     RETAIL_DB=retail_restaurant_service
     RESTAURANT_DB=restaurant-service
     CHECKLIST_DB=checklist-service
+    CHECKLIST_V2_DB=checklist_v2_service
     EMPLOYEE_DB=employee-service
     ATTENDANCE_DB=attendance-service
     PAYROLL_DB=payroll-service
@@ -92,6 +94,7 @@ case "$ENV" in
     RETAIL_DB=retail_service
     RESTAURANT_DB=restaurant_service
     CHECKLIST_DB=checklist-service
+    CHECKLIST_V2_DB=checklist_v2_service
     EMPLOYEE_DB=employee_service
     ATTENDANCE_DB=attendance-service
     PAYROLL_DB=payroll-service
@@ -220,6 +223,7 @@ apply "$AUTH_DB" auth-service/migrations/file_service_file_ids.sql
 # tbl_security_events (security Phase 2). Apply before the new image serves traffic.
 apply "$AUTH_DB" auth-service/migrations/auth_sessions_security_events.sql
 apply "$AUTH_DB" auth-service/migrations/owner_admin_role_repair.sql
+apply "$AUTH_DB" auth-service/migrations/user_roles_user_zodu_branch_unique.sql
 
 # retail-service / restaurant-service — item description
 apply "$RETAIL_DB"     retail-service/migrations/item_description.sql
@@ -408,6 +412,12 @@ apply "$RETAIL_DB"     retail-service/migrations/sale_return_discount.sql
 # refunds received from the vendor.
 apply "$RETAIL_DB"     retail-service/migrations/purchase_return.sql
 apply "$RESTAURANT_DB" restaurant-service/migrations/purchase_return.sql
+
+# retail + restaurant — return / note numbers from the document they are against
+# (RET/, CN/, DN/ + invoice or purchase id): wider return_id, sale return numbers
+# unique per company + branch.
+apply "$RETAIL_DB"     retail-service/migrations/return_ids_from_document.sql
+apply "$RESTAURANT_DB" restaurant-service/migrations/return_ids_from_document.sql
 # restaurant-service — drops tbl_kot_list's FK to tbl_tmp_orders. createKOT
 # now also runs for Takeaway/Delivery orders, which never get a tbl_tmp_orders
 # row (they write straight to tbl_orders), so the FK 500s on every such insert.
@@ -445,6 +455,17 @@ apply "$ATTENDANCE_DB" attendance-service/migrations/leave_shift_purge_functions
 # Repoint every stored file URL at this environment's public origin: swap the
 # scheme+host, keep the /auth/file/<key> path. Idempotent — rows already on
 # $PUBLIC_BASE are excluded, so re-running changes nothing.
+# employee-service — index for checklist-v2's incremental directory sync
+# (GET /internal/employees/directory?updated_since=…).
+apply "$EMPLOYEE_DB" employee-service/migrations/employees_directory_index.sql
+
+# checklist-v2-service — schema ckl in its own checklist_v2_service database,
+# which must already exist (one-time, by hand: checklist-v2-service/db/bootstrap.sql).
+# In order; every file is re-runnable.
+for f in V001__schema V002__recurrence_functions V003__generation V004__notifications V005__rules V006__scheduler V007__purge_and_grants V008__shared_runs V009__company_categories V010__remind_late_runs V011__company_settings V012__deleted_checklist_runs V013__item_cannot_do V014__task_sub_statuses; do
+  apply "$CHECKLIST_V2_DB" "checklist-v2-service/migrations/$f.sql"
+done
+
 echo
 echo "=== $ENV / $AUTH_DB  <-  repoint file URLs to $PUBLIC_BASE"
 run_sql_stdin "$AUTH_DB" <<SQL

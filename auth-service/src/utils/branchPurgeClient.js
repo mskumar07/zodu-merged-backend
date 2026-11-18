@@ -6,6 +6,7 @@ const {
   EMPLOYEE_SERVICE_URL,
   PAYROLL_SERVICE_URL,
   CHECKLIST_SERVICE_URL,
+  CHECKLIST_V2_SERVICE_URL,
 } = require('../config');
 
 // Order matters: auth-service purges tbl_branch itself LAST (see
@@ -23,6 +24,7 @@ const SERVICES = [
   { name: 'employee-service',   baseURL: EMPLOYEE_SERVICE_URL },
   { name: 'payroll-service',    baseURL: PAYROLL_SERVICE_URL },
   { name: 'checklist-service',  baseURL: CHECKLIST_SERVICE_URL },
+  { name: 'checklist-v2-service', baseURL: CHECKLIST_V2_SERVICE_URL },
 ];
 
 // Calls POST /internal/branches/:zodu_id/:branch_id/purge on every service in
