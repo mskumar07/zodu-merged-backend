@@ -5,13 +5,15 @@ const ExcelJS = require('exceljs');
 //
 //   Date            2026-12-25 | 25-12-2026 | 25/12/2026 | 25 Dec 2026 | an Excel date cell
 //   Holiday Name    up to 100 characters ("Name" also works as the heading)
-//   Type            Gazetted Holiday | Company Holiday   (optional: left empty it is a Company Holiday)
+//   Type            any text up to 20 characters, stored as written (the old "Gazetted" / "Company" short forms still
+//                   become Gazetted Holiday / Company Holiday). Optional: left empty it is a Company Holiday
 //
 // The first sheet is used; the first row holds the headings, in any order and case.
 
 const MAX_ROWS = 500;
 const MAX_ERRORS = 50;
 const NAME_MAX = 100;
+const TYPE_MAX = 20;                   // tbl_holidays.holiday_type is VARCHAR(20)
 const YEAR_MIN = 2000;
 const YEAR_MAX = 2100;
 const ZIP_MAGIC = 0x04034b50;          // "PK\x03\x04": every .xlsx is a zip
@@ -120,12 +122,12 @@ async function parseHolidaySheet(buffer) {
     if (rows.length >= MAX_ROWS) { fail(r, `A sheet can hold at most ${MAX_ROWS} holidays.`); break; }
 
     const date = toIsoDate(rawDate);
-    const type = typeText ? TYPES.get(typeText.toLowerCase()) : 'Company Holiday';
+    const type = typeText ? (TYPES.get(typeText.toLowerCase()) ?? typeText) : 'Company Holiday';
     let ok = true;
     if (!date)        { fail(r, 'The date is missing or not a valid date (use 2026-12-25 or 25-12-2026).'); ok = false; }
     if (!name)        { fail(r, 'The holiday name is missing.'); ok = false; }
     else if (name.length > NAME_MAX) { fail(r, `The holiday name is longer than ${NAME_MAX} characters.`); ok = false; }
-    if (!type)        { fail(r, 'The type must be "Gazetted Holiday" or "Company Holiday".'); ok = false; }
+    if (type.length > TYPE_MAX) { fail(r, `The type is longer than ${TYPE_MAX} characters.`); ok = false; }
     if (ok && seen.has(date)) { fail(r, `The date ${date} is already on row ${seen.get(date)}.`); ok = false; }
 
     if (ok) { seen.set(date, r); rows.push({ date, name, type }); }

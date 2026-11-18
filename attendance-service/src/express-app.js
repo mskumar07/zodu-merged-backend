@@ -21,6 +21,9 @@ app.use(require('./utils/file-client').fileUrlsMiddleware);
 app.use('/api/employees',   require('./api/employee-controller'));
 app.use('/api/attendance',  require('./api/attendance-controller'));
 app.use('/api/leave',       require('./api/leave-controller'));
+app.use('/api/leave-types', require('./api/leave-type-controller'));
+app.use('/api/shift-templates', require('./api/shift-template-controller'));
+app.use('/api/holidays',    require('./api/holiday-controller'));
 
 app.use(HandleErrorWithLogger);
 

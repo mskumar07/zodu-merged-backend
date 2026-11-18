@@ -57,7 +57,7 @@ describe('parseHolidaySheet', () => {
     const { rows, errors } = await parseHolidaySheet(await sheet([
       ['not a date', 'A', ''],                                // row 2
       ['2026-12-01', '', ''],                                 // row 3: no name
-      ['2026-12-02', 'B', 'Weird'],                           // row 4: bad type
+      ['2026-12-02', 'B', 'T'.repeat(21)],                    // row 4: type longer than the column (any shorter text is stored as written)
       ['2026-12-03', 'C', ''],                                // row 5: fine
       ['2026-12-03', 'Dup', ''],                              // row 6: same date as row 5
       ['2026-12-04', 'x'.repeat(101), ''],                    // row 7: name too long
