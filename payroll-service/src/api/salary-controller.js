@@ -1,7 +1,8 @@
 const express  = require('express');
 const router   = express.Router();
 const { requireInternal } = require('@zodu/security');
-const fromEmployee = requireInternal('employee');
+// employee-service and attendance-service keep an employee's salary row in step.
+const fromEmployee = requireInternal('employee', 'attendance');
 const fromAuth     = requireInternal('auth');
 const service  = require('../services/salary-service');
 const RequestValidator = require('../utils/requestValidator');

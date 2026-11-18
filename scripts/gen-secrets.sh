@@ -30,19 +30,19 @@ MASTER="env/secrets.${ENV_NAME}.env"
 touch "$MASTER"
 
 # Services that call other services' /internal routes, each with its own token.
-CALLERS=(auth employee restaurant retail checklist checklist_v2 admin file)
+CALLERS=(auth employee attendance restaurant retail checklist checklist_v2 admin file)
 
 # Who accepts calls from whom (mirrors the requireInternal(...) lists in the code).
 declare -A ACCEPTS=(
-  [auth-service]="restaurant retail admin employee file checklist checklist_v2"
+  [auth-service]="restaurant retail admin employee attendance file checklist checklist_v2"
   [employee-service]="auth checklist checklist_v2"
   [attendance-service]=""
   [restaurant-service]="auth"
   [retail-service]="auth admin"
-  [payroll-service]="employee auth"
+  [payroll-service]="employee attendance auth"
   [checklist-service]="auth"
   [checklist-v2-service]="auth"
-  [file-service]="auth employee checklist checklist_v2 retail restaurant"
+  [file-service]="auth employee attendance checklist checklist_v2 retail restaurant"
   [face-service]="employee"
   [admin-service]=""
   [api-gateway]=""
@@ -50,9 +50,8 @@ declare -A ACCEPTS=(
 # The token each service sends (empty: it calls no /internal route).
 declare -A SENDS=(
   [auth-service]=auth [employee-service]=employee [restaurant-service]=restaurant
-  # attendance-service is a copy of employee-service: it sends the "employee" token so payroll/face/file
-  # (which only whitelist the "employee" caller) accept it without any change to them.
-  [attendance-service]=employee
+  # attendance-service has its own token: auth, payroll and file-service accept it by name.
+  [attendance-service]=attendance
   [retail-service]=retail [checklist-service]=checklist [checklist-v2-service]=checklist_v2 [admin-service]=admin
   [file-service]=file [payroll-service]="" [face-service]="" [api-gateway]=""
 )

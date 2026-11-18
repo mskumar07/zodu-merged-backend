@@ -2,6 +2,7 @@
 process.env.NODE_ENV = 'test';
 process.env.INTERNAL_TOKEN_EMPLOYEE = 'e'.repeat(40);
 process.env.INTERNAL_TOKEN_AUTH = 'a'.repeat(40);
+process.env.INTERNAL_TOKEN_ATTENDANCE = 't'.repeat(40);
 
 jest.mock('../src/services/salary-service', () => new Proxy({}, {
   get: () => jest.fn(async () => ({ success: true, data: {} })),
@@ -20,6 +21,8 @@ test('/internal: no token → 401, another service\'s token → 403, the right o
   expect((await request(app).get('/internal/salary/E1')).status).toBe(401);
   expect((await request(app).get('/internal/salary/E1').set('X-Internal-Token', 'a'.repeat(40))).status).toBe(403);
   expect((await request(app).get('/internal/salary/E1').set('X-Internal-Token', 'e'.repeat(40))).status).toBe(200);
+  // attendance-service, with its own token
+  expect((await request(app).get('/internal/salary/E1').set('X-Internal-Token', 't'.repeat(40))).status).toBe(200);
 });
 
 test('security headers', async () => {

@@ -124,9 +124,12 @@ router.get('/my', async (req, res) => {
 // The signed-in employee punches for themselves, at the server's time.
 const punch = (action) => async (req, res) => {
   try {
-    const { errors, input } = await RequestValidator(schema.attendance_punch, { ...req.body, ...tenantOf(req) });
+    // The employee always comes from the token: an employee_id in the body (older
+    // app builds send one) is dropped, never used to punch for someone else.
+    // eslint-disable-next-line no-unused-vars
+    const { employee_id: _ignored, ...body } = req.body || {};
+    const { errors, input } = await RequestValidator(schema.attendance_punch, { ...body, ...tenantOf(req) });
     if (errors) return res.status(400).json({ success: false, errors });
-    console.log('Punch input==========:', input);
 
     const employee = await employeeRepo.findByUser(req.auth.userId, input);
     if (!employee) return res.status(404).json({ success: false, error: 'No employee record for this user' });

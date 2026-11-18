@@ -21,6 +21,7 @@ jobs:
           - api-gateway
           - auth-service
           - employee-service
+          - attendance-service
           - checklist-service
           - checklist-v2-service
           - payroll-service
@@ -51,6 +52,7 @@ jobs:
           - api-gateway
           - file-service
           - employee-service
+          - attendance-service
           - checklist-service
           - payroll-service
           - retail-service
