@@ -26,7 +26,9 @@ function parseTrustProxy(value) {
   return list(value);
 }
 
-const ALLOWED_HEADERS = ['Content-Type', 'Authorization', 'X-Branch-Id', 'X-Client-Platform', 'X-Request-Id'];
+// Idempotency-Key: checklist-v2 create endpoints (retried POSTs are not applied twice).
+const ALLOWED_HEADERS = ['Content-Type', 'Authorization', 'X-Branch-Id', 'X-Client-Platform', 'X-Request-Id',
+  'Idempotency-Key'];
 const EXPOSED_HEADERS = ['Content-Disposition', 'Retry-After', 'RateLimit-Limit', 'RateLimit-Remaining',
   'RateLimit-Reset', 'X-Request-Id'];
 
