@@ -30,6 +30,7 @@ module.exports = {
   RETAIL_SERVICE_URL: process.env.RETAIL_SERVICE_URL || 'http://retail-service:3001',
   PAYROLL_SERVICE_URL: process.env.PAYROLL_SERVICE_URL || 'http://payroll-service:3005',
   CHECKLIST_SERVICE_URL: process.env.CHECKLIST_SERVICE_URL || 'http://checklist-service:3006',
+  CHECKLIST_V2_SERVICE_URL: process.env.CHECKLIST_V2_SERVICE_URL || 'http://checklist-v2-service:3008',
   // Service-to-service tokens (@zodu/security): INTERNAL_TOKEN is sent on this
   // service's calls; INTERNAL_TOKEN_<CALLER> are accepted on /internal/*.
 

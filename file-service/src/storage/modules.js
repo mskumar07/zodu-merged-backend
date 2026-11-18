@@ -98,6 +98,8 @@ const MODULES = {
   // Aadhaar / PAN: never a presigned URL (it could be forwarded); only the authorised stream.
   'employee':         { scope: 'branch', allowedTypes: [...IMAGES, MIME.PDF, MIME.DOC, MIME.DOCX], maxSizeMb: 10, categories: ['profile', 'documents'], access: 'private', streamOnly: true, permission: PERM.STAFF, transform: DOCUMENT },
   'checklist':        { scope: 'branch', allowedTypes: [...IMAGES, ...DOCS],          maxSizeMb: 10, categories: ['attachments', 'items'], access: 'private', permission: PERM.CHECKLIST, transform: DOCUMENT },
+  // checklist-v2-service: reference images on a checklist, proof photos on a run item.
+  'checklist-v2':     { scope: 'branch', allowedTypes: IMAGES,                        maxSizeMb: 5,  categories: ['images', 'photos'], access: 'private', permission: PERM.CHECKLIST, transform: PHOTO },
   'invoice':          { scope: 'branch', allowedTypes: PDF,                           maxSizeMb: 10, access: 'private', permission: PERM.SALES, keepOnDelete: true },
   'reports':          { scope: 'branch', allowedTypes: [MIME.PDF, MIME.XLSX, MIME.CSV], maxSizeMb: 25, categories: ['gst', 'sales', 'stock', 'purchase', 'expense', 'inventory'], access: 'private', permission: PERM.REPORTS, keepOnDelete: true },
   'documents':        { scope: 'tenant', allowedTypes: [...IMAGES, ...DOCS],          maxSizeMb: 10, access: 'private', permission: PERM.SETTINGS, transform: DOCUMENT },

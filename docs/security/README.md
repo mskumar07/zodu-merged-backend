@@ -15,16 +15,19 @@ for every `/internal` path, so these routes are unreachable from outside.
 | auth-service | `/internal/company*`, `/internal/branches*` writes, `/internal/invoice-settings/*`, `/internal/pos-settings/*` | restaurant, retail |
 | auth-service | `GET /internal/company/:id`, `GET /internal/branches/:id[/:branch]` | restaurant, retail, admin |
 | auth-service | `/internal/admin/*` | admin |
-| auth-service | `/internal/user-branch-access` | file |
+| auth-service | `/internal/user-branch-access` | file, employee, checklist, checklist_v2, retail, restaurant |
 | auth-service | `/internal/employee/*` | employee |
-| employee-service | all `/internal/*` (create-admin, by-user, purge) | auth |
+| employee-service | `/internal/*` (create-admin, purge) | auth |
+| employee-service | `GET /internal/employee/by-user` | auth, checklist, checklist_v2 |
+| employee-service | `GET /internal/employees/directory` | checklist_v2 |
 | restaurant-service | seed-defaults, purge | auth |
 | retail-service | seed-defaults, purge | auth |
 | retail-service | `/internal/admin/*` | admin |
 | payroll-service | `/internal/salary/*` | employee |
 | payroll-service | purge | auth |
 | checklist-service | purge | auth |
-| file-service | all `/internal/*` | auth, employee, checklist, retail, restaurant |
+| checklist-v2-service | purge (branch, company) | auth |
+| file-service | all `/internal/*` | auth, employee, checklist, checklist_v2, retail, restaurant |
 | face-service | `POST /embedding` | employee |
 
 Calls admin-service makes that have no route on the other side (they fail
