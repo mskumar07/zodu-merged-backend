@@ -100,6 +100,30 @@ services:
     depends_on:
       - face-service
 
+  # Attendance Service (attendance app: employees, attendance, leave, holidays)
+  attendance-service:
+    image: vicky0015/zodu-backemd-retail-attendance-service:latest
+    build:
+      context: .
+      dockerfile: attendance-service/Dockerfile
+    container_name: retail-attendance-service
+    restart: always
+    expose:
+      - "3008"
+    env_file:
+      - ./env/attendance-service.prod.env
+    environment:
+      NODE_ENV: production
+      # Refuse tokens of revoked sessions (auth-service's Redis deny-list; needs REDIS_URL).
+      AUTH_CHECK_REVOKED_SESSIONS: ${AUTH_CHECK_REVOKED_SESSIONS:-false}
+      PORT: 3008
+      DB_HOSTNAME: 72.60.206.59
+      DB_PORT: 5433
+      DB_NAME: attendance_service
+      AUTH_SERVICE_URL: http://auth-service:3000
+      PAYROLL_SERVICE_URL: http://payroll-service:3003
+      FILE_SERVICE_URL: http://file-service:4007
+
   # Restaurant Service
   restaurant-service:
     image: vicky0015/zodu-backemd-restaurant-service:latest
@@ -263,6 +287,7 @@ services:
       AUTH_SERVICE_URL: http://auth-service:3000
       RETAIL_SERVICE_URL: http://retail-service:3001
       EMPLOYEE_SERVICE_URL: http://employee-service:3002
+      ATTENDANCE_SERVICE_URL: http://attendance-service:3008
       RESTAURANT_SERVICE_URL: http://restaurant-service:3004
       CHECKLIST_SERVICE_URL: http://checklist-service:3005
       ADMIN_SERVICE_URL: http://admin-service:3007
@@ -272,6 +297,7 @@ services:
       - auth-service
       - retail-service
       - employee-service
+      - attendance-service
       - restaurant-service
       - checklist-service
       - admin-service

@@ -36,6 +36,7 @@ CALLERS=(auth employee restaurant retail checklist admin file)
 declare -A ACCEPTS=(
   [auth-service]="restaurant retail admin employee file checklist"
   [employee-service]="auth checklist"
+  [attendance-service]=""
   [restaurant-service]="auth"
   [retail-service]="auth admin"
   [payroll-service]="employee auth"
@@ -48,11 +49,14 @@ declare -A ACCEPTS=(
 # The token each service sends (empty: it calls no /internal route).
 declare -A SENDS=(
   [auth-service]=auth [employee-service]=employee [restaurant-service]=restaurant
+  # attendance-service is a copy of employee-service: it sends the "employee" token so payroll/face/file
+  # (which only whitelist the "employee" caller) accept it without any change to them.
+  [attendance-service]=employee
   [retail-service]=retail [checklist-service]=checklist [admin-service]=admin
   [file-service]=file [payroll-service]="" [face-service]="" [api-gateway]=""
 )
 # The customer services read auth-service's revoked-session deny-list (AUTH_CHECK_REVOKED_SESSIONS).
-USES_REDIS=(api-gateway auth-service file-service employee-service checklist-service retail-service restaurant-service)
+USES_REDIS=(api-gateway auth-service file-service employee-service attendance-service checklist-service retail-service restaurant-service)
 
 get() { grep -E "^$1=" "$MASTER" | tail -1 | cut -d= -f2- || true; }
 ensure() {

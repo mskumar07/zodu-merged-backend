@@ -131,7 +131,22 @@ async function buildProfile(user, userCompanies) {
 
 // ── sessions ─────────────────────────────────────────────────────────────────
 
+// DEV ONLY (AUTH_DISABLED=true, never in production): no JWT is signed and no
+// refresh-token session is created (no Redis session, no tbl_user_sessions row,
+// no refresh cookie). Login answers with a placeholder access_token so clients
+// still see a successful login; the other services don't verify tokens in this
+// mode (see @zodu/security authenticate.js). Unset AUTH_DISABLED to restore the
+// real flow below.
+const authDisabled = () => process.env.AUTH_DISABLED === 'true' && process.env.NODE_ENV !== 'production';
+
 async function startSession({ user, ctx, platform, req }) {
+  if (authDisabled()) {
+    return {
+      fid: null,
+      access: { access_token: 'dev-auth-disabled', token_type: 'Bearer', expires_in: 3600 },
+      refresh: null,
+    };
+  }
   const { store, tokens } = auth();
   const fid = crypto.randomUUID();
   const { token, absoluteExpiry } = await store.createFamily({
@@ -206,7 +221,9 @@ async function login(input, { req, platform }) {
 
   // The hash runs whether or not the account exists (dummy argon2id hash).
   const user = await repo.findUserForLogin({ email, phone_number: phone });
+  console.log('login user:', user, 'identifier:', identifier, 'platform:', platform);
   const { ok, needsRehash } = await verifyPassword(input.password, user?.password_hash);
+  console.log('login user:', user, 'ok:', ok, 'needsRehash:', needsRehash);
 
   let reason = !user ? 'unknown_account'
     : !ok ? 'wrong_password'
