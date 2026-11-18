@@ -31,7 +31,7 @@ jobs:
           - file-service
           - packages/zodu-security
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -58,7 +58,7 @@ jobs:
           - retail-service
           - restaurant-service
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -91,7 +91,7 @@ jobs:
       TEST_DB_PASSWORD: postgres
       TEST_REDIS_URL: redis://localhost:6379/15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -118,7 +118,7 @@ jobs:
       TEST_DB_USER: postgres
       TEST_DB_PASSWORD: postgres
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -131,7 +131,7 @@ jobs:
     name: tests (face-service auth)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.10"
