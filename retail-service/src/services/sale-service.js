@@ -1,5 +1,5 @@
 const { SaleReturnRepository } = require("../repository/saleReturn-repo");
-const { generateReturnId } = require("../utils/generateId");
+const { nextReturnId } = require("../utils/generateId");
 const {
   NotFoundError,
   ValidationError,
@@ -268,7 +268,10 @@ async function createSaleReturn(dto) {
       ? round2(Math.min(refund_payment.amount ?? refundDue, refundDue))
       : 0;
 
-    const returnId = generateReturnId();
+    // RET/<invoice id> or CN/<invoice id> (utils/generateId.js).
+    const returnId = await nextReturnId(client, {
+      kind: "sale", returnType: return_type || "SALES_RETURN", docId: sale.sale_id, zoduId: zodu_id, branchId: branch_id,
+    });
     const returnRow = await repo.insertSaleReturn(client, {
       return_id: returnId,
       original_sale_uuid: sale.sale_uuid,
@@ -405,8 +408,16 @@ async function updateSaleReturn(dto) {
     const refunded = Number(ret.refunded_amount);
     const refundStatus = refundStatusFor(refundDue, refunded);
 
+    // A changed type gets a number with its own prefix (RET/ <-> CN/).
+    const renumbered = return_type && return_type !== ret.return_type
+      ? await nextReturnId(client, {
+        kind: "sale", returnType: return_type, docId: sale.sale_id, zoduId: zodu_id, branchId: branch_id, excludeUuid: return_uuid,
+      })
+      : null;
+
     await repo.updateSaleReturn(client, {
       return_uuid,
+      return_id: renumbered,
       return_type,
       return_reason,
       refund_type: refund_type || null,

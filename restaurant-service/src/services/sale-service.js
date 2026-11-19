@@ -1,5 +1,5 @@
 const { SaleReturnRepository } = require("../repository/saleReturn-repo");
-const { generateReturnId } = require("../utils/generateId");
+const { nextReturnId } = require("../utils/generateId");
 const {
   NotFoundError,
   ValidationError,
@@ -108,7 +108,10 @@ async function createSaleReturn(dto) {
       });
     }
 
-    const returnId = generateReturnId();
+    // RET/<invoice id> (utils/generateId.js).
+    const returnId = await nextReturnId(client, {
+      kind: "sale", returnType: "SALES_RETURN", docId: sale.sale_id, zoduId: zodu_id, branchId: branch_id,
+    });
     const returnRow = await repo.insertSaleReturn(client, {
       return_id: returnId,
       original_sale_uuid: sale.sale_uuid,

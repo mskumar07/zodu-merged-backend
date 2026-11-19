@@ -5,7 +5,8 @@ const schema           = require('../schema/role-schema');
 
 const router = require('express').Router();
 const { requireInternal } = require('@zodu/security');
-const fromEmployee = requireInternal('employee');
+// employee-service and attendance-service (its copy for the attendance app) manage employee logins.
+const fromEmployee = requireInternal('employee', 'attendance');
 
 // ── CREATE ROLE ───────────────────────────────────────────────────────────────
 // POST /api/roles

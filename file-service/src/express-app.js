@@ -10,6 +10,7 @@ const { createFileRouter } = require('./api/file-controller');
 const { createInternalRouter } = require('./api/internal-controller');
 const { createLegacyRouter } = require('./api/legacy-controller');
 const { createSignedLinks } = require('./storage/signed-links');
+const { createLinkAccess } = require('./storage/link-access');
 
 // deps: { config, repo, storage, authClient, tokenVerifier, rateLimitStore }. Built
 // in server.js from the real database / MinIO / Redis / JWKS; tests pass fakes.
@@ -69,18 +70,21 @@ function createApp({
 
   const links = createSignedLinks({ secret: config.FILE_LINK_SECRET, ttlSeconds: config.PRESIGNED_URL_TTL });
   const files = createFileService({ repo, storage, config, links });
-  const { requireUser } = createContext({ verifier: tokenVerifier, authClient });
+  const { requireUser, getRequestContext } = createContext({ verifier: tokenVerifier, authClient });
+  const linkAccess = createLinkAccess({
+    requireAuth: config.FILE_LINKS_REQUIRE_AUTH, allowUnsigned: config.FILE_LINKS_UNSIGNED, getRequestContext,
+  });
   const requireInternal = createRequireInternal(config.INTERNAL_TOKENS);
 
   app.get('/health', (_req, res) => res.json({ success: true, status: 'ok' }));
   app.use('/internal', createInternalRouter({ files, links, requireInternal, limits, uploadSlots }));
   if (config.LEGACY_BUCKET_NAME) {
     app.use('/legacy', createLegacyRouter({
-      storage, legacyBucket: config.LEGACY_BUCKET_NAME, links, allowUnsigned: config.FILE_LINKS_UNSIGNED,
+      storage, legacyBucket: config.LEGACY_BUCKET_NAME, links, linkAccess,
       limits, frameAncestors: config.FRAME_ANCESTORS,
     }));
   }
-  app.use('/', createFileRouter({ files, requireUser, limits, uploadSlots }));
+  app.use('/', createFileRouter({ files, links, linkAccess, requireUser, limits, uploadSlots }));
 
   app.use((_req, _res, next) => next(NotFoundError('Not found')));
   app.use(HandleErrorWithLogger);

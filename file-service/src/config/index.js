@@ -37,6 +37,9 @@ module.exports = {
   FILE_LINK_SECRET: process.env.FILE_LINK_SECRET,
   // true: those URLs also work unsigned (public, as before). Only for a rollout.
   FILE_LINKS_UNSIGNED: process.env.FILE_LINKS_UNSIGNED === 'true',
+  // true: those URLs also need the Bearer token of the user they were signed for
+  // (storage/link-access.js). Turn on once the apps load images with the token.
+  FILE_LINKS_REQUIRE_AUTH: process.env.FILE_LINKS_REQUIRE_AUTH === 'true',
   PRESIGNED_URL_TTL: int(process.env.PRESIGNED_URL_TTL, 900),
 
   // Public origin of the gateway; /files/v/:fileId links are built on it.

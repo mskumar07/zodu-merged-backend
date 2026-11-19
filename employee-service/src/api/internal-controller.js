@@ -3,7 +3,8 @@ const router  = express.Router();
 const db      = require('../database/connection');
 const repo    = require('../repository/employee-repo');
 
-// All routes here: auth-service only (express-app.js checks its X-Internal-Token).
+// Callers are checked in express-app.js (X-Internal-Token): auth-service for most
+// routes; checklist / checklist_v2 for by-user; checklist_v2 for the directory.
 
 // Called by auth-service after signup to seed the first Admin employee row.
 // Body: { zodu_id, branch_id, user_id, phone, email }
@@ -73,6 +74,46 @@ router.get('/employee/by-user', async (req, res) => {
   } catch (err) {
     console.error('[internal] by-user lookup failed:', err.message);
     return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /internal/employees/directory — checklist-v2-service only (directory sync).
+// Query: zodu_id, branch_id, updated_since (ISO, optional), cursor (last employee_id), limit ≤ 500
+// → { data: [{ employee_id, user_id, employee_name, is_active, updated_at }], next_cursor }
+// Paged by employee_id so a row edited mid-sync can't be skipped. updated_at is stored
+// without a zone in the server's TimeZone; it goes out (and updated_since comes in) as UTC.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+router.get('/employees/directory', async (req, res) => {
+  const { zodu_id, branch_id, updated_since, cursor } = req.query;
+  if (typeof zodu_id !== 'string' || !zodu_id || typeof branch_id !== 'string' || !branch_id) {
+    return res.status(400).json({ success: false, error: 'zodu_id and branch_id are required' });
+  }
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 500, 1), 500);
+  if (cursor !== undefined && (typeof cursor !== 'string' || !UUID_RE.test(cursor))) {
+    return res.status(400).json({ success: false, error: 'invalid cursor' });
+  }
+  if (updated_since !== undefined && (typeof updated_since !== 'string' || Number.isNaN(Date.parse(updated_since)))) {
+    return res.status(400).json({ success: false, error: 'invalid updated_since' });
+  }
+  try {
+    const { rows } = await db.query(
+      `SELECT employee_id, user_id, name AS employee_name,
+              COALESCE(status, 'active') = 'active' AS is_active,
+              updated_at AT TIME ZONE current_setting('TimeZone') AS updated_at
+         FROM tbl_employees
+        WHERE zodu_id = $1 AND branch_id = $2
+          AND ($3::timestamptz IS NULL OR updated_at >= ($3::timestamptz AT TIME ZONE current_setting('TimeZone')))
+          AND ($4::uuid IS NULL OR employee_id > $4::uuid)
+        ORDER BY employee_id
+        LIMIT $5`,
+      [zodu_id, branch_id, updated_since || null, cursor || null, limit + 1]
+    );
+    const more = rows.length > limit;
+    const data = more ? rows.slice(0, limit) : rows;
+    return res.status(200).json({ success: true, data, next_cursor: more ? data[data.length - 1].employee_id : null });
+  } catch (err) {
+    console.error('[internal] directory failed:', err.message);
+    return res.status(500).json({ success: false, error: 'directory lookup failed' });
   }
 });
 

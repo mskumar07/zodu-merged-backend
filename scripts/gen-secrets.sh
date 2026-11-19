@@ -30,18 +30,19 @@ MASTER="env/secrets.${ENV_NAME}.env"
 touch "$MASTER"
 
 # Services that call other services' /internal routes, each with its own token.
-CALLERS=(auth employee restaurant retail checklist admin file)
+CALLERS=(auth employee attendance restaurant retail checklist checklist_v2 admin file)
 
 # Who accepts calls from whom (mirrors the requireInternal(...) lists in the code).
 declare -A ACCEPTS=(
-  [auth-service]="restaurant retail admin employee file checklist"
-  [employee-service]="auth checklist"
+  [auth-service]="restaurant retail admin employee attendance file checklist checklist_v2"
+  [employee-service]="auth checklist checklist_v2"
   [attendance-service]=""
   [restaurant-service]="auth"
   [retail-service]="auth admin"
-  [payroll-service]="employee auth"
+  [payroll-service]="employee attendance auth"
   [checklist-service]="auth"
-  [file-service]="auth employee checklist retail restaurant"
+  [checklist-v2-service]="auth"
+  [file-service]="auth employee attendance checklist checklist_v2 retail restaurant"
   [face-service]="employee"
   [admin-service]=""
   [api-gateway]=""
@@ -49,14 +50,13 @@ declare -A ACCEPTS=(
 # The token each service sends (empty: it calls no /internal route).
 declare -A SENDS=(
   [auth-service]=auth [employee-service]=employee [restaurant-service]=restaurant
-  # attendance-service is a copy of employee-service: it sends the "employee" token so payroll/face/file
-  # (which only whitelist the "employee" caller) accept it without any change to them.
-  [attendance-service]=employee
-  [retail-service]=retail [checklist-service]=checklist [admin-service]=admin
+  # attendance-service has its own token: auth, payroll and file-service accept it by name.
+  [attendance-service]=attendance
+  [retail-service]=retail [checklist-service]=checklist [checklist-v2-service]=checklist_v2 [admin-service]=admin
   [file-service]=file [payroll-service]="" [face-service]="" [api-gateway]=""
 )
 # The customer services read auth-service's revoked-session deny-list (AUTH_CHECK_REVOKED_SESSIONS).
-USES_REDIS=(api-gateway auth-service file-service employee-service attendance-service checklist-service retail-service restaurant-service)
+USES_REDIS=(api-gateway auth-service file-service employee-service attendance-service checklist-service checklist-v2-service retail-service restaurant-service)
 
 get() { grep -E "^$1=" "$MASTER" | tail -1 | cut -d= -f2- || true; }
 ensure() {
@@ -83,7 +83,7 @@ write_service() {
   local file="env/${svc}.${ENV_NAME}.env"
   touch "$file"
   local keep
-  keep="$(grep -vE '^(INTERNAL_TOKEN(_[A-Z]+)?|REDIS_URL|REDIS_PASSWORD|JWT_PRIVATE_KEY|JWT_KID)=' "$file" || true)"
+  keep="$(grep -vE '^(INTERNAL_TOKEN(_[A-Z0-9_]+)?|REDIS_URL|REDIS_PASSWORD|JWT_PRIVATE_KEY|JWT_KID)=' "$file" || true)"
   {
     [[ -n "$keep" ]] && printf '%s\n' "$keep"
     printf '%s\n' "$@"

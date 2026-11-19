@@ -21,7 +21,9 @@ jobs:
           - api-gateway
           - auth-service
           - employee-service
+          - attendance-service
           - checklist-service
+          - checklist-v2-service
           - payroll-service
           - restaurant-service
           - retail-service
@@ -50,6 +52,7 @@ jobs:
           - api-gateway
           - file-service
           - employee-service
+          - attendance-service
           - checklist-service
           - payroll-service
           - retail-service
@@ -96,6 +99,33 @@ jobs:
         working-directory: auth-service
       - run: npm test
         working-directory: auth-service
+
+  checklist-v2-service:
+    name: tests (checklist-v2-service)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      # test/global-setup.js creates checklist_v2_test and applies migrations/V*.sql
+      TEST_DB_HOST: localhost
+      TEST_DB_PORT: 5432
+      TEST_DB_USER: postgres
+      TEST_DB_PASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+        working-directory: checklist-v2-service
+      - run: npm test
+        working-directory: checklist-v2-service
 
   face-service:
     name: tests (face-service auth)

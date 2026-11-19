@@ -30,6 +30,7 @@ Object.assign(process.env, {
   FILE_SERVICE_URL: 'http://127.0.0.1:9',
   INTERNAL_TOKEN: 'a'.repeat(64),
   INTERNAL_TOKEN_EMPLOYEE: 'e'.repeat(64),
+  INTERNAL_TOKEN_ATTENDANCE: 't'.repeat(64),
   INTERNAL_TOKEN_FILE: 'f'.repeat(64),
 });
 delete process.env.LEGACY_REFRESH_CUTOFF;

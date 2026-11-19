@@ -19,7 +19,7 @@ test('registry: every module has access, permission and a sane limit', () => {
   }
   assert.equal(MODULES.employee.access, 'private');
   assert.deepEqual(PURGEABLE.sort(),
-    ['branding', 'checklist', 'documents', 'employee', 'invoice-settings', 'menu-items', 'uploads']);
+    ['branding', 'checklist', 'checklist-v2', 'documents', 'employee', 'invoice-settings', 'menu-items', 'uploads']);
 });
 
 test('access answers are cached for the TTL, per user/company/branch', async () => {

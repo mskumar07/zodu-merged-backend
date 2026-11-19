@@ -56,7 +56,11 @@ function createRateLimit({ name, limit, windowMs = 60_000, redis, key = byIp, sk
   if (redis) {
     const inner = new RedisWindowStore({ redis, prefix: `rl:${name}:` });
     // Report the failure, then let express-rate-limit pass the request (passOnStoreError).
+    // prefix: express-rate-limit's double-count check tells stores apart by
+    // constructor name + prefix; without it every limiter here looks the same.
     store = {
+      prefix: inner.prefix,
+      localKeys: false,
       init: (o) => inner.init(o),
       increment: (k) => inner.increment(k).catch((err) => { onStoreError?.(err, name); throw err; }),
       decrement: (k) => inner.decrement(k).catch(() => {}),

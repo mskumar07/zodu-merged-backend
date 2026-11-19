@@ -76,13 +76,13 @@ test('links expire, and an expiry too far ahead is refused', () => {
   const links = createSignedLinks({ secret: 's'.repeat(40), ttlSeconds: 900, now: () => now });
   const q = new URL(links.sign(OLD)).searchParams;
   const query = { exp: q.get('exp'), sig: q.get('sig') };
-  assert.ok(links.checkLegacy('1776136462225-petrol.webp', query) > 900);
+  assert.ok(links.checkLegacy('1776136462225-petrol.webp', query).validFor > 900);
   now += 1800 * 1000;
-  assert.equal(links.checkLegacy('1776136462225-petrol.webp', query), 0);
+  assert.equal(links.checkLegacy('1776136462225-petrol.webp', query), null);
 
   const far = String(Math.floor(now / 1000) + 10 * 900);
   const forged = createSignedLinks({ secret: 's'.repeat(40), ttlSeconds: 9000, now: () => now }).sign(OLD);
-  assert.equal(links.checkLegacy('1776136462225-petrol.webp', { exp: far, sig: new URL(forged).searchParams.get('sig') }), 0);
+  assert.equal(links.checkLegacy('1776136462225-petrol.webp', { exp: far, sig: new URL(forged).searchParams.get('sig') }), null);
   assert.equal(links.sign('https://api.myzodu.com/restaurant/file/../secret'), null);
   assert.equal(links.sign('https://api.myzodu.com/payroll/file/x.png'), null);
 });
