@@ -71,6 +71,29 @@ exports.attendance_my = Joi.object({
   year:  Joi.number().integer().min(2000).max(2100),
 });
 
+// ── MY DASHBOARD  GET /api/attendance/dashboard ───────────────────────────────
+// week_start: any day of the wanted week (default: this week). month / year: the calendar (default: this month).
+
+exports.attendance_dashboard = Joi.object({
+  ...zodu_branch,
+  week_start: Joi.string().pattern(date_pattern),
+  month: Joi.number().integer().min(1).max(12),
+  year:  Joi.number().integer().min(2000).max(2100),
+});
+
+// ── TEAM DASHBOARD  GET /api/attendance/dashboard/team ────────────────────────
+// date: any day of the week to show (default: this week). The cards, donut and log are that week;
+// view only changes the trend chart: that week (weekly) or that date's month (monthly).
+
+exports.attendance_team_dashboard = Joi.object({
+  ...zodu_branch,
+  date: Joi.string().pattern(date_pattern),
+  view: Joi.string().valid('weekly', 'monthly').default('weekly'),
+  search: Joi.string().trim().max(100).allow(''),
+  page:  Joi.number().integer().min(1).default(1),
+  limit: Joi.number().integer().min(1).max(100).default(10),
+});
+
 // ── CHECK-IN / CHECK-OUT  POST /api/attendance/check-in | check-out ──────────
 // No fields: the employee is the signed-in user and the time is the server's.
 
