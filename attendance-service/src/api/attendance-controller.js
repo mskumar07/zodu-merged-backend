@@ -1,6 +1,7 @@
 const express = require('express');
 const router  = express.Router();
 const service  = require('../services/attendance-service');
+const dashboardService = require('../services/dashboard-service');
 const RequestValidator = require('../utils/requestValidator');
 const schema  = require('../schema/attendance-schema');
 const security    = require('../security');
@@ -114,6 +115,40 @@ router.get('/my', async (req, res) => {
     const year  = input.year  || defYear;
 
     const result = await service.getMyAttendance({ ...input, employee_id, month, year });
+    return res.status(200).json(result);
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── MY DASHBOARD  GET /api/attendance/dashboard?zodu_id=&branch_id=&week_start=&month=&year= ─
+// The employee dashboard ("Myself") in one response: week summary cards and check-in / check-out
+// log, month calendar, leave balances and upcoming holidays. Always the signed-in user's own.
+router.get('/dashboard', async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(schema.attendance_dashboard, { ...req.query, ...tenantOf(req) });
+    if (errors) return res.status(400).json({ success: false, errors });
+
+    const employee = await employeeRepo.findByUser(req.auth.userId, input);
+    if (!employee) return res.status(404).json({ success: false, error: 'No employee record for this user' });
+
+    return res.status(200).json(await dashboardService.getDashboard({ ...input, employee }));
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── TEAM DASHBOARD  GET /api/attendance/dashboard/team?zodu_id=&branch_id=&date=&view=&search=&page=&limit= ─
+// The manager / Admin dashboard ("Team"): the day's counts, attendance trend, employees' log and
+// the leave requests waiting for the caller. Needs attendance:read (the route rule).
+router.get('/dashboard/team', async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(schema.attendance_team_dashboard, { ...req.query, ...tenantOf(req) });
+    if (errors) return res.status(400).json({ success: false, errors });
+
+    const result = await dashboardService.getTeamDashboard({
+      ...input, user_id: req.auth.userId, is_owner: callerOf(req).isOwner,
+    });
     return res.status(200).json(result);
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });

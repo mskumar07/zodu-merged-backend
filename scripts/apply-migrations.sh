@@ -446,9 +446,15 @@ apply "$ATTENDANCE_DB" attendance-service/migrations/leave_types_settings.sql
 apply "$ATTENDANCE_DB" attendance-service/migrations/shift_templates.sql
 # Leave → Holidays: 'Restricted Holiday' type and applicable_to / department_ids on tbl_holidays.
 apply "$ATTENDANCE_DB" attendance-service/migrations/holidays_settings.sql
-# fn_purge_branch / fn_purge_company for the leave tables and tbl_shift_templates (was leave_purge_functions.sql;
-# renamed so it runs once more with the shift templates added). REPLACES the earlier versions; keep it last.
-apply "$ATTENDANCE_DB" attendance-service/migrations/leave_shift_purge_functions.sql
+# Team dashboard (GET /api/attendance/dashboard/team): covering index on tbl_attendance, partial index on
+# active employees, partial index on Pending leave requests (needs leave_management.sql first).
+apply "$ATTENDANCE_DB" attendance-service/migrations/team_dashboard_indexes.sql
+# Leave → Leave Policy: tbl_leave_policies (settings per branch; leave balances do not use them yet).
+apply "$ATTENDANCE_DB" attendance-service/migrations/leave_policies.sql
+# fn_purge_branch / fn_purge_company for the leave tables, tbl_leave_policies and tbl_shift_templates (was
+# leave_shift_purge_functions.sql; renamed so it runs once more with the leave policies added). REPLACES the
+# earlier versions; keep it last.
+apply "$ATTENDANCE_DB" attendance-service/migrations/leave_shift_policy_purge_functions.sql
 
 # Older rows were written before PUBLIC_FILE_BASE_URL existed, so they carry
 # whatever origin the code defaulted to at the time (myzodu.com, zodu.in, ...).

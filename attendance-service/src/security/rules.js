@@ -7,6 +7,11 @@ const { crud } = require('@zodu/security');
 module.exports = [
   // Own attendance: any signed-in user; another employee's needs attendance:read (handler).
   { method: 'GET', path: '/api/attendance/my', authenticated: true },
+  // Team dashboard (manager / Admin): the Attendance module. Listed before the own-dashboard rule below.
+  { method: 'GET', path: '/api/attendance/dashboard/team', perm: 'attendance:read' },
+  // Own dashboard: any signed-in user; the handler only ever reads the caller's own employee record.
+  // Exact path: a prefix would also open everything under it.
+  { method: 'GET', path: /^\/api\/attendance\/dashboard$/, authenticated: true },
   // Self check-in / check-out: any signed-in employee, for themselves only (the handler
   // resolves the employee from the token).
   { method: 'POST', path: /^\/api\/attendance\/check-(in|out)$/, authenticated: true },
@@ -22,6 +27,11 @@ module.exports = [
   // editing and deleting (which switches a type off) need the Settings module. The company Admin always passes.
   { method: 'GET', path: '/api/leave-types', authenticated: true },
   ...crud('/api/leave-types', 'settings'),
+
+  // Leave → Leave Policy. Anyone signed in may read them; adding, editing and deleting need the Settings module,
+  // like leave types. The company Admin always passes.
+  { method: 'GET', path: '/api/leave-policies', authenticated: true },
+  ...crud('/api/leave-policies', 'settings'),
 
   // Shift Allocation → Shift Templates. Anyone signed in may read them; adding, editing and deleting (which switches
   // a template off) need the Attendance module. The company Admin always passes.
