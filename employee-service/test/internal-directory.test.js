@@ -66,3 +66,19 @@ describe('directory', () => {
     expect(db.query).not.toHaveBeenCalled();
   });
 });
+
+describe('roster (attendance-service only)', () => {
+  process.env.INTERNAL_TOKEN_ATTENDANCE = T('t');
+
+  test('attendance only; scope required', async () => {
+    db.query.mockResolvedValue({ rows: [{ employee_id: 'E1', name: 'A', status: 'active' }] });
+    const url = '/internal/employees/roster?zodu_id=Z001&branch_id=B1';
+    expect((await request(app).get(url)).status).toBe(401);
+    for (const c of ['a', 'c', 'v']) expect((await request(app).get(url).set(as(c))).status).toBe(403);
+    const ok = await request(app).get(url).set(as('t'));
+    expect(ok.status).toBe(200);
+    expect(ok.body.data).toHaveLength(1);
+    expect(db.query.mock.calls[0][1]).toEqual(['Z001', 'B1']);
+    expect((await request(app).get('/internal/employees/roster?zodu_id=Z001').set(as('t'))).status).toBe(400);
+  });
+});

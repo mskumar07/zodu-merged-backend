@@ -16,11 +16,11 @@ module.exports = {
   DB_PORT:             process.env.DB_PORT,
   DB_HOSTNAME:         process.env.DB_HOSTNAME,
   DB_NAME:             process.env.DB_NAME,
-  // Employee documents live in file-service; utils/file-client.js reads
-  // FILE_SERVICE_URL straight from the environment. Service-to-service tokens
-  // (@zodu/security): INTERNAL_TOKEN is sent on calls to auth / payroll / file-service,
-  // which hold it as INTERNAL_TOKEN_ATTENDANCE. This service has no /internal routes.
-  FILE_SERVICE_URL:    process.env.FILE_SERVICE_URL    || 'http://file-service:4007',
+  // Employees (records, documents, emergency contacts, faces) live in employee-service; this service
+  // reads the branch roster from its /internal API. Service-to-service tokens (@zodu/security):
+  // INTERNAL_TOKEN is sent on calls to auth / payroll / employee-service, which hold it as
+  // INTERNAL_TOKEN_ATTENDANCE. This service has no /internal routes.
+  EMPLOYEE_SERVICE_URL: process.env.EMPLOYEE_SERVICE_URL || 'http://employee-service:4002',
   AUTH_SERVICE_URL:    process.env.AUTH_SERVICE_URL    || 'http://auth-service:4000',
   PAYROLL_SERVICE_URL: process.env.PAYROLL_SERVICE_URL || 'http://payroll-service:4004',
 };

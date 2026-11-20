@@ -15,10 +15,8 @@ app.set('router options', { strict: false });
 
 // Customer routes: access token, company/branch from the token, route permissions.
 app.use(security.middleware);
-// Stored file ids → fresh URLs in every JSON response (document file_url, profile_photo_url).
-app.use(require('./utils/file-client').fileUrlsMiddleware);
 
-app.use('/api/employees',   require('./api/employee-controller'));
+// Employee records, documents, emergency contacts and faces are employee-service's (/employee/api/employees).
 app.use('/api/attendance',  require('./api/attendance-controller'));
 app.use('/api/leave',       require('./api/leave-controller'));
 app.use('/api/leave-types', require('./api/leave-type-controller'));

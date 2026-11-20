@@ -1,5 +1,6 @@
 const db = require('../database/connection');
-const { likeOf } = require('../utils/sql');
+const { likeOf, EMPLOYEES_CTE } = require('../utils/sql');
+const { rosterJson } = require('../clients/employee-directory');
 
 // Employee dashboard queries. Each one is a single index range scan: tbl_attendance on its
 // (employee_id, attendance_date) unique key, tbl_holidays on (zodu_id, branch_id, holiday_date).
@@ -35,8 +36,10 @@ exports.findDays = async ({ zodu_id, branch_id, employee_id, from, to }) => {
 // $6 trend from  $7 trend to (exclusive)    the trend chart: the same week, or the month (Weekly / Monthly)
 // $8 search  $9 caller is the company Admin  $10 page size  $11 offset  $12 pending requests to list
 // $13 today (IST): counts stop there, so a leave approved ahead (written for a coming day) isn't counted yet
+// $14 the branch roster from employee-service (JSON): its CTE is named tbl_employees, so the rest reads as before
 const TEAM_DASHBOARD_SQL = `
-WITH caller AS (
+WITH ${EMPLOYEES_CTE(14)},
+caller AS (
   SELECT employee_id FROM tbl_employees
   WHERE user_id = $3 AND zodu_id = $1 AND branch_id = $2
   LIMIT 1
@@ -133,10 +136,11 @@ SELECT
            LIMIT $12) q) AS pending`;
 
 exports.findTeamDashboard = async (p) => {
+  const roster = await rosterJson(p);
   const { rows } = await db.query(TEAM_DASHBOARD_SQL, [
     p.zodu_id, p.branch_id, p.user_id,
     p.week_from, p.week_to, p.trend_from, p.trend_to,
-    likeOf(p.search), p.is_owner, p.limit, p.offset, p.pending_limit, p.today,
+    likeOf(p.search), p.is_owner, p.limit, p.offset, p.pending_limit, p.today, roster,
   ]);
   return rows[0];
 };

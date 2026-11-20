@@ -15,8 +15,27 @@ const COLUMNS = `
   TO_CHAR(effective_from, 'YYYY-MM-DD') AS effective_from,
   is_active, sort_order`;
 
+/**
+ * A branch that has no leave types at all gets the defaults (CL / SL / PL / EL). This used to be a trigger on the
+ * branch's first employee; employees now live in employee-service, so the branch's first read does it. One index
+ * lookup once the branch has types, and ON CONFLICT DO NOTHING makes two requests at once harmless.
+ */
+const seeded = new Set(); // branches known to have leave types: after the first check, no extra query per request
+const ensureDefaults = async ({ zodu_id, branch_id }) => {
+  const key = `${zodu_id}|${branch_id}`;
+  if (seeded.has(key)) return;
+  await db.query(
+    `SELECT fn_seed_default_leave_types($1, $2)
+     WHERE NOT EXISTS (SELECT 1 FROM tbl_leave_types WHERE zodu_id = $1 AND branch_id = $2)`,
+    [zodu_id, branch_id]
+  );
+  seeded.add(key);
+};
+exports.ensureDefaults = ensureDefaults;
+
 /** The branch's leave types in their screen order. status: true = active only, false = inactive only, null = all. */
 exports.list = async ({ zodu_id, branch_id, is_active = null, search }) => {
+  await ensureDefaults({ zodu_id, branch_id });
   const { rows } = await db.query(
     `SELECT ${COLUMNS}
      FROM tbl_leave_types
