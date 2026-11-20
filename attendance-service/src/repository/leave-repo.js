@@ -1,5 +1,10 @@
 const db = require('../database/connection');
-const { likeOf } = require('../utils/sql');
+const { likeOf, EMPLOYEES_CTE } = require('../utils/sql');
+const { rosterJson } = require('../clients/employee-directory');
+const { ensureDefaults } = require('./leave-type-repo');
+
+// Employees come from employee-service: queries that read them start with `WITH ${EMPLOYEES_CTE(n)}`, a CTE named
+// tbl_employees built from the branch roster passed as parameter $n.
 
 // Leave queries. Every list is scoped by (zodu_id, branch_id) first, which is what the indexes lead
 // with; dates, times and the period text are formatted here, by the database, so the screens only show them.
@@ -38,6 +43,7 @@ const EMPLOYEE_COLUMNS = `e.employee_id, e.employee_code, e.name AS employee_nam
 // entitlement - approved - pending, added up from the requests (there is no stored balance).
 
 exports.findBalances = async ({ zodu_id, branch_id, employee_id, year }) => {
+  await ensureDefaults({ zodu_id, branch_id });
   const { rows } = await db.query(
     `SELECT lt.leave_type_id, lt.code, lt.name,
             lt.annual_days::float8 AS entitlement,
@@ -125,8 +131,9 @@ exports.previewDays = async ({ zodu_id, branch_id, employee_id, from_date, to_da
  * out in the same statement. Overlapping live leave raises 23P01, no working day raises 23514.
  */
 exports.insertRequest = async ({ zodu_id, branch_id, employee_id, leave_type_id, from_date, to_date, reason }) => {
+  const roster = await rosterJson({ zodu_id, branch_id });
   const { rows } = await db.query(
-    `WITH ins AS (
+    `WITH ${EMPLOYEES_CTE(8)}, ins AS (
        INSERT INTO tbl_leave_requests (zodu_id, branch_id, employee_id, leave_type_id, from_date, to_date, days, reason)
        SELECT e.zodu_id, e.branch_id, e.employee_id, lt.leave_type_id, $5::date, $6::date,
               ${WORKING_DAYS('$5', '$6', '$1', '$2')}, $7
@@ -138,7 +145,7 @@ exports.insertRequest = async ({ zodu_id, branch_id, employee_id, leave_type_id,
      )
      SELECT ${REQUEST_COLUMNS}
      FROM ins lr JOIN tbl_leave_types lt ON lt.leave_type_id = lr.leave_type_id`,
-    [zodu_id, branch_id, employee_id, leave_type_id, from_date, to_date, reason]
+    [zodu_id, branch_id, employee_id, leave_type_id, from_date, to_date, reason, roster]
   );
   return rows[0] || null;
 };
@@ -175,8 +182,10 @@ const TEAM_SCOPE = `
 
 /** Pending requests waiting for the caller, soonest leave first. */
 exports.listPending = async ({ zodu_id, branch_id, caller_id, is_owner, search, limit, offset }) => {
+  const roster = await rosterJson({ zodu_id, branch_id });
   const { rows } = await db.query(
-    `SELECT ${REQUEST_COLUMNS}, ${EMPLOYEE_COLUMNS}, COUNT(*) OVER()::int AS total
+    `WITH ${EMPLOYEES_CTE(8)}
+     SELECT ${REQUEST_COLUMNS}, ${EMPLOYEE_COLUMNS}, COUNT(*) OVER()::int AS total
      FROM tbl_leave_requests lr
      JOIN tbl_employees e    ON e.employee_id = lr.employee_id
      JOIN tbl_leave_types lt ON lt.leave_type_id = lr.leave_type_id
@@ -185,15 +194,17 @@ exports.listPending = async ({ zodu_id, branch_id, caller_id, is_owner, search, 
        AND ($5::text IS NULL OR e.name ILIKE $5 OR e.employee_code ILIKE $5)
      ORDER BY lr.from_date, lr.applied_at, lr.leave_request_id
      LIMIT $6 OFFSET $7`,
-    [zodu_id, branch_id, caller_id, is_owner, likeOf(search), limit, offset]
+    [zodu_id, branch_id, caller_id, is_owner, likeOf(search), limit, offset, roster]
   );
   return rows;
 };
 
 /** "All Leaves": the team's requests for a year, latest applied first. */
 exports.listTeamLeaves = async ({ zodu_id, branch_id, caller_id, is_owner, year, search, leave_type, status, limit, offset }) => {
+  const roster = await rosterJson({ zodu_id, branch_id });
   const { rows } = await db.query(
-    `SELECT ${REQUEST_COLUMNS}, ${EMPLOYEE_COLUMNS}, COUNT(*) OVER()::int AS total
+    `WITH ${EMPLOYEES_CTE(11)}
+     SELECT ${REQUEST_COLUMNS}, ${EMPLOYEE_COLUMNS}, COUNT(*) OVER()::int AS total
      FROM tbl_leave_requests lr
      JOIN tbl_employees e    ON e.employee_id = lr.employee_id
      JOIN tbl_leave_types lt ON lt.leave_type_id = lr.leave_type_id
@@ -205,7 +216,7 @@ exports.listTeamLeaves = async ({ zodu_id, branch_id, caller_id, is_owner, year,
        AND ($8::text IS NULL OR lr.status = $8)
      ORDER BY lr.applied_at DESC, lr.leave_request_id
      LIMIT $9 OFFSET $10`,
-    [zodu_id, branch_id, caller_id, is_owner, year, likeOf(search), leave_type || null, status || null, limit, offset]
+    [zodu_id, branch_id, caller_id, is_owner, year, likeOf(search), leave_type || null, status || null, limit, offset, roster]
   );
   return rows;
 };
@@ -218,8 +229,9 @@ exports.listTeamLeaves = async ({ zodu_id, branch_id, caller_id, is_owner, year,
  * managers deciding at once can't both win. Returns the rows that were changed.
  */
 exports.decide = async (client, d) => {
+  const roster = await rosterJson(d);
   const { rows } = await client.query(
-    `WITH target AS (
+    `WITH ${EMPLOYEES_CTE(10)}, target AS (
        SELECT lr.leave_request_id
        FROM tbl_leave_requests lr
        JOIN tbl_employees e ON e.employee_id = lr.employee_id
@@ -235,7 +247,7 @@ exports.decide = async (client, d) => {
        FROM target t
       WHERE lr.leave_request_id = t.leave_request_id
       RETURNING lr.leave_request_id`,
-    [d.ids, d.zodu_id, d.branch_id, d.caller_id, d.is_owner, d.decision, d.decided_by, d.decided_by_name, d.note || null]
+    [d.ids, d.zodu_id, d.branch_id, d.caller_id, d.is_owner, d.decision, d.decided_by, d.decided_by_name, d.note || null, roster]
   );
   return rows.map((r) => r.leave_request_id);
 };

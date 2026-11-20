@@ -455,6 +455,11 @@ apply "$ATTENDANCE_DB" attendance-service/migrations/leave_policies.sql
 # leave_shift_purge_functions.sql; renamed so it runs once more with the leave policies added). REPLACES the
 # earlier versions; keep it last.
 apply "$ATTENDANCE_DB" attendance-service/migrations/leave_shift_policy_purge_functions.sql
+# Employees moved to employee-service: drops the FKs / trigger on the local tbl_employees and re-creates the purge
+# functions without the employee tables. Keep it after leave_shift_policy_purge_functions.sql (it replaces them again).
+# Then the local employee tables are dropped (employees live in employee-service now; DESTRUCTIVE: back up first).
+apply "$ATTENDANCE_DB" attendance-service/migrations/employees_moved_to_employee_service.sql
+apply "$ATTENDANCE_DB" attendance-service/migrations/drop_local_employee_tables.sql
 
 # Older rows were written before PUBLIC_FILE_BASE_URL existed, so they carry
 # whatever origin the code defaulted to at the time (myzodu.com, zodu.in, ...).

@@ -1,4 +1,9 @@
 const db = require('../database/connection');
+const { EMPLOYEES_CTE } = require('../utils/sql');
+const { rosterJson } = require('../clients/employee-directory');
+
+// Employees come from employee-service: each query that reads them starts with `WITH ${EMPLOYEES_CTE(n)}`, a
+// CTE named tbl_employees built from the branch roster passed as parameter $n, so the joins read as before.
 
 // ── MARK / UPSERT ─────────────────────────────────────────────────────────────
 // One row per employee per date — re-marking the same date overwrites it.
@@ -47,8 +52,9 @@ const EMPLOYEE_DAY_COLUMNS = `
  * the result is null. The IST times are built on the database from the day + "HH:mm".
  */
 exports.saveEmployeeDay = async (d) => {
+  const roster = await rosterJson(d);
   const { rows } = await db.query(
-    `WITH saved AS (
+    `WITH ${EMPLOYEES_CTE(11)}, saved AS (
        INSERT INTO tbl_attendance (
          zodu_id, branch_id, employee_id, attendance_date, status,
          check_in_time, check_out_time, remarks, marked_by, marked_by_name
@@ -73,7 +79,7 @@ exports.saveEmployeeDay = async (d) => {
      FROM saved a
      JOIN tbl_employees e ON e.employee_id = a.employee_id`,
     [d.zodu_id, d.branch_id, d.employee_id, d.attendance_date, d.status,
-     d.check_in_time, d.check_out_time, d.remarks, d.marked_by, d.marked_by_name]
+     d.check_in_time, d.check_out_time, d.remarks, d.marked_by, d.marked_by_name, roster]
   );
   return rows[0] || null;
 };
@@ -84,8 +90,10 @@ exports.saveEmployeeDay = async (d) => {
 // that was already marked.
 
 exports.findEmployeesForMarking = async ({ zodu_id, branch_id, attendance_date, limit, offset }) => {
+  const roster = await rosterJson({ zodu_id, branch_id });
   const { rows } = await db.query(
-    `SELECT
+    `WITH ${EMPLOYEES_CTE(6)}
+     SELECT
        e.employee_id,
        e.employee_code,
        e.name AS employee_name,
@@ -99,7 +107,7 @@ exports.findEmployeesForMarking = async ({ zodu_id, branch_id, attendance_date, 
      WHERE e.zodu_id = $1 AND e.branch_id = $2 AND e.status = 'active' and e.name != 'Admin'
      ORDER BY e.name
      LIMIT $4 OFFSET $5`,
-    [zodu_id, branch_id, attendance_date, limit, offset]
+    [zodu_id, branch_id, attendance_date, limit, offset, roster]
   );
   return rows;
 };
@@ -122,9 +130,10 @@ const likeOf = (search) => (search ? `%${search.replace(/[\\%_]/g, '\\$&')}%` : 
 //              page, so the summary cards stay put while the list is filtered.
 
 exports.findTeamAttendance = async ({ zodu_id, branch_id, employee_id, month, year, search, limit, offset }) => {
+  const roster = await rosterJson({ zodu_id, branch_id });
   const [page, summary] = await Promise.all([
     db.query(
-      `WITH page AS (
+      `WITH ${EMPLOYEES_CTE(9)}, page AS (
          SELECT e.employee_id, e.employee_code, e.name AS employee_name,
                 e.reporting_manager_name AS designation,
                 COUNT(*) OVER()::int AS filtered_total
@@ -159,10 +168,11 @@ exports.findTeamAttendance = async ({ zodu_id, branch_id, employee_id, month, ye
            AND a.attendance_date <  MAKE_DATE($4::int, $5::int, 1) + INTERVAL '1 month'
        ) x
        ORDER BY p.employee_name, p.employee_id`,
-      [zodu_id, branch_id, employee_id, year, month, likeOf(search), limit, offset]
+      [zodu_id, branch_id, employee_id, year, month, likeOf(search), limit, offset, roster]
     ),
     db.query(
-      `SELECT
+      `WITH ${EMPLOYEES_CTE(6)}
+       SELECT
          (SELECT COUNT(*)::int FROM tbl_employees e WHERE ${TEAM_BASE}) AS total_employees,
          COUNT(*) FILTER (WHERE a.status = 'Present')::int    AS total_present_days,
          COUNT(*) FILTER (WHERE a.status = 'Absent')::int     AS total_absent_days,
@@ -173,7 +183,7 @@ exports.findTeamAttendance = async ({ zodu_id, branch_id, employee_id, month, ye
        WHERE ${TEAM_BASE}
          AND a.attendance_date >= MAKE_DATE($4::int, $5::int, 1)
          AND a.attendance_date <  MAKE_DATE($4::int, $5::int, 1) + INTERVAL '1 month'`,
-      [zodu_id, branch_id, employee_id, year, month]
+      [zodu_id, branch_id, employee_id, year, month, roster]
     ),
   ]);
   return { rows: page.rows, summary: summary.rows[0] };
@@ -184,9 +194,11 @@ exports.findTeamAttendance = async ({ zodu_id, branch_id, employee_id, month, ye
 // one page of employees LEFT JOINed to that day's attendance row.
 
 exports.findTeamDay = async ({ zodu_id, branch_id, employee_id, attendance_date, search, status, limit, offset }) => {
+  const roster = await rosterJson({ zodu_id, branch_id });
   const [page, summary] = await Promise.all([
     db.query(
-      `SELECT
+      `WITH ${EMPLOYEES_CTE(9)}
+       SELECT
          e.employee_id, e.employee_code, e.name AS employee_name,
          a.status,
          TO_CHAR(a.check_in_time  AT TIME ZONE 'Asia/Kolkata', 'HH12:MI AM') AS check_in_time,
@@ -202,10 +214,11 @@ exports.findTeamDay = async ({ zodu_id, branch_id, employee_id, attendance_date,
          AND ($6::text IS NULL OR ($6 = 'none' AND a.status IS NULL) OR a.status = $6)
        ORDER BY e.name, e.employee_id
        LIMIT $7 OFFSET $8`,
-      [zodu_id, branch_id, employee_id, attendance_date, likeOf(search), status || null, limit, offset]
+      [zodu_id, branch_id, employee_id, attendance_date, likeOf(search), status || null, limit, offset, roster]
     ),
     db.query(
-      `SELECT
+      `WITH ${EMPLOYEES_CTE(5)}
+       SELECT
          COUNT(*)::int                                          AS total_employees,
          COUNT(*) FILTER (WHERE a.status = 'Present')::int      AS present,
          COUNT(*) FILTER (WHERE a.status = 'Absent')::int       AS absent,
@@ -215,7 +228,7 @@ exports.findTeamDay = async ({ zodu_id, branch_id, employee_id, attendance_date,
        LEFT JOIN tbl_attendance a
          ON a.employee_id = e.employee_id AND a.attendance_date = $4::date
        WHERE ${TEAM_BASE}`,
-      [zodu_id, branch_id, employee_id, attendance_date]
+      [zodu_id, branch_id, employee_id, attendance_date, roster]
     ),
   ]);
   return { rows: page.rows, summary: summary.rows[0] };

@@ -1,5 +1,6 @@
 const db = require('../database/connection');
 const repo = require('../repository/leave-repo');
+const directory = require('../clients/employee-directory');
 const { httpError } = require('../utils/http-error');
 const { istToday } = require('../utils/ist');
 const { parseHolidaySheet } = require('../utils/holiday-sheet');
@@ -162,6 +163,9 @@ exports.decide = async ({ zodu_id, branch_id, employee, isOwner, userId, ids, de
   const scope = callerScope({ employee, isOwner });
   const decided_by = employee?.employee_id ?? userId;
   const decided_by_name = employee?.name ?? '-';
+
+  // Load the branch's employees before taking a connection and row locks: the transaction never waits on employee-service.
+  await directory.prefetch({ zodu_id, branch_id });
 
   const client = await db.connect();
   let updated;

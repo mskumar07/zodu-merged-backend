@@ -117,6 +117,32 @@ router.get('/employees/directory', async (req, res) => {
   }
 });
 
+// GET /internal/employees/roster — attendance-service only. The branch's employees (every status), which it
+// joins into its attendance / leave / dashboard queries instead of keeping an employee table of its own.
+// Query: zodu_id, branch_id → { data: [{ employee_id, employee_code, user_id, name, status, reporting_manager_id,
+// reporting_manager_name }] }. A branch's roster is a few hundred rows; capped so a bad scope can't return a table.
+router.get('/employees/roster', async (req, res) => {
+  const { zodu_id, branch_id } = req.query;
+  if (typeof zodu_id !== 'string' || !zodu_id || typeof branch_id !== 'string' || !branch_id) {
+    return res.status(400).json({ success: false, error: 'zodu_id and branch_id are required' });
+  }
+  try {
+    const { rows } = await db.query(
+      `SELECT employee_id, employee_code, user_id, name, status, reporting_manager_id, reporting_manager_name,
+              zodu_id, branch_id
+         FROM tbl_employees
+        WHERE zodu_id = $1 AND branch_id = $2
+        ORDER BY name, employee_id
+        LIMIT 5000`,
+      [zodu_id, branch_id]
+    );
+    return res.status(200).json({ success: true, data: rows });
+  } catch (err) {
+    console.error('[internal] roster failed:', err.message);
+    return res.status(500).json({ success: false, error: 'roster lookup failed' });
+  }
+});
+
 // POST /internal/branches/:zodu_id/:branch_id/purge — hard-delete every row
 // scoped to this branch. Called by auth-service's delete-branch orchestrator.
 router.post('/branches/:zodu_id/:branch_id/purge', async (req, res) => {

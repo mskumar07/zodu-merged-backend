@@ -35,7 +35,7 @@ CALLERS=(auth employee attendance restaurant retail checklist checklist_v2 admin
 # Who accepts calls from whom (mirrors the requireInternal(...) lists in the code).
 declare -A ACCEPTS=(
   [auth-service]="restaurant retail admin employee attendance file checklist checklist_v2"
-  [employee-service]="auth checklist checklist_v2"
+  [employee-service]="auth checklist checklist_v2 attendance"
   [attendance-service]=""
   [restaurant-service]="auth"
   [retail-service]="auth admin"

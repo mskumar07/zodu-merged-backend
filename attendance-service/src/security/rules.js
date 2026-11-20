@@ -4,6 +4,8 @@
 
 const { crud } = require('@zodu/security');
 
+// Employees (records, documents, faces) are not served here: they are employee-service's routes.
+
 module.exports = [
   // Own attendance: any signed-in user; another employee's needs attendance:read (handler).
   { method: 'GET', path: '/api/attendance/my', authenticated: true },
@@ -42,10 +44,4 @@ module.exports = [
   // Attendance module, like the Excel import above. The company Admin always passes.
   { method: 'GET', path: '/api/holidays', authenticated: true },
   ...crud('/api/holidays', 'attendance'),
-
-  // Documents belong to the employee record: editing it.
-  { method: ['POST', 'DELETE'], path: /^\/api\/employees\/[^/]+\/documents(\/[^/]+)?$/, perm: 'employee:edit' },
-  // Assigning a role is also checked in the handler (role:edit).
-  { method: 'PUT', path: /^\/api\/employees\/[^/]+\/login-details$/, perm: 'employee:edit' },
-  ...crud('/api/employees', 'employee'),
 ];
