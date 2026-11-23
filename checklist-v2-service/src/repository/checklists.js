@@ -67,6 +67,27 @@ function scheduleOut(s) {
   };
 }
 
+// A task's (or run item's) reference files as file refs: fileUrlsMiddleware adds { url }.
+function attachmentsOut(list, tenant) {
+  return (list || []).map((a) => ({
+    id: a.id, file_name: a.file_name, content_type: a.content_type, file_id: a.file_id,
+    file_ctx: `${tenant.zodu_id}/${tenant.branch_id}`, url_key: 'url',
+  }));
+}
+
+// Snapshots of this branch's uploaded task files for these ids, in order.
+// Any unknown (or another branch's) id → null: the caller refuses the save.
+async function taskFileSnapshots(db, tenant, ids) {
+  if (!ids.length) return [];
+  const { rows } = await db.query(
+    `SELECT id, file_id, file_name, content_type FROM ckl.task_files
+      WHERE id = ANY($1::uuid[]) AND zodu_id = $2 AND branch_id = $3`,
+    [ids, tenant.zodu_id, tenant.branch_id],
+  );
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return ids.every((id) => byId.has(id)) ? ids.map((id) => byId.get(id)) : null;
+}
+
 function definitionOut(def, tenant) {
   const { c, s, tasks, assignees, rules, images, reviewerName } = def;
   return {
@@ -88,6 +109,7 @@ function definitionOut(def, tenant) {
     tasks: tasks.map((t) => ({
       id: t.id, position: t.position, title: t.title, instructions: t.instructions,
       require_photo: t.require_photo, allow_notes: t.allow_notes,
+      attachments: attachmentsOut(t.attachments, tenant),
     })),
     rules: rules.map((r) => ({
       id: r.id, rule_type: r.rule_type, offset_min: r.offset_min, threshold: r.threshold, target: r.target,
@@ -95,7 +117,7 @@ function definitionOut(def, tenant) {
     })),
     // file refs: fileUrlsMiddleware swaps them for fresh URLs ({ ..., url }).
     images: images.map((i) => ({
-      id: i.id, position: i.position, file_name: i.file_name, file_id: i.file_id,
+      id: i.id, position: i.position, file_name: i.file_name, content_type: i.content_type, file_id: i.file_id,
       file_ctx: `${tenant.zodu_id}/${tenant.branch_id}`, url_key: 'url',
     })),
     created_by: { user_id: c.created_by_user_id, name: c.created_by_name },
@@ -196,12 +218,13 @@ async function replaceTasks(db, checklistId, tasks) {
   await db.query('DELETE FROM ckl.checklist_tasks WHERE checklist_id = $1', [checklistId]);
   if (!tasks.length) return;
   await db.query(
-    `INSERT INTO ckl.checklist_tasks (checklist_id, position, title, instructions, require_photo, allow_notes)
-     SELECT $1, x.ord, x.title, NULLIF(x.instructions, ''), x.require_photo, x.allow_notes
-       FROM unnest($2::text[], $3::text[], $4::boolean[], $5::boolean[]) WITH ORDINALITY
-            AS x(title, instructions, require_photo, allow_notes, ord)`,
+    `INSERT INTO ckl.checklist_tasks (checklist_id, position, title, instructions, require_photo, allow_notes, attachments)
+     SELECT $1, x.ord, x.title, NULLIF(x.instructions, ''), x.require_photo, x.allow_notes, x.attachments
+       FROM unnest($2::text[], $3::text[], $4::boolean[], $5::boolean[], $6::jsonb[]) WITH ORDINALITY
+            AS x(title, instructions, require_photo, allow_notes, attachments, ord)`,
     [checklistId, tasks.map((t) => t.title), tasks.map((t) => t.instructions ?? null),
-      tasks.map((t) => t.require_photo), tasks.map((t) => t.allow_notes)],
+      tasks.map((t) => t.require_photo), tasks.map((t) => t.allow_notes),
+      tasks.map((t) => JSON.stringify(t.attachments || []))],
   );
 }
 
@@ -258,5 +281,4 @@ async function categoryUsable(tenant, categoryId, db = pool) {
 
 module.exports = {
   findDefinition, definitionOut, scheduleOut, list, listRowOut,
-  insertSchedule, updateSchedule, replaceTasks, replaceAssignees, syncRules, missingEmployees, categoryUsable,
-};
+  insertSchedule, updateSchedule, replaceTasks, replaceAssignees, syncRules, missingEmployees, categoryUsable, attachmentsOut, taskFileSnapshots };

@@ -1,5 +1,6 @@
 // Checklist definitions: create / edit / status / duplicate / delete / images /
 // schedule preview. Design: §5.3 (edit policy), §8.3 (create flow).
+const crypto = require('node:crypto');
 const pool = require('../database/pool');
 const { withTransaction } = require('../database/tx');
 const repo = require('../repository/checklists');
@@ -131,7 +132,7 @@ async function create(tenant, actor, body) {
         body.settings.allow_partial, body.settings.allow_notes, actor.userId, name],
     );
     await repo.insertSchedule(db, c.id, schedule);
-    await repo.replaceTasks(db, c.id, body.tasks);
+    await repo.replaceTasks(db, c.id, await withTaskFiles(db, tenant, body.tasks));
     await repo.replaceAssignees(db, c.id, body.assignee_employee_ids);
     await repo.syncRules(db, c.id, rules);
     return c.id;
@@ -140,6 +141,19 @@ async function create(tenant, actor, body) {
   await generate(id);
   await notifyAssigned(tenant, id, actor.userId);
   return getDefinition(tenant, id);
+}
+
+// The tasks with their reference files as stored snapshots; a file that isn't one
+// of this branch's uploads refuses the save.
+async function withTaskFiles(db, tenant, tasks) {
+  const out = [];
+  for (const t of tasks) {
+    const ids = [...new Set((t.attachments || []).map((a) => a.id))];
+    const snaps = await repo.taskFileSnapshots(db, tenant, ids);
+    if (!snaps) throw unprocessable('A task file was not found. Upload it again.', 'TASK_FILE_NOT_FOUND');
+    out.push({ ...t, attachments: snaps });
+  }
+  return out;
 }
 
 const sameValue = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
@@ -172,16 +186,18 @@ async function update(tenant, actor, id, body) {
         body.settings.allow_partial, body.settings.allow_notes, actor.userId, name],
     );
     await repo.updateSchedule(db, id, schedule);
-    await repo.replaceTasks(db, id, body.tasks);
+    await repo.replaceTasks(db, id, await withTaskFiles(db, tenant, body.tasks));
     await repo.replaceAssignees(db, id, body.assignee_employee_ids);
     await repo.syncRules(db, id, rules);
 
-    // Effective point: now, or the start of tomorrow in the checklist's zone (§5.3).
+    // Effective point (§5.3), in the checklist's zone: NOW = the start of today, so every
+    // untouched run of today is rebuilt, including ones whose time has already passed
+    // (otherwise e.g. a 09:00 daily run edited at 14:00 into a one-time checklist stays
+    // next to the new run and looks like a duplicate). Otherwise the start of tomorrow.
+    // Started / completed runs are never touched either way.
     const { rows: [{ p_from: pFrom }] } = await db.query(
-      body.apply_from === 'NOW'
-        ? 'SELECT now() AS p_from'
-        : 'SELECT (((now() AT TIME ZONE $1)::date + 1)::timestamp AT TIME ZONE $1) AS p_from',
-      body.apply_from === 'NOW' ? [] : [timezone],
+      `SELECT (((now() AT TIME ZONE $1)::date + $2::int)::timestamp AT TIME ZONE $1) AS p_from`,
+      [timezone, body.apply_from === 'NOW' ? 0 : 1],
     );
     await db.query('SELECT ckl.fn_reschedule_checklist($1, $2, $3)', [id, pFrom, recurrenceChanged]);
   }, { actorUserId: actor.userId });
@@ -292,9 +308,34 @@ async function list(tenant, filters) {
   };
 }
 
+// ── task files (file-service, module checklist-v2, category task-files) ─────
+// Uploaded before the checklist is saved; the save lists them on its tasks.
+async function addTaskFiles(tenant, actor, uploaded, ctx) {
+  if (!uploaded.length) throw badRequest('No files', 'NO_FILES');
+  const stored = await files.upload(ctx, { module: FILE_MODULE, entityId: crypto.randomUUID(), category: 'task-files', files: uploaded });
+  try {
+    const out = [];
+    for (let i = 0; i < stored.length; i++) {
+      const { rows: [r] } = await pool.query(
+        `INSERT INTO ckl.task_files (zodu_id, branch_id, file_id, file_name, content_type, size_bytes, uploaded_by_user_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, file_id, file_name, content_type`,
+        [tenant.zodu_id, tenant.branch_id, stored[i].file_id,
+          String(stored[i].original_name || uploaded[i].originalname || 'file').slice(0, 255),
+          String(stored[i].mime_type || stored[i].content_type || uploaded[i].mimetype).slice(0, 120),
+          uploaded[i].size ?? null, actor.userId],
+      );
+      out.push(r);
+    }
+    return repo.attachmentsOut(out, tenant);
+  } catch (err) {
+    files.quietly(files.remove(ctx, stored.map((f) => f.file_id)));
+    throw err;
+  }
+}
+
 // ── images (file-service, module checklist-v2, category images) ─────────────
 async function addImages(tenant, actor, id, uploaded, ctx) {
-  if (!uploaded.length) throw badRequest('No images', 'NO_FILES');
+  if (!uploaded.length) throw badRequest('No files', 'NO_FILES');
   const { rows: used } = await pool.query(
     `SELECT i.position FROM ckl.checklist_images i JOIN ckl.checklists c ON c.id = i.checklist_id
       WHERE c.id = $1 AND c.zodu_id = $2 AND c.branch_id = $3 AND c.deleted_at IS NULL`,
@@ -303,16 +344,17 @@ async function addImages(tenant, actor, id, uploaded, ctx) {
   if (!(await repo.findDefinition(tenant, id))) throw notFound('Checklist not found');
   const free = [1, 2, 3, 4, 5, 6].filter((p) => !used.some((u) => u.position === p));
   if (uploaded.length > free.length) {
-    throw unprocessable(`A checklist has at most ${MAX_IMAGES} images (${free.length} left)`, 'TOO_MANY_IMAGES');
+    throw unprocessable(`A checklist has at most ${MAX_IMAGES} attachments (${free.length} left)`, 'TOO_MANY_IMAGES');
   }
   const stored = await files.upload(ctx, { module: FILE_MODULE, entityId: id, category: 'images', files: uploaded });
   try {
     await withTransaction(async (db) => {
       for (let i = 0; i < stored.length; i++) {
         await db.query(
-          `INSERT INTO ckl.checklist_images (checklist_id, file_id, file_name, position, uploaded_by_user_id)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [id, stored[i].file_id, String(stored[i].original_name || uploaded[i].originalname || 'image').slice(0, 255), free[i], actor.userId],
+          `INSERT INTO ckl.checklist_images (checklist_id, file_id, file_name, position, uploaded_by_user_id, content_type)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [id, stored[i].file_id, String(stored[i].original_name || uploaded[i].originalname || 'file').slice(0, 255), free[i], actor.userId,
+            String(stored[i].mime_type || uploaded[i].mimetype).slice(0, 120)],
         );
       }
     }, { actorUserId: actor.userId });
@@ -341,6 +383,6 @@ async function schedulePreview(tenant, body) {
 }
 
 module.exports = {
-  create, update, setStatus, remove, duplicate, list, getDefinition, addImages, removeImage, schedulePreview,
+  create, update, setStatus, remove, duplicate, list, getDefinition, addImages, removeImage, addTaskFiles, schedulePreview,
   generate, previewOccurrences, actorName, FILE_MODULE,
 };

@@ -120,6 +120,8 @@ const task = Joi.object({
   instructions: text(2000).allow('', null),
   require_photo: Joi.boolean().default(false),
   allow_notes: Joi.boolean().default(true),
+  // reference files uploaded through POST /checklists/task-files
+  attachments: Joi.array().items(Joi.object({ id: anyUuid.required() }).unknown(true)).max(5).default([]),
 });
 
 const checklistBody = {

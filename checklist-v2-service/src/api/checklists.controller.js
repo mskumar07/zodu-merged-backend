@@ -5,7 +5,7 @@ const service = require('../services/checklists');
 const schema = require('../schema');
 const files = require('../clients/file-client');
 const { idempotent } = require('../utils/idempotency');
-const { imageUpload } = require('../utils/uploads');
+const { documentUpload } = require('../utils/uploads');
 const { photoUploads } = require('../utils/limits');
 const { ah } = require('../utils/errors');
 const { uuidParams } = require('./params');
@@ -34,6 +34,13 @@ router.post('/schedule-preview', ah(async (req, res) => {
   ok(res, await service.schedulePreview(tenantOf(req), body));
 }));
 
+// Reference files for tasks: stored now, put on tasks when the checklist is saved.
+router.post('/task-files', photoUploads, documentUpload({ maxFiles: 5 }), security.tenantBody, ah(async (req, res) => {
+  const tenant = tenantOf(req);
+  const ctx = files.requestCtx(req, { zoduId: tenant.zodu_id, branchId: tenant.branch_id, userId: req.auth.userId });
+  ok(res, await service.addTaskFiles(tenant, callerOf(req), req.files || [], ctx), 201);
+}));
+
 router.get('/:id', ah(async (req, res) => ok(res, await service.getDefinition(tenantOf(req), req.params.id))));
 
 router.put('/:id', ah(async (req, res) => {
@@ -58,7 +65,8 @@ router.delete('/:id', ah(async (req, res) => {
   res.status(204).end();
 }));
 
-router.post('/:id/images', photoUploads, imageUpload({ maxFiles: 6 }), security.tenantBody, ah(async (req, res) => {
+// Checklist attachments: photos, PDF, Word or Excel (the route keeps its old name).
+router.post('/:id/images', photoUploads, documentUpload({ maxFiles: 6 }), security.tenantBody, ah(async (req, res) => {
   const tenant = tenantOf(req);
   const ctx = files.requestCtx(req, { zoduId: tenant.zodu_id, branchId: tenant.branch_id, userId: req.auth.userId });
   ok(res, await service.addImages(tenant, callerOf(req), req.params.id, req.files || [], ctx), 201);
