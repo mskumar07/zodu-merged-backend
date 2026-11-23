@@ -40,6 +40,15 @@ module.exports = [
   { method: 'GET', path: '/api/shift-templates', authenticated: true },
   ...crud('/api/shift-templates', 'attendance'),
 
+  // Shift Allocation → Shift Rotation. Same as shift templates: anyone signed in may read; adding, editing and deleting
+  // (which switches a rotation off) need the Attendance module. The company Admin always passes.
+  { method: 'GET', path: '/api/shift-rotations', authenticated: true },
+  ...crud('/api/shift-rotations', 'attendance'),
+
+  // Shift Allocation → Schedule Shifts (the employees x dates grid). Seeing the team's schedule needs attendance:read,
+  // assigning shifts needs attendance:edit. The company Admin always passes.
+  ...crud('/api/shift-schedule', 'attendance'),
+
   // Leave → Holidays (list, export, add, edit, delete). Anyone signed in may read and export; changes need the
   // Attendance module, like the Excel import above. The company Admin always passes.
   { method: 'GET', path: '/api/holidays', authenticated: true },

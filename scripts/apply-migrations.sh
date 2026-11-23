@@ -460,6 +460,12 @@ apply "$ATTENDANCE_DB" attendance-service/migrations/leave_shift_policy_purge_fu
 # Then the local employee tables are dropped (employees live in employee-service now; DESTRUCTIVE: back up first).
 apply "$ATTENDANCE_DB" attendance-service/migrations/employees_moved_to_employee_service.sql
 apply "$ATTENDANCE_DB" attendance-service/migrations/drop_local_employee_tables.sql
+# Shift Allocation Engine → Shift Rotation: tbl_shift_rotations + tbl_shift_rotation_days (needs shift_templates.sql).
+apply "$ATTENDANCE_DB" attendance-service/migrations/shift_rotations.sql
+# Shift Allocation Engine → Schedule Shifts: tbl_shift_assignments (needs shift_templates.sql and shift_rotations.sql).
+apply "$ATTENDANCE_DB" attendance-service/migrations/shift_assignments.sql
+# fn_purge_branch / fn_purge_company with the shift rotations added (REPLACES the earlier versions; keep it last).
+apply "$ATTENDANCE_DB" attendance-service/migrations/shift_rotations_purge_functions.sql
 
 # Older rows were written before PUBLIC_FILE_BASE_URL existed, so they carry
 # whatever origin the code defaulted to at the time (myzodu.com, zodu.in, ...).
