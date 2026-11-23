@@ -35,7 +35,8 @@ if (process.env.NODE_ENV !== 'test') (async () => {
     logger.info('✅ Attendance DB connected');
     client.release();
   } catch (err) {
-    logger.error('❌ Attendance DB connection failed:', err.message);
+    // pino: the error object goes first; arguments after the message are dropped.
+    logger.error({ err, code: err.code }, '❌ Attendance DB connection failed: %s', err.message);
   }
 })();
 

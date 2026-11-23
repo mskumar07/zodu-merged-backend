@@ -113,9 +113,16 @@ async function items(runId, db = pool) {
   const { rows } = await db.query(
     `SELECT i.*, COALESCE(json_agg(json_build_object('id', p.id, 'file_id', p.file_id, 'file_name', p.file_name,
                                                      'created_at', p.created_at) ORDER BY p.created_at)
-                          FILTER (WHERE p.id IS NOT NULL), '[]') AS photos
-       FROM ckl.run_items i LEFT JOIN ckl.run_item_photos p ON p.run_item_id = i.id
-      WHERE i.run_id = $1 GROUP BY i.id ORDER BY i.position`,
+                          FILTER (WHERE p.id IS NOT NULL), '[]') AS photos,
+            -- who ticked the task / set its status (names from the branch's employee directory)
+            (SELECT d.employee_name FROM ckl.employee_directory d
+              WHERE d.employee_id = i.done_by_employee_id AND d.zodu_id = r.zodu_id AND d.branch_id = r.branch_id) AS done_by_name,
+            (SELECT d.employee_name FROM ckl.employee_directory d
+              WHERE d.employee_id = i.sub_status_by_employee_id AND d.zodu_id = r.zodu_id AND d.branch_id = r.branch_id) AS sub_status_by_name
+       FROM ckl.run_items i
+       JOIN ckl.runs r ON r.id = i.run_id
+       LEFT JOIN ckl.run_item_photos p ON p.run_item_id = i.id
+      WHERE i.run_id = $1 GROUP BY i.id, r.zodu_id, r.branch_id ORDER BY i.position`,
     [runId],
   );
   return rows;
@@ -181,15 +188,22 @@ const itemOut = (i, tenant) => ({
   note: i.note,
   done_at: i.done_at,
   done_by_employee_id: i.done_by_employee_id,
+  done_by: i.done_by_employee_id ? { employee_id: i.done_by_employee_id, name: i.done_by_name || 'Employee' } : null,
   // Sub-status (Settings → task statuses), as it was when set. closes_task: the task
   // counts as closed (is_skipped) without being done.
   sub_status: i.sub_status_name
     ? { id: i.sub_status_id, name: i.sub_status_name, color: i.sub_status_color, closes_task: i.sub_status_closes,
-        set_at: i.sub_status_at, set_by_employee_id: i.sub_status_by_employee_id }
+        set_at: i.sub_status_at, set_by_employee_id: i.sub_status_by_employee_id,
+        set_by: i.sub_status_by_employee_id ? { employee_id: i.sub_status_by_employee_id, name: i.sub_status_by_name || 'Employee' } : null }
     : null,
   is_skipped: i.is_skipped,
   // file refs → { id, file_name, created_at, url } (fileUrlsMiddleware)
   photos: i.photos.map((p) => ({ ...p, file_ctx: `${tenant.zodu_id}/${tenant.branch_id}`, url_key: 'url' })),
+  // the task's reference files (copied from the checklist when the run was made)
+  attachments: (i.attachments || []).map((a) => ({
+    id: a.id, file_name: a.file_name, content_type: a.content_type, file_id: a.file_id,
+    file_ctx: `${tenant.zodu_id}/${tenant.branch_id}`, url_key: 'url',
+  })),
 });
 
 module.exports = { list, summary, reviewQueue, findRun, lockRun, items, events, runOut, itemOut, BOARD_SQL };

@@ -24,6 +24,7 @@ async function reset() {
   await pool.query('DELETE FROM ckl.categories');
   await pool.query('DELETE FROM ckl.company_settings');
   await pool.query('DELETE FROM ckl.task_statuses');
+  await pool.query('DELETE FROM ckl.task_files');
 }
 
 async function seedDirectory(tenant = T1, people = Object.values(EMP)) {

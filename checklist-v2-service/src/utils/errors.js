@@ -35,6 +35,9 @@ function errorHandler(err, req, res, next) {
       status = 400; code = 'INVALID_JSON'; message = 'Invalid JSON body';
     } else if (err.name === 'FileServiceError') {
       code = 'FILE_SERVICE'; details = undefined;
+      // A refused upload: say which file and why ("photo.heic: unsupported file type"), not just "1 of 1 rejected".
+      const why = Array.isArray(err.details) ? err.details.filter((d) => d && d.error) : [];
+      if (why.length) message = why.map((d) => `${String(d.file || 'File').slice(0, 80)}: ${String(d.error).slice(0, 160)}`).join('; ');
     } else if (err.code === '23505') {
       status = 409; code = 'CONFLICT'; message = 'Already exists'; details = undefined;
     } else if (err.code === '23514' || err.code === '22007' || err.code === '22008') {

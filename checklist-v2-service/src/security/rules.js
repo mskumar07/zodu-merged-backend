@@ -27,6 +27,8 @@ module.exports = [
   { method: 'PUT', path: /^\/api\/categories\/[^/]+$/, perm: 'checklist:edit' },
   { method: 'DELETE', path: /^\/api\/categories\/[^/]+$/, perm: 'checklist:delete' },
   { method: 'POST', path: '/api/checklists/schedule-preview', perm: 'checklist:create' },
+  // reference files for tasks, uploaded while creating or editing a checklist
+  { method: 'POST', path: '/api/checklists/task-files', any: ['checklist:create', 'checklist:edit'] },
   { method: 'PATCH', path: /^\/api\/checklists\/[^/]+\/status$/, perm: 'checklist:edit' },
   { method: 'POST', path: /^\/api\/checklists\/[^/]+\/(duplicate|images)$/, perm: 'checklist:create' },
   { method: 'DELETE', path: /^\/api\/checklists\/[^/]+\/images\/[^/]+$/, perm: 'checklist:edit' },

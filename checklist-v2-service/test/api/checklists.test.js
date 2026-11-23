@@ -289,6 +289,45 @@ describe('edit, status, duplicate, delete', () => {
   });
 });
 
+describe('task files', () => {
+  // An upload as POST /task-files leaves it (file-service is not part of these tests).
+  const upload = async (zodu = 'Z001', branch = 'B1', name = 'how-to.pdf') => (await pool.query(
+    `INSERT INTO ckl.task_files (zodu_id, branch_id, file_id, file_name, content_type, uploaded_by_user_id)
+     VALUES ($1, $2, gen_random_uuid()::text, $3, 'application/pdf', gen_random_uuid()) RETURNING id`,
+    [zodu, branch, name],
+  )).rows[0].id;
+
+  test('saved on the task, kept through an edit, copied onto runs; a foreign or unknown file is refused', async () => {
+    const pdf = await upload();
+    const res = await create({ tasks: [{ title: 'Unlock', attachments: [{ id: pdf }] }, { title: 'Counter' }] });
+    expect(res.status).toBe(201);
+    expect(res.body.data.tasks[0].attachments).toEqual([expect.objectContaining({ id: pdf, file_name: 'how-to.pdf', content_type: 'application/pdf' })]);
+    expect(res.body.data.tasks[1].attachments).toEqual([]);
+
+    const items = (await pool.query(
+      `SELECT i.position, i.attachments FROM ckl.run_items i JOIN ckl.runs r ON r.id = i.run_id
+        WHERE i.run_id = (SELECT id FROM ckl.runs WHERE checklist_id = $1 ORDER BY slot_at LIMIT 1)
+        ORDER BY i.position`, [res.body.data.id])).rows;
+    expect(items[0].attachments).toEqual([expect.objectContaining({ id: pdf, file_name: 'how-to.pdf' })]);
+    expect(items[1].attachments).toEqual([]);
+
+    const def = res.body.data;
+    const edit = await request(app).put(`/api/checklists/${def.id}`).set(owner).send(await body({
+      row_version: def.row_version, tasks: [{ title: 'Counter' }, { title: 'Unlock', attachments: def.tasks[0].attachments }],
+    }));
+    expect(edit.status).toBe(200);
+    expect(edit.body.data.tasks[1].attachments.map((a) => a.id)).toEqual([pdf]);
+
+    const foreign = await upload('Z002', 'B9');
+    expect((await create({ tasks: [{ title: 'X', attachments: [{ id: foreign }] }] })).body.code).toBe('TASK_FILE_NOT_FOUND');
+    expect((await create({ tasks: [{ title: 'X', attachments: [{ id: '00000000-0000-4000-8000-000000000000' }] }] })).status).toBe(422);
+  });
+
+  test('upload needs checklist create or edit', async () => {
+    expect((await request(app).post('/api/checklists/task-files').set(cashier)).status).toBe(403);
+  });
+});
+
 describe('categories', () => {
   test('no defaults: each company creates its own; duplicates refused (any case)', async () => {
     expect((await request(app).get('/api/categories').set(cashier)).body.data).toEqual([]);

@@ -479,7 +479,7 @@ apply "$EMPLOYEE_DB" employee-service/migrations/employees_directory_index.sql
 # checklist-v2-service — schema ckl in its own checklist_v2_service database,
 # which must already exist (one-time, by hand: checklist-v2-service/db/bootstrap.sql).
 # In order; every file is re-runnable.
-for f in V001__schema V002__recurrence_functions V003__generation V004__notifications V005__rules V006__scheduler V007__purge_and_grants V008__shared_runs V009__company_categories V010__remind_late_runs V011__company_settings V012__deleted_checklist_runs V013__item_cannot_do V014__task_sub_statuses; do
+for f in V001__schema V002__recurrence_functions V003__generation V004__notifications V005__rules V006__scheduler V007__purge_and_grants V008__shared_runs V009__company_categories V010__remind_late_runs V011__company_settings V012__deleted_checklist_runs V013__item_cannot_do V014__task_sub_statuses V015__task_files V016__checklist_attachments; do
   apply "$CHECKLIST_V2_DB" "checklist-v2-service/migrations/$f.sql"
 done
 

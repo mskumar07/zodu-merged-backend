@@ -38,7 +38,9 @@ router.post('/branches/:zodu_id/:branch_id/purge', ah(async (req, res) => {
       WHERE c.zodu_id = $1 AND c.branch_id = $2
      UNION ALL
      SELECT p.file_id FROM ckl.run_item_photos p JOIN ckl.run_items it ON it.id = p.run_item_id
-       JOIN ckl.runs r ON r.id = it.run_id WHERE r.zodu_id = $1 AND r.branch_id = $2`,
+       JOIN ckl.runs r ON r.id = it.run_id WHERE r.zodu_id = $1 AND r.branch_id = $2
+     UNION ALL
+     SELECT f.file_id FROM ckl.task_files f WHERE f.zodu_id = $1 AND f.branch_id = $2`,
     'SELECT ckl.fn_purge_branch($1, $2) AS result',
     [z, b],
     { zoduId: z, branchId: b },
@@ -53,7 +55,9 @@ router.post('/companies/:zodu_id/purge', ah(async (req, res) => {
     `SELECT i.file_id FROM ckl.checklist_images i JOIN ckl.checklists c ON c.id = i.checklist_id WHERE c.zodu_id = $1
      UNION ALL
      SELECT p.file_id FROM ckl.run_item_photos p JOIN ckl.run_items it ON it.id = p.run_item_id
-       JOIN ckl.runs r ON r.id = it.run_id WHERE r.zodu_id = $1`,
+       JOIN ckl.runs r ON r.id = it.run_id WHERE r.zodu_id = $1
+     UNION ALL
+     SELECT f.file_id FROM ckl.task_files f WHERE f.zodu_id = $1`,
     'SELECT ckl.fn_purge_company($1) AS result',
     [z],
     { zoduId: z },
