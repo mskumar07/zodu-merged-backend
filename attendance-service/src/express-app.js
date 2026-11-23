@@ -22,6 +22,8 @@ app.use('/api/leave',       require('./api/leave-controller'));
 app.use('/api/leave-types', require('./api/leave-type-controller'));
 app.use('/api/leave-policies', require('./api/leave-policy-controller'));
 app.use('/api/shift-templates', require('./api/shift-template-controller'));
+app.use('/api/shift-rotations', require('./api/shift-rotation-controller'));
+app.use('/api/shift-schedule', require('./api/shift-schedule-controller'));
 app.use('/api/holidays',    require('./api/holiday-controller'));
 
 app.use(HandleErrorWithLogger);
