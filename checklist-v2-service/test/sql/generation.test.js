@@ -21,23 +21,35 @@ const generate = async (id, until) => (await q1('SELECT ckl.fn_generate_for_sche
 const runs = async (id) => (await pool.query('SELECT * FROM ckl.runs WHERE checklist_id = $1 ORDER BY slot_at, assignee_name', [id])).rows;
 const schedule = (id) => q1('SELECT * FROM ckl.checklist_schedules WHERE checklist_id = $1', [id]);
 
-test('daily: today and tomorrow, per active assignee; no back-fill; idempotent', async () => {
+test('daily: today and tomorrow, ONE shared run for several assignees; no back-fill; idempotent', async () => {
   const today = await localToday();
   const id = await createChecklist({
     schedule: { start_date: addDays(today, -3) },
     assignees: [EMP.cashier.employee_id, EMP.nologin.employee_id, EMP.gone.employee_id],
   });
   const until = await untilEndOfTomorrow();
-  expect(await generate(id, until)).toBe(4);           // 2 days × 2 active (the inactive one gets nothing)
+  expect(await generate(id, until)).toBe(2);           // 2 days × 1 shared run
   const rows = await runs(id);
   expect(new Set(rows.map((r) => r.run_date))).toEqual(new Set([today, addDays(today, 1)]));
-  expect(rows.some((r) => r.assignee_employee_id === EMP.gone.employee_id)).toBe(false);
+  // shared by the two active assignees (the inactive one is left out)
+  for (const r of rows) {
+    expect(r).toMatchObject({ assignee_employee_id: null, assignee_name: '2 people' });
+    expect([...r.pool_employee_ids].sort()).toEqual([EMP.cashier.employee_id, EMP.nologin.employee_id].sort());
+  }
   expect(rows[0]).toMatchObject({ status: 'TODO', total_items: 3, done_items: 0, priority: 'HIGH', frequency: 'DAILY' });
   // the 3 past days were counted (After N) but never materialised
   expect((await schedule(id)).occurrences_generated).toBe(5);
 
   expect(await generate(id, until)).toBe(0);
-  expect(await runs(id)).toHaveLength(4);
+  expect(await runs(id)).toHaveLength(2);
+});
+
+test('one active assignee: their own run (no pool), as before', async () => {
+  const id = await createChecklist({ assignees: [EMP.cashier.employee_id, EMP.gone.employee_id] });
+  await generate(id, await untilEndOfTomorrow());
+  const rows = await runs(id);
+  expect(rows).toHaveLength(2);
+  for (const r of rows) expect(r).toMatchObject({ assignee_employee_id: EMP.cashier.employee_id, pool_employee_ids: null });
 });
 
 test('item snapshot: require_photo = task AND checklist setting', async () => {
@@ -138,18 +150,18 @@ describe('fn_reschedule_checklist', () => {
     });
     await generate(id, await untilEndOfTomorrow());
     const before = await runs(id);
-    expect(before).toHaveLength(4);
+    expect(before).toHaveLength(2);                       // one shared run per day
     const touched = before.find((r) => r.run_date === addDays(today, 1));
     await pool.query("INSERT INTO ckl.run_events (run_id, zodu_id, branch_id, event_type) VALUES ($1, 'Z001', 'B1', 'NOTE')", [touched.id]);
 
     const deleted = (await q1("SELECT ckl.fn_reschedule_checklist($1, now() - interval '1 minute', false) AS n", [id])).n;
-    expect(deleted).toBe(3);
+    expect(deleted).toBe(1);
     expect((await runs(id)).map((r) => r.id)).toEqual([touched.id]);
     // slots that lost every run are counted again; the touched slot keeps its count
     expect((await schedule(id)).occurrences_generated).toBe(1);
 
     await generate(id, await untilEndOfTomorrow());
-    expect(await runs(id)).toHaveLength(4);
+    expect(await runs(id)).toHaveLength(2);
     expect((await schedule(id)).occurrences_generated).toBe(2);
   });
 

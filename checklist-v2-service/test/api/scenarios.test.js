@@ -188,13 +188,32 @@ describe('S3 · the manager edits the checklist', () => {
     expect(r.body.data).toMatchObject({ name: 'Store Opening v2', row_version: 2 });
     expect(r.body.data.tasks).toHaveLength(4);
 
-    const lines = (await runsOf(c.id)).filter((l) => l.startsWith(today));
-    // cashier's started run is kept (old tasks); the manager gets a new run; nobody has two
-    expect(lines).toEqual([`${today} 23:59 IN_PROGRESS ${EMP.cashier.name}`, `${today} 23:59 TODO ${EMP.manager.name}`].sort());
-    const managerRun = (await mine(manager, today, c.id))[0];
-    expect(managerRun).toMatchObject({ name: 'Store Opening v2', progress: { total: 4 } });
-    const cashierRun = (await mine(cashier, today, c.id))[0];
-    expect(cashierRun.progress.total).toBe(3);
+    const tomorrow = (await q1(`SELECT ($1::date + 1)::text d`, [today])).d;
+    // today: the cashier's started run is kept as it was (old tasks), and no second copy is made;
+    // from tomorrow: ONE run shared by both, with the new tasks
+    expect((await runsOf(c.id)).filter((l) => l.startsWith(today))).toEqual([`${today} 23:59 IN_PROGRESS ${EMP.cashier.name}`]);
+    expect((await mine(cashier, today, c.id))[0].progress.total).toBe(3);
+    expect((await runsOf(c.id)).filter((l) => l.startsWith(tomorrow))).toEqual([`${tomorrow} 23:59 TODO 2 people`]);
+    const [shared] = await mine(manager, tomorrow, c.id);
+    expect(shared).toMatchObject({ name: 'Store Opening v2', progress: { total: 4 }, assign_all: false });
+    expect(shared.pool.map((x) => x.name)).toEqual([EMP.cashier.name, EMP.manager.name].sort());
+  });
+
+  test('adding a second person before anyone started: today becomes ONE shared run, not two copies', async () => {
+    const c = (await api.create(manager, await checklist())).body.data;
+    const today = await localToday();
+    const r = await api.edit(manager, c.id, {
+      ...(await checklist({ assignee_employee_ids: [EMP.cashier.employee_id, EMP.manager.employee_id] })), row_version: 1, apply_from: 'NOW',
+    });
+    expect(r.status).toBe(200);
+    expect((await runsOf(c.id)).filter((l) => l.startsWith(today))).toEqual([`${today} 23:59 TODO 2 people`]);
+    const [a] = await mine(cashier, today, c.id);
+    const [b] = await mine(manager, today, c.id);
+    expect(a.id).toBe(b.id);
+
+    // back to one person: their own run again
+    await api.edit(manager, c.id, { ...(await checklist()), row_version: 2, apply_from: 'NOW' });
+    expect((await runsOf(c.id)).filter((l) => l.startsWith(today))).toEqual([`${today} 23:59 TODO ${EMP.cashier.name}`]);
   });
 
   test('switching All employees ↔ specific people, applied now, never leaves two runs for one slot', async () => {
@@ -241,9 +260,11 @@ describe('S4 · deleting a checklist', () => {
   test('manager 403; owner 204; open runs leave the boards, completed history stays; then 404 everywhere', async () => {
     const c = (await api.create(owner, await checklist({ assignee_employee_ids: [EMP.cashier.employee_id, EMP.manager.employee_id] }))).body.data;
     const today = await localToday();
+    const tomorrow = (await q1(`SELECT ($1::date + 1)::text d`, [today])).d;
     const [cashierRow] = await mine(cashier, today, c.id);
     const done = (await api.run(cashier, cashierRow.id)).body.data;
-    await api.completeAll(cashier, done.id, done.row_version);                     // cashier finished hers
+    await api.completeAll(cashier, done.id, done.row_version);                     // today's shared run finished
+    expect(await mine(manager, tomorrow, c.id)).toHaveLength(1);                    // tomorrow's still open
 
     expect((await api.remove(manager, c.id)).status).toBe(403);
     expect((await api.remove(owner, c.id)).status).toBe(204);
@@ -251,9 +272,10 @@ describe('S4 · deleting a checklist', () => {
     expect((await api.edit(owner, c.id, { ...(await checklist()), row_version: 1 })).status).toBe(404);
     expect((await api.remove(owner, c.id)).status).toBe(404);
 
-    expect((await mine(manager, today, c.id))).toEqual([]);                          // open one gone
-    const kept = await mine(cashier, today, c.id);                                   // completed one kept
-    expect(kept.map((r) => r.status)).toEqual(['COMPLETED']);
+    expect(await mine(manager, tomorrow, c.id)).toEqual([]);                        // open one gone
+    for (const who of [cashier, manager]) {                                         // completed one kept, for both
+      expect((await mine(who, today, c.id)).map((r) => r.status)).toEqual(['COMPLETED']);
+    }
     const list = (await request(app).get('/api/checklists').set(owner)).body.data;
     expect(list.find((x) => x.id === c.id)).toBeUndefined();
   });
@@ -348,5 +370,36 @@ describe('S7 · tenant isolation', () => {
     expect((await api.status(other, c.id, 'PAUSED')).status).toBe(404);
     expect((await api.board(other, today, 'team')).body.data.filter((r) => r.checklist_id === c.id)).toEqual([]);
     expect((await request(app).get('/api/checklists').set(other)).body.data).toEqual([]);
+  });
+});
+
+// ── S8 · One checklist, several people: ONE shared run ───────────────────────
+describe('S8 · given to several people', () => {
+  test('one shared run; any of them ticks or completes it, once; outsiders can\'t', async () => {
+    // owner creates it for the cashier and the no-login employee; the manager is outside it
+    const c = (await api.create(owner, await checklist({ assignee_employee_ids: [EMP.cashier.employee_id, EMP.nologin.employee_id] }))).body.data;
+    const today = await localToday();
+
+    const team = (await api.board(owner, today, 'team')).body.data.filter((r) => r.checklist_id === c.id);
+    expect(team).toHaveLength(1);
+    expect(team[0]).toMatchObject({ assign_all: false, assignee: { employee_id: null, name: '2 people' }, progress: { done: 0, total: 3 } });
+    expect(team[0].pool.map((p) => p.name)).toEqual([EMP.cashier.name, EMP.nologin.name].sort());
+
+    // in the pool: on my board; outside: not on my board, can't tick
+    expect(await mine(cashier, today, c.id)).toHaveLength(1);
+    expect(await mine(manager, today, c.id)).toEqual([]);
+    const run = (await api.run(cashier, team[0].id)).body.data;
+    expect((await api.item(manager, run.id, run.items[0].id, { is_done: true })).status).toBe(403);
+
+    // ticks are shared: done once
+    let r = await api.item(cashier, run.id, run.items[0].id, { is_done: true });
+    expect(r.body.data.progress).toMatchObject({ done: 1, total: 3 });
+    r = await api.completeAll(cashier, run.id, r.body.data.row_version);
+    expect(r.body.data).toMatchObject({ status: 'COMPLETED', submitted_by: { name: EMP.cashier.name } });
+    expect((await api.board(owner, today, 'team')).body.data.filter((x) => x.checklist_id === c.id).map((x) => x.status)).toEqual(['COMPLETED']);
+
+    // dashboards count it for the people it's shared with
+    const dash = (await request(app).get('/api/dashboard/my').set(cashier)).body.data;
+    expect(dash.completed).toBeGreaterThanOrEqual(1);
   });
 });

@@ -1,3 +1,4 @@
+const { SHARED_WITH } = require('../repository/runs');
 // Dashboards. Ranges are local calendar days (run_date); default: the last 30 days.
 // Cancelled runs never count. "Due" runs are those whose due time has passed or
 // that are closed: future open runs are not yet anyone's failure.
@@ -33,9 +34,9 @@ async function my(tenant, me, q) {
       completion_pct: 0, on_time_pct: 0, current_streak: 0, best_streak: 0, daily: [] };
   }
   const params = [tenant.zodu_id, tenant.branch_id, me, from, to];
-  // Shared runs (assignee NULL) are everyone's, so they count on each person's dashboard.
+  // Shared runs count on the dashboard of everyone they are shared with.
   const base = `FROM ckl.runs r WHERE r.zodu_id = $1 AND r.branch_id = $2
-                  AND (r.assignee_employee_id = $3 OR r.assignee_employee_id IS NULL)
+                  AND (r.assignee_employee_id = $3 OR ${SHARED_WITH('$3::uuid')})
                   AND r.run_date BETWEEN $4 AND $5 AND r.status <> 'CANCELLED'`;
   const [{ rows: [t] }, { rows: daily }, { rows: [streak] }] = await Promise.all([
     pool.query(`SELECT ${COUNTS} ${base}`, params),

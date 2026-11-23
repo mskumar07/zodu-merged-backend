@@ -34,7 +34,8 @@ const detail = (runId, h = cashier) => request(app).get(`/api/runs/${runId}`).se
 
 describe('board', () => {
   test('my board shows only my runs; team view needs checklist:read', async () => {
-    const { today } = await setup({ assignees: [EMP.cashier.employee_id, EMP.nologin.employee_id] });
+    const { today } = await setup({ assignees: [EMP.cashier.employee_id] });
+    await generate(await createChecklist({ name: 'Closing checks', assignees: [EMP.nologin.employee_id], schedule: { trigger_time: '23:59' } }));
     const mine = await request(app).get(`/api/runs?date=${today}`).set(cashier);
     expect(mine.status).toBe(200);
     expect(mine.body.data).toHaveLength(1);
@@ -256,8 +257,14 @@ describe('run actions', () => {
   });
 
   test('reassign: 409 ALREADY_HAS_RUN; 422 for an inactive employee; ok otherwise', async () => {
-    const { run } = await setup({ assignees: [EMP.cashier.employee_id, EMP.nologin.employee_id], reviewer: null });
-    const other = run.assignee_employee_id === EMP.cashier.employee_id ? EMP.nologin : EMP.cashier;
+    const { run } = await setup({ assignees: [EMP.cashier.employee_id], reviewer: null });
+    // An older per-person run of the same slot (from before shared runs): moving onto it collides.
+    const other = EMP.nologin;
+    await pool.query(
+      `INSERT INTO ckl.runs (zodu_id, branch_id, checklist_id, slot_at, run_date, sequence_no, assignee_employee_id, assignee_name,
+                             title, priority, frequency, available_at, due_at, total_items)
+       SELECT zodu_id, branch_id, checklist_id, slot_at, run_date, sequence_no, $2, $3, title, priority, frequency, available_at, due_at, total_items
+         FROM ckl.runs WHERE id = $1`, [run.id, other.employee_id, other.name]);
     const res = await request(app).post(`/api/runs/${run.id}/reassign`).set(manager)
       .send({ employee_id: other.employee_id, row_version: run.row_version });
     expect(res.status).toBe(409);
@@ -270,6 +277,39 @@ describe('run actions', () => {
     const r2 = await q1('SELECT * FROM ckl.runs WHERE checklist_id = $1 ORDER BY slot_at LIMIT 1', [solo]);
     const moved = await request(app).post(`/api/runs/${r2.id}/reassign`).set(manager).send({ employee_id: EMP.cashier.employee_id, row_version: r2.row_version });
     expect(moved.body.data.assignee).toEqual({ employee_id: EMP.cashier.employee_id, name: EMP.cashier.name });
+  });
+
+  test('several people: ONE shared run; only they see and work on it; ticks are shared; notifications go to them', async () => {
+    // created by the owner, shared by the cashier and the no-login employee; the manager is outside it
+    const { run, today } = await setup({ assignees: [EMP.cashier.employee_id, EMP.nologin.employee_id], reviewer: null, rules: [] });
+    expect(await q1('SELECT count(*)::int AS n FROM ckl.runs WHERE checklist_id = $1 AND run_date = $2', [run.checklist_id, today])).toEqual({ n: 1 });
+
+    const board = (await request(app).get(`/api/runs?date=${today}`).set(cashier)).body.data;
+    expect(board).toHaveLength(1);
+    expect(board[0]).toMatchObject({ assign_all: false, assignee: { employee_id: null, name: '2 people' } });
+    expect(board[0].pool.map((p) => p.name)).toEqual([EMP.cashier.name, EMP.nologin.name].sort());
+    // outside the pool: not on their own board, can't open or tick it (team view still lists it for managers)
+    expect((await request(app).get(`/api/runs?date=${today}`).set(manager)).body.data).toHaveLength(0);
+    expect((await request(app).get(`/api/runs?date=${today}&view=team`).set(manager)).body.data).toHaveLength(1);
+    const d = (await detail(run.id)).body.data;
+    expect((await request(app).put(`/api/runs/${run.id}/items/${d.items[0].id}`).set(manager).send({ is_done: true })).status).toBe(403);
+
+    // the cashier ticks; done once for everyone
+    const ticked = await request(app).put(`/api/runs/${run.id}/items/${d.items[0].id}`).set(cashier).send({ is_done: true });
+    expect(ticked.status).toBe(200);
+    expect(ticked.body.data.progress.done).toBe(1);
+
+    // reminders go to the pool members who can log in, not to the rest of the branch
+    await q1("SELECT ckl.fn_notify_run($1, 'RUN_REMINDER', 'ASSIGNEE', NULL, ARRAY['IN_APP'], 'pool') AS n", [run.id]);
+    const recipients = (await pool.query("SELECT recipient_user_id FROM ckl.notifications WHERE type = 'RUN_REMINDER'")).rows.map((r) => r.recipient_user_id);
+    expect(recipients).toEqual([USERS.cashier.userId]);
+
+    // handing it to one person makes it theirs alone
+    const r1 = await q1('SELECT row_version FROM ckl.runs WHERE id = $1', [run.id]);
+    const moved = await request(app).post(`/api/runs/${run.id}/reassign`).set(manager).send({ employee_id: EMP.manager.employee_id, row_version: r1.row_version });
+    expect(moved.status).toBe(200);
+    expect(moved.body.data).toMatchObject({ assign_all: false, pool: null, assignee: { employee_id: EMP.manager.employee_id } });
+    expect((await request(app).get(`/api/runs?date=${today}`).set(cashier)).body.data).toHaveLength(0);
   });
 
   test('ALL mode: one shared run on every board; anyone ticks it; the submitter is recorded', async () => {

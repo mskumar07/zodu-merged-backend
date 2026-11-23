@@ -16,6 +16,10 @@ const SELECT_RUN = `
          to_char(r.due_at AT TIME ZONE c.timezone, 'HH24:MI') AS due_time,
          GREATEST(0, floor(EXTRACT(EPOCH FROM now() - r.due_at) / 60))::int AS late_min,
          rv.employee_name AS reviewer_name,
+         -- a shared run's pool (who may work on it), by name
+         (SELECT json_agg(json_build_object('employee_id', d.employee_id, 'name', d.employee_name) ORDER BY d.employee_name)
+            FROM ckl.employee_directory d
+           WHERE d.zodu_id = r.zodu_id AND d.branch_id = r.branch_id AND d.employee_id = ANY (r.pool_employee_ids)) AS pool_people,
          to_char(r.due_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS due_key
     FROM ckl.runs r
     JOIN ckl.checklists c ON c.id = r.checklist_id
@@ -23,8 +27,9 @@ const SELECT_RUN = `
     LEFT JOIN ckl.employee_directory rv
       ON rv.zodu_id = r.zodu_id AND rv.branch_id = r.branch_id AND rv.employee_id = r.reviewer_employee_id`;
 
-// Board filters → WHERE. f.assignee: forced to the caller for view=my. Shared runs
-// (assignee NULL, "Assign To All") are everyone's, so they match any assignee.
+// Board filters → WHERE. f.assignee: forced to the caller for view=my. A shared run
+// (assignee NULL) matches everyone in its pool, or anyone when it has none ("All employees").
+const SHARED_WITH = (p) => `(r.assignee_employee_id IS NULL AND (r.pool_employee_ids IS NULL OR ${p} = ANY (r.pool_employee_ids)))`;
 function filterSql(tenant, f, { withStatus = true } = {}) {
   const params = [tenant.zodu_id, tenant.branch_id];
   const where = ['r.zodu_id = $1', 'r.branch_id = $2', "r.status <> 'CANCELLED'"];
@@ -35,7 +40,7 @@ function filterSql(tenant, f, { withStatus = true } = {}) {
   };
   if (f.date) add('r.run_date = ?', f.date);
   if (f.from) add('r.run_date BETWEEN ? AND ?', f.from, f.to);
-  if (f.assignee) add('(r.assignee_employee_id = ? OR r.assignee_employee_id IS NULL)', f.assignee);
+  if (f.assignee) add(`(r.assignee_employee_id = ? OR ${SHARED_WITH('?::uuid')})`, f.assignee, f.assignee);
   if (f.priority) add('r.priority = ?', f.priority);
   if (f.category_id) add('r.category_id = ?', f.category_id);
   if (f.checklist_id) add('r.checklist_id = ?', f.checklist_id);
@@ -156,8 +161,12 @@ const runOut = (r) => ({
   status: r.status,
   board_status: r.board_status,
   overdue_minutes: r.board_status === 'OVERDUE' ? r.late_min : 0,
-  // Shared run: employee_id null, name 'All employees'; any active employee works on it.
-  assign_all: r.assignee_employee_id === null,
+  // Shared run (employee_id null): "All employees" (no pool) = anyone in the branch;
+  // with a pool = one run for several people, any of whom can tick its tasks.
+  assign_all: r.assignee_employee_id === null && !r.pool_employee_ids,
+  pool: r.assignee_employee_id === null && r.pool_employee_ids
+    ? (r.pool_people || r.pool_employee_ids.map((id) => ({ employee_id: id, name: 'Employee' })))
+    : null,
   assignee: { employee_id: r.assignee_employee_id, name: r.assignee_name },
   // The checklist's creator may complete its runs too (besides the assignee).
   created_by_user_id: r.creator_user_id,
@@ -206,4 +215,4 @@ const itemOut = (i, tenant) => ({
   })),
 });
 
-module.exports = { list, summary, reviewQueue, findRun, lockRun, items, events, runOut, itemOut, BOARD_SQL };
+module.exports = { SHARED_WITH, list, summary, reviewQueue, findRun, lockRun, items, events, runOut, itemOut, BOARD_SQL };

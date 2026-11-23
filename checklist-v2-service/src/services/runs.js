@@ -49,8 +49,11 @@ async function reviewQueue(tenant, me) {
   return (await repo.reviewQueue(tenant, me)).map(repo.runOut);
 }
 
-// A shared run (assignee NULL, "Assign To All") belongs to every employee of the branch.
-const isAssignee = (run, me) => Boolean(me) && (run.assignee_employee_id === null || me === run.assignee_employee_id);
+// A shared run (assignee NULL) belongs to everyone in its pool, or to every employee of
+// the branch when it has none ("All employees").
+const isAssignee = (run, me) => Boolean(me) && (
+  me === run.assignee_employee_id
+  || (run.assignee_employee_id === null && (!run.pool_employee_ids || run.pool_employee_ids.includes(me))));
 
 // Run + items + photos + events: the assignee (anyone, on a shared run), the reviewer, or checklist:read.
 async function detail(tenant, id, ctx) {
@@ -417,7 +420,8 @@ async function reassign(tenant, id, body, ctx) {
       );
       if (!emp) throw unprocessable('That employee is not active in this branch', 'EMPLOYEE_NOT_FOUND');
       await db.query(
-        `UPDATE ckl.runs SET assignee_employee_id = $2, assignee_name = $3, row_version = row_version + 1
+        // Handing a shared run to one person: it is theirs alone from now on.
+        `UPDATE ckl.runs SET assignee_employee_id = $2, assignee_name = $3, pool_employee_ids = NULL, row_version = row_version + 1
           WHERE id = $1`,
         [id, body.employee_id, emp.employee_name],
       );
