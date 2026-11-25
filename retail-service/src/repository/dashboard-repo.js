@@ -211,6 +211,7 @@ async function getReminders(zodu_id, branch_id, limit, offset) {
     LEFT JOIN tbl_vendor v ON v.vendor_id = p.vendor_id AND v.zodu_id = $1 AND v.branch_id = $2
     WHERE p.zodu_id = $1 AND p.branch_id = $2
       AND p.payment_status IN ('pending', 'partial')
+      AND p.cancelled_purchase = false
     GROUP BY p.purchase_id, p.purchase_date, p.due_date, p.total_amount, p.paid_amount,
              p.balance_amount, p.payment_status, v.vendor_name
 

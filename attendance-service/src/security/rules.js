@@ -52,6 +52,9 @@ module.exports = [
 
   // Shift Allocation → Schedule Shifts (the employees x dates grid). Seeing the team's schedule needs attendance:read,
   // assigning shifts needs attendance:edit. The company Admin always passes.
+  // My own schedule ("Myself" view): any signed-in user; the handler only reads the caller's own employee record.
+  // Exact path, listed before the rule below.
+  { method: 'GET', path: /^\/api\/shift-schedule\/my$/, authenticated: true },
   ...crud('/api/shift-schedule', 'attendance'),
 
   // Leave → Holidays (list, export, add, edit, delete). Anyone signed in may read and export; changes need the

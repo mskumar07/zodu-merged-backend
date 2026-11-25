@@ -98,6 +98,115 @@ exports.list = async ({ zodu_id, branch_id, from, to, search, page = 1, limit = 
   };
 };
 
+// ── MY SHIFT SCHEDULE (the employee's "Myself" view) ─────────────────────────────────────────────────────────────
+
+const UPCOMING_DAYS = 14;
+const addDays = (iso, n) => isoOf(new Date(utc(iso).getTime() + n * DAY_MS));
+const hoursLabel = (min) => `${Math.floor(min / 60)}h${min % 60 ? ` ${String(min % 60).padStart(2, '0')}m` : ''}`;
+const weekdayOf = (iso) => utc(iso).toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
+const longDate = (iso) => utc(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+
+/** A scheduled day as the screen shows it. A day with no row is "not scheduled yet". */
+function toMyDay(date, row, today) {
+  const base = { date, weekday: weekdayOf(date), is_today: date === today, is_past: date < today };
+  if (!row) return { ...base, is_scheduled: false, is_off: false, shift_template_id: null, code: null, name: null, time_label: null };
+  if (!row.shift_template_id) {
+    return { ...base, is_scheduled: true, is_off: true, shift_template_id: null, code: 'OFF', name: 'Off / Rest Day', time_label: null };
+  }
+  return {
+    ...base, is_scheduled: true, is_off: false,
+    shift_template_id: row.shift_template_id, code: row.code, name: row.name,
+    time_label: `${row.start_time_label} – ${row.end_time_label}`,
+  };
+}
+
+/** The shift card: times and break of one day. */
+const toShiftCard = (day, row) => ({
+  ...day,
+  start_time_label: row?.start_time_label ?? null,
+  end_time_label: row?.end_time_label ?? null,
+  break_label: row?.break_label ?? null,
+  break_minutes: row?.break_minutes ?? 0,
+  working_hours_label: row?.shift_template_id ? hoursLabel(row.working_minutes) : null,
+});
+
+/**
+ * The signed-in employee's own schedule for a month: today's shift, the next 14 days, the month's calendar and its
+ * totals, in one call and one query. `month` is "YYYY-MM" (default: this month in India). One range covers the
+ * month and the upcoming days, so crossing into next month needs no second query.
+ */
+exports.my = async ({ zodu_id, branch_id, employee, month }) => {
+  if (!employee) throw httpError(404, 'No employee record for this user');
+  if (employee.status && employee.status !== 'active') throw httpError(403, 'Your employee record is inactive');
+
+  const today = istToday();
+  const ym = month || today.slice(0, 7);
+  const monthStart = `${ym}-01`;
+  const [y, m] = ym.split('-').map(Number);
+  const monthEnd = isoOf(new Date(Date.UTC(y, m, 0)));          // day 0 of next month = last day of this one
+  const upcomingEnd = addDays(today, UPCOMING_DAYS);
+
+  const rows = await repo.myDays({
+    zodu_id, branch_id, employee_id: employee.employee_id,
+    from: monthStart < today ? monthStart : today,
+    to: monthEnd > upcomingEnd ? monthEnd : upcomingEnd,
+  });
+  const byDate = new Map(rows.map((r) => [r.work_date, r]));
+
+  // Calendar and totals for the month.
+  const days = [];
+  const tally = new Map();          // shift code -> { code, name, days }
+  let offDays = 0;
+  let minutes = 0;
+  for (let d = monthStart; d <= monthEnd; d = addDays(d, 1)) {
+    const row = byDate.get(d);
+    days.push(toMyDay(d, row, today));
+    if (!row) continue;
+    if (!row.shift_template_id) { offDays += 1; continue; }
+    minutes += row.working_minutes;
+    const t = tally.get(row.code) ?? { shift_template_id: row.shift_template_id, code: row.code, name: row.name, days: 0 };
+    t.days += 1;
+    tally.set(row.code, t);
+  }
+
+  // Next 14 days, starting tomorrow. Days with nothing scheduled are left out.
+  const upcoming = [];
+  for (let i = 1; i <= UPCOMING_DAYS; i++) {
+    const d = addDays(today, i);
+    if (byDate.has(d)) upcoming.push(toMyDay(d, byDate.get(d), today));
+  }
+
+  // The rotation that produced today's shift; failing that, the latest one in the window.
+  const rotRow = byDate.get(today)?.rotation_id ? byDate.get(today) : [...rows].reverse().find((r) => r.rotation_id);
+  const todayRow = byDate.get(today);
+
+  return {
+    success: true,
+    data: {
+      today: toShiftCard(toMyDay(today, todayRow, today), todayRow),
+      rotation: rotRow ? {
+        rotation_id: rotRow.rotation_id,
+        name: rotRow.rotation_name,
+        type: rotRow.rotation_type,
+        type_label: rotRow.rotation_type === 'FIXED_CYCLE' ? 'Fixed Cycle' : 'Custom Pattern',
+        cycle_length: rotRow.cycle_length,
+        cycle_label: `${rotRow.cycle_length} Days`,
+        effective_from: rotRow.rotation_effective_from,
+        effective_from_label: longDate(rotRow.rotation_effective_from),
+      } : null,                                              // scheduled by hand: no rotation
+      month: { month: ym, from: monthStart, to: monthEnd, first_weekday: weekdayOf(monthStart) },
+      days,
+      summary: {
+        by_shift: [...tally.values()],                        // the legend: Morning 9 days, Evening 8 days ...
+        off_days: offDays,
+        scheduled_minutes: minutes,
+        scheduled_hours_label: hoursLabel(minutes),
+      },
+      upcoming,
+    },
+  };
+};
+
 exports.assign = async ({ zodu_id, branch_id, changes, updated_by }) => {
   const today = istToday();
 

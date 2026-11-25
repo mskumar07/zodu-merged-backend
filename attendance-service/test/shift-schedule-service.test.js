@@ -1,6 +1,6 @@
 // The rules of the shift schedule, with the repositories and the employee directory replaced.
 jest.mock('../src/repository/shift-schedule-repo', () => ({
-  cells: jest.fn(), findTemplates: jest.fn(), assign: jest.fn(), currentCells: jest.fn(),
+  cells: jest.fn(), findTemplates: jest.fn(), assign: jest.fn(), currentCells: jest.fn(), myDays: jest.fn(),
 }));
 jest.mock('../src/repository/shift-template-repo', () => ({ list: jest.fn() }));
 jest.mock('../src/clients/employee-directory', () => ({ roster: jest.fn() }));
@@ -103,5 +103,47 @@ describe('assign', () => {
     const err = await service.assign({ ...T, changes: [change({ version: 2 }), change({ employee_id: ANJALI })] }).catch((e) => e);
     expect(err.status).toBe(409);
     expect(err.details).toEqual([{ employee_id: RAHUL, work_date: DAY, current: { shift_template_id: null, code: 'OFF', version: 3 } }]);
+  });
+});
+
+describe('my (the employee\'s own schedule)', () => {
+  const me = { employee_id: RAHUL, status: 'active' };
+  const row = (work_date, code, extra = {}) => ({
+    work_date, shift_template_id: code ? M : null, rotation_id: 'r1', code, name: 'Morning Shift', working_minutes: 480,
+    start_time_label: '09:00 AM', end_time_label: '05:00 PM', break_label: '01:00 PM – 01:30 PM', break_minutes: 30,
+    rotation_name: 'Monthly Rotation', rotation_type: 'FIXED_CYCLE', cycle_length: 7, rotation_effective_from: '2099-01-01', ...extra,
+  });
+
+  beforeEach(() => jest.useFakeTimers().setSystemTime(new Date('2099-01-10T06:00:00Z')));
+  afterEach(() => jest.useRealTimers());
+
+  test('needs an employee record, and an active one', async () => {
+    await expect(service.my({ ...T, employee: null })).rejects.toMatchObject({ status: 404 });
+    await expect(service.my({ ...T, employee: { ...me, status: 'inactive' } })).rejects.toMatchObject({ status: 403 });
+  });
+
+  test('builds today, the month calendar, totals, rotation and upcoming from one query', async () => {
+    repo.myDays.mockResolvedValue([row('2099-01-10', 'M'), row('2099-01-11', null), row('2099-01-12', 'M')]);
+    const { data } = await service.my({ ...T, employee: me });
+
+    expect(repo.myDays).toHaveBeenCalledTimes(1);
+    expect(repo.myDays).toHaveBeenCalledWith(expect.objectContaining({ employee_id: RAHUL, from: '2099-01-01', to: '2099-01-31' }));
+    expect(data.today).toMatchObject({ code: 'M', is_today: true, start_time_label: '09:00 AM', break_label: '01:00 PM – 01:30 PM', working_hours_label: '8h' });
+    expect(data.days).toHaveLength(31);
+    expect(data.days.find((d) => d.date === '2099-01-11')).toMatchObject({ is_off: true, code: 'OFF' });
+    expect(data.days.find((d) => d.date === '2099-01-13')).toMatchObject({ is_scheduled: false });
+    expect(data.summary).toMatchObject({ off_days: 1, scheduled_minutes: 960, scheduled_hours_label: '16h' });
+    expect(data.summary.by_shift).toEqual([expect.objectContaining({ code: 'M', days: 2 })]);
+    expect(data.rotation).toMatchObject({ name: 'Monthly Rotation', type_label: 'Fixed Cycle', cycle_label: '7 Days', effective_from_label: 'Jan 1, 2099' });
+    expect(data.upcoming.map((d) => d.date)).toEqual(['2099-01-11', '2099-01-12']);   // tomorrow on; unscheduled days left out
+  });
+
+  test('a month other than today\'s still reads the upcoming days in one query', async () => {
+    repo.myDays.mockResolvedValue([]);
+    const { data } = await service.my({ ...T, employee: me, month: '2098-12' });
+    expect(repo.myDays).toHaveBeenCalledWith(expect.objectContaining({ from: '2098-12-01', to: '2099-01-24' }));
+    expect(data.days).toHaveLength(31);
+    expect(data.rotation).toBeNull();
+    expect(data.today).toMatchObject({ is_scheduled: false });
   });
 });
