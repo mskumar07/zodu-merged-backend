@@ -269,13 +269,17 @@ exports.findMyAttendance = async ({ employee_id, zodu_id, branch_id, month, year
 const IST_TODAY = `(NOW() AT TIME ZONE 'Asia/Kolkata')::date`;
 const PUNCH_COLUMNS = DAY_COLUMNS;
 
-/** Today's check-in. Returns the row, or null if the employee already checked in today. */
-exports.checkIn = async ({ zodu_id, branch_id, employee_id, employee_name }) => {
+/**
+ * Today's check-in. Returns the row, or null if the employee already checked in today.
+ * [marked_by] / [marked_by_name] default to the employee (self check-in); the face kiosk
+ * passes the manager running it.
+ */
+exports.checkIn = async ({ zodu_id, branch_id, employee_id, employee_name, marked_by, marked_by_name }) => {
   const { rows } = await db.query(
     `INSERT INTO tbl_attendance (
        zodu_id, branch_id, employee_id, attendance_date, status,
        check_in_time, marked_by, marked_by_name
-     ) VALUES ($1, $2, $3, ${IST_TODAY}, 'Present', NOW(), $3, $4)
+     ) VALUES ($1, $2, $3, ${IST_TODAY}, 'Present', NOW(), $4, $5)
      ON CONFLICT (employee_id, attendance_date) DO UPDATE SET
        status         = 'Present',
        check_in_time  = NOW(),
@@ -285,7 +289,24 @@ exports.checkIn = async ({ zodu_id, branch_id, employee_id, employee_name }) => 
        updated_at     = NOW()
      WHERE tbl_attendance.check_in_time IS NULL
      RETURNING ${PUNCH_COLUMNS}`,
-    [zodu_id, branch_id, employee_id, employee_name]
+    [zodu_id, branch_id, employee_id, marked_by || employee_id, marked_by_name || employee_name]
+  );
+  return rows[0] || null;
+};
+
+/**
+ * Today's punch state for the face check-in: status, both times as IST ISO text
+ * ("2026-11-24T09:02:11") and seconds since the check-in. Null when there is no row.
+ */
+exports.findTodayPunch = async ({ employee_id }) => {
+  const { rows } = await db.query(
+    `SELECT status,
+            TO_CHAR(check_in_time  AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI:SS') AS check_in_iso,
+            TO_CHAR(check_out_time AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI:SS') AS check_out_iso,
+            EXTRACT(EPOCH FROM (NOW() - check_in_time))::int AS seconds_since_in
+       FROM tbl_attendance
+      WHERE employee_id = $1 AND attendance_date = ${IST_TODAY}`,
+    [employee_id]
   );
   return rows[0] || null;
 };

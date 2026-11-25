@@ -20,21 +20,31 @@ jest.mock('../src/services/attendance-service', () => ({
   getTeamAttendance: jest.fn(async () => ({ success: true })),
   getMyAttendance: jest.fn(async () => ({ success: true })),
 }));
-// Only E1 in Z001 / B1 exists.
+// Only E1 and the caller's own record E-own exist, both in Z001 / B1.
 jest.mock('../src/repository/face-repo', () => ({
   findEmployee: jest.fn(async ({ employee_id, zodu_id, branch_id }) =>
-    (employee_id === 'E1' && zodu_id === 'Z001' && branch_id === 'B1' ? { employee_id } : null)),
+    (['E1', 'E-own'].includes(employee_id) && zodu_id === 'Z001' && branch_id === 'B1'
+      ? { employee_id, name: employee_id, status: 'active' }
+      : null)),
   findFaceStatus: jest.fn(async () => null),
   deleteFace: jest.fn(async () => true),
+  upsertFace: jest.fn(async () => ({ updated_at: '2026-11-24T10:00:00Z' })),
 }));
 jest.mock('../src/repository/employee-repo', () => ({
   ...jest.requireActual('../src/repository/employee-repo'),
   findByUser: jest.fn(async () => ({ employee_id: 'E-own' })),
 }));
+jest.mock('../src/utils/face-client', () => ({
+  getEmbedding: jest.fn(async () => [1, 0, 0]),
+  similarity: jest.fn(() => 1),
+}));
 
 const service = require('../src/services/employee-service');
 const attendance = require('../src/services/attendance-service');
+const faceRepo = require('../src/repository/face-repo');
 const app = require('../src/express-app');
+
+const JPG = { filename: 'face.jpg', contentType: 'image/jpeg' };
 
 beforeEach(() => jest.clearAllMocks());
 
@@ -129,6 +139,41 @@ describe('permissions', () => {
 
   test('marking attendance needs attendance:create', async () => {
     expect((await request(app).post('/api/attendance').set(bearer(USERS.cashier)).send({})).status).toBe(403);
+  });
+});
+
+describe('own face (self check-in from the attendance app)', () => {
+  const photo = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
+
+  test('any employee may read their own face status, without employee permissions', async () => {
+    const res = await request(app).get('/api/employees/me/face').set(bearer(USERS.cashier));
+    expect(res.status).toBe(200);
+    expect(res.body.data.registered).toBe(false);
+    expect(faceRepo.findFaceStatus).toHaveBeenCalledWith('E-own');
+  });
+
+  test('first enrolment is allowed and saved against the caller\'s own record', async () => {
+    const res = await request(app).post('/api/employees/me/face').set(bearer(USERS.cashier)).attach('face', photo, JPG);
+    expect(res.status).toBe(201);
+    expect(faceRepo.upsertFace).toHaveBeenCalledWith(expect.objectContaining({ employee_id: 'E-own' }));
+  });
+
+  test('replacing an enrolled face from the app is refused (a manager must do it)', async () => {
+    faceRepo.findFaceStatus.mockResolvedValueOnce({ updated_at: 'x' });
+    const res = await request(app).post('/api/employees/me/face').set(bearer(USERS.cashier)).attach('face', photo, JPG);
+    expect(res.status).toBe(409);
+    expect(faceRepo.upsertFace).not.toHaveBeenCalled();
+  });
+
+  test('another employee\'s face still needs employee:edit', async () => {
+    const h = bearer(USERS.cashier);
+    expect((await request(app).post('/api/employees/E1/face').set(h).attach('face', photo, JPG)).status).toBe(403);
+  });
+
+  test('face punches are not served here (attendance-service records them)', async () => {
+    const h = bearer(USERS.owner);
+    expect((await request(app).post('/api/attendance/face/self').set(h).field('expect', 'in').attach('image', photo, JPG)).status).toBe(404);
+    expect((await request(app).post('/api/attendance/face').set(h).attach('image', photo, JPG)).status).toBe(404);
   });
 });
 

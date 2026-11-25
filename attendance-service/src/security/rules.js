@@ -17,6 +17,11 @@ module.exports = [
   // Self check-in / check-out: any signed-in employee, for themselves only (the handler
   // resolves the employee from the token).
   { method: 'POST', path: /^\/api\/attendance\/check-(in|out)$/, authenticated: true },
+  // Face check-in / check-out: self is any signed-in employee, matched against their own face
+  // only (employee from the token); the branch kiosk punches others, so it needs attendance:create.
+  // Exact paths, listed before the crud rules below whose prefix would otherwise claim them.
+  { method: 'POST', path: /^\/api\/attendance\/face\/self$/, authenticated: true },
+  { method: 'POST', path: /^\/api\/attendance\/face$/, perm: 'attendance:create' },
   ...crud('/api/attendance', 'attendance'),
 
   // Leave. Loading the holiday list needs attendance:edit; everything else is for any signed-in

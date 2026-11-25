@@ -16,12 +16,14 @@ app.set('router options', { strict: false });
 // Service-to-service routes: auth-service only (its X-Internal-Token), except the
 // user → employee lookup, which checklist-service and checklist-v2-service also use
 // (own-task checks), the employee directory, which only checklist-v2 syncs, and the roster, which only
-// attendance-service reads (it keeps no employee table).
+// attendance-service reads (it keeps no employee table), as it does face identification for
+// face check-in (it keeps the attendance rows, this service keeps the faces).
 const fromAuth = requireInternal('auth');
 const fromAuthOrChecklists = requireInternal('auth', 'checklist', 'checklist_v2');
 const fromChecklistV2 = requireInternal('checklist_v2');
 const fromAttendance = requireInternal('attendance');
 function internalCaller(req) {
+  if (req.method === 'POST' && req.path === '/faces/identify') return fromAttendance;
   if (req.method !== 'GET') return fromAuth;
   if (req.path === '/employee/by-user') return fromAuthOrChecklists;
   if (req.path === '/employees/directory') return fromChecklistV2;

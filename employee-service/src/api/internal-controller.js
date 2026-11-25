@@ -2,6 +2,8 @@ const express = require('express');
 const router  = express.Router();
 const db      = require('../database/connection');
 const repo    = require('../repository/employee-repo');
+const faceService = require('../services/face-service');
+const faceUpload  = require('../utils/face-upload');
 
 // Callers are checked in express-app.js (X-Internal-Token): auth-service for most
 // routes; checklist / checklist_v2 for by-user; checklist_v2 for the directory.
@@ -79,7 +81,7 @@ router.get('/employee/by-user', async (req, res) => {
 
 // GET /internal/employees/directory — checklist-v2-service only (directory sync).
 // Query: zodu_id, branch_id, updated_since (ISO, optional), cursor (last employee_id), limit ≤ 500
-// → { data: [{ employee_id, user_id, employee_name, is_active, updated_at }], next_cursor }
+// → { data: [{ employee_id, user_id, employee_name, employee_code, reporting_manager_id, is_active, updated_at }], next_cursor }
 // Paged by employee_id so a row edited mid-sync can't be skipped. updated_at is stored
 // without a zone in the server's TimeZone; it goes out (and updated_since comes in) as UTC.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -97,7 +99,7 @@ router.get('/employees/directory', async (req, res) => {
   }
   try {
     const { rows } = await db.query(
-      `SELECT employee_id, user_id, name AS employee_name,
+      `SELECT employee_id, user_id, name AS employee_name, employee_code, reporting_manager_id,
               COALESCE(status, 'active') = 'active' AS is_active,
               updated_at AT TIME ZONE current_setting('TimeZone') AS updated_at
          FROM tbl_employees
@@ -166,6 +168,34 @@ router.post('/companies/:zodu_id/purge', async (req, res) => {
   } catch (err) {
     console.error('[internal] purgeCompany:', err.message);
     return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /internal/faces/identify — who is in the photo. Called by attendance-service
+// for face check-in / check-out (it records the punch in its own database).
+// multipart: image + { zodu_id, branch_id, employee_id? }. With employee_id only that
+// employee's face is compared (self check-in); without it, the branch's staff (kiosk).
+// 200 { data: { employee_id, employee_name, employee_code, similarity } }; 4xx / 503
+// carry a message the app shows as-is.
+const SCOPE_RE = /^[A-Za-z0-9_-]{1,50}$/;
+
+router.post('/faces/identify', faceUpload('image'), async (req, res) => {
+  try {
+    const { zodu_id, branch_id, employee_id } = req.body || {};
+    if (!SCOPE_RE.test(zodu_id || '') || !SCOPE_RE.test(branch_id || '')) {
+      return res.status(400).json({ success: false, message: 'zodu_id and branch_id are required' });
+    }
+    if (employee_id && !UUID_RE.test(employee_id)) {
+      return res.status(400).json({ success: false, message: 'employee_id must be a UUID' });
+    }
+    if (!req.file) return res.status(400).json({ success: false, message: 'image is required' });
+
+    const result = await faceService.identifyFace({
+      zodu_id, branch_id, employee_id: employee_id || undefined, file: req.file,
+    });
+    return res.status(200).json(result);
+  } catch (err) {
+    return faceUpload.sendError(res, err);
   }
 });
 
