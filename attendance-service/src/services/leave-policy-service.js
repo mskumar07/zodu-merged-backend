@@ -3,7 +3,7 @@ const { httpError } = require('../utils/http-error');
 
 // Leave policies of a branch: what Leave → Leave Policy lists, adds, edits and deletes.
 //   - the newest policy is first in the list; no policy is created for a branch automatically;
-//   - Delete removes the policy from the list (the row is kept), so its name can be used again;
+//   - Delete only makes the policy inactive (the row stays in the list as inactive; its name stays taken);
 //   - an edit carries the `version` the screen loaded: if someone saved in between it is refused (409) and the
 //     screen reloads, so two admins can never overwrite each other;
 //   - leave year / carry forward / encashment are settings stored for the policy. The leave balance does not
@@ -101,5 +101,5 @@ exports.update = async ({ zodu_id, branch_id, policy_id, version, ...change }) =
 
 exports.remove = async ({ zodu_id, branch_id, policy_id }) => {
   if (!(await repo.remove({ zodu_id, branch_id, policy_id }))) throw notFound();
-  return { success: true, message: 'Leave policy deleted' };
+  return { success: true, message: 'Leave policy marked as inactive' };
 };

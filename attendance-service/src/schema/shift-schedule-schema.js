@@ -18,6 +18,12 @@ exports.shift_schedule_list = Joi.object({
   limit:  Joi.number().integer().min(1).max(200).default(50),
 });
 
+// GET /api/shift-schedule/my?month=2026-11      the signed-in employee's own schedule (default: this month)
+exports.shift_schedule_my = Joi.object({
+  ...zodu_branch,
+  month: Joi.string().pattern(/^\d{4}-(0[1-9]|1[0-2])$/).messages({ 'string.pattern.base': '{{#label}} must be YYYY-MM' }),
+});
+
 // One changed cell of the grid. shift_template_id null = OFF / rest day. `version` is the cell's version when the screen
 // loaded it (0 = the cell was empty, nothing scheduled yet).
 const change = Joi.object({

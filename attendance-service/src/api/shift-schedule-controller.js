@@ -5,6 +5,7 @@ const schema = require('../schema/shift-schedule-schema');
 const RequestValidator = require('../utils/requestValidator');
 const security = require('../security');
 const { tenantOf } = require('../security/request');
+const employeeRepo = require('../repository/employee-repo');
 const { isHttpError } = require('../utils/http-error');
 const { logger } = require('../utils/logger');
 
@@ -31,6 +32,19 @@ const route = ({ schemaName, source = 'query', what, run }) => async (req, res) 
     return fail(res, err, what);
   }
 };
+
+// GET /api/shift-schedule/my?month=2026-11     "Myself": my shift today, upcoming shifts, calendar and totals (any signed-in
+// employee; the handler only reads the caller's own employee record).
+router.get('/my', async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(schema.shift_schedule_my, { ...req.query, ...tenantOf(req) });
+    if (errors) return res.status(400).json({ success: false, errors });
+    const employee = await employeeRepo.findByUser(req.auth.userId, input);
+    return res.status(200).json(await service.my({ ...input, employee }));
+  } catch (err) {
+    return fail(res, err, 'my schedule');
+  }
+});
 
 // GET /api/shift-schedule?from=2026-11-23&to=2026-11-29&search=&page=1&limit=50     the grid: employees x dates
 router.get('/', route({ schemaName: 'shift_schedule_list', what: 'list', run: (i) => service.list(i) }));

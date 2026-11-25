@@ -53,7 +53,7 @@ router.post('/', route({
 // `version` is the one the screen loaded: a policy saved by someone else since is a 409.
 router.put('/:policy_id', route({ schemaName: 'leave_policy_update', source: 'body', what: 'update', run: (i) => service.update(i) }));
 
-// DELETE /api/leave-policies/:policy_id      removes the policy from the list
+// DELETE /api/leave-policies/:policy_id      marks the policy inactive (is_active = false)
 router.delete('/:policy_id', route({ schemaName: 'leave_policy_id', what: 'delete', run: (i) => service.remove(i) }));
 
 module.exports = router;

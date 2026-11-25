@@ -23,6 +23,37 @@ exports.cells = async ({ zodu_id, branch_id, employee_ids, from, to }) => {
   return rows;
 };
 
+/**
+ * One employee's scheduled days from `from` to `to` (inclusive), each with its shift's times and the rotation that
+ * produced it. A single range scan on the primary key (zodu_id, branch_id, employee_id, work_date): at most a few dozen
+ * rows, joined to the shift template and rotation by their primary keys. The times are formatted here ("02:00 PM"),
+ * so the service and the screen convert nothing.
+ */
+exports.myDays = async ({ zodu_id, branch_id, employee_id, from, to }) => {
+  const { rows } = await db.query(
+    `SELECT TO_CHAR(a.work_date, 'YYYY-MM-DD') AS work_date,
+            a.shift_template_id, a.rotation_id,
+            st.code, st.name, st.is_active, st.working_minutes,
+            TO_CHAR(st.start_time, 'HH12:MI AM') AS start_time_label,
+            TO_CHAR(st.end_time,   'HH12:MI AM') AS end_time_label,
+            CASE WHEN st.break_minutes > 0 AND st.break_start IS NOT NULL
+                 THEN TO_CHAR(st.break_start, 'HH12:MI AM') || ' – '
+                      || TO_CHAR(st.break_start + make_interval(mins => st.break_minutes::int), 'HH12:MI AM')
+            END AS break_label,
+            st.break_minutes,
+            r.name AS rotation_name, r.rotation_type, r.cycle_length,
+            TO_CHAR(r.effective_from, 'YYYY-MM-DD') AS rotation_effective_from
+       FROM tbl_shift_assignments a
+       LEFT JOIN tbl_shift_templates st ON st.shift_template_id = a.shift_template_id
+       LEFT JOIN tbl_shift_rotations r  ON r.rotation_id = a.rotation_id
+      WHERE a.zodu_id = $1 AND a.branch_id = $2 AND a.employee_id = $3
+        AND a.work_date BETWEEN $4::date AND $5::date
+      ORDER BY a.work_date`,
+    [zodu_id, branch_id, employee_id, from, to]
+  );
+  return rows;
+};
+
 /** The branch's shift templates among `ids` (a template of another branch is simply not returned). */
 exports.findTemplates = async ({ zodu_id, branch_id, ids }) => {
   if (!ids.length) return [];
