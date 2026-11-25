@@ -40,9 +40,26 @@ function rateLimitStore(redis) {
   return createMemoryStore();
 }
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// MinIO often comes up after this process (Docker Desktop still starting locally, or the
+// minio container restarting), so an unreachable store is waited for, not a reason to exit
+// for good. A bucket that does not exist is a configuration error and still fails at once.
+async function waitForStorage() {
+  for (let attempt = 1, delay = 2000; ; attempt++, delay = Math.min(delay * 2, 15000)) {
+    try {
+      return await storage.assertBucket();
+    } catch (err) {
+      if (/does not exist/.test(err.message)) throw err;
+      logger.warn({ err: err.message, attempt }, `file storage unreachable, retrying in ${delay / 1000}s`);
+      await sleep(delay);
+    }
+  }
+}
+
 async function StartServer() {
   checkConfig();
-  await storage.assertBucket();
+  await waitForStorage();
   const redis = connectRedis();
 
   const app = createApp({
