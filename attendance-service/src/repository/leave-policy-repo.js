@@ -77,11 +77,11 @@ exports.update = async (p) => {
   return rows[0] || null;
 };
 
-/** Remove the policy from the list (what "Delete" does). The row is kept. Null if not found or already deleted. */
+/** Make the policy inactive (what "Delete" does). The row stays in the list as inactive. Null if not found. */
 exports.remove = async ({ zodu_id, branch_id, policy_id }) => {
   const { rows } = await db.query(
     `UPDATE tbl_leave_policies
-        SET deleted_at = NOW(), updated_at = NOW(), version = version + 1
+        SET is_active = false, updated_at = NOW(), version = version + 1
       WHERE policy_id = $1 AND zodu_id = $2 AND branch_id = $3 AND deleted_at IS NULL
       RETURNING policy_id`,
     [policy_id, zodu_id, branch_id]
