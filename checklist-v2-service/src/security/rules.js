@@ -19,6 +19,8 @@ module.exports = [
   { method: ['GET', 'POST', 'PUT', 'DELETE'], path: /^\/api\/(notifications|notification-preferences)(\/|$)/, authenticated: true },
 
   // managing checklists
+  // who the caller may assign (everyone for the Admin, else their team)
+  { method: 'GET', path: '/api/checklists/people', any: ['checklist:read', 'checklist:create', 'checklist:edit'] },
   { method: 'PUT', path: '/api/settings', perm: 'checklist:edit' },
   { method: 'POST', path: '/api/task-statuses', perm: 'checklist:create' },
   { method: 'PUT', path: /^\/api\/task-statuses\/[^/]+$/, perm: 'checklist:edit' },

@@ -9,17 +9,21 @@ const { logger } = require('../utils/logger');
 const { unavailable } = require('../utils/errors');
 
 const FULL_EVERY_MS = 24 * 3600_000;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function upsertPage(zodu_id, branch_id, rows) {
   if (!rows.length) return;
   await pool.query(
     `INSERT INTO ckl.employee_directory AS d
-       (zodu_id, branch_id, employee_id, user_id, employee_name, is_active, source_updated_at, synced_at)
-     SELECT $1, $2, x.employee_id, x.user_id, x.employee_name, x.is_active, x.updated_at, now()
-       FROM unnest($3::uuid[], $4::uuid[], $5::text[], $6::boolean[], $7::timestamptz[])
-            AS x(employee_id, user_id, employee_name, is_active, updated_at)
+       (zodu_id, branch_id, employee_id, user_id, employee_name, is_active, source_updated_at, synced_at,
+        reporting_manager_id, employee_code)
+     SELECT $1, $2, x.employee_id, x.user_id, x.employee_name, x.is_active, x.updated_at, now(),
+            x.reporting_manager_id, x.employee_code
+       FROM unnest($3::uuid[], $4::uuid[], $5::text[], $6::boolean[], $7::timestamptz[], $8::uuid[], $9::text[])
+            AS x(employee_id, user_id, employee_name, is_active, updated_at, reporting_manager_id, employee_code)
      ON CONFLICT (zodu_id, branch_id, employee_id) DO UPDATE
        SET user_id = EXCLUDED.user_id, employee_name = EXCLUDED.employee_name,
+           reporting_manager_id = EXCLUDED.reporting_manager_id, employee_code = EXCLUDED.employee_code,
            is_active = EXCLUDED.is_active, source_updated_at = EXCLUDED.source_updated_at,
            synced_at = now()`,
     [
@@ -29,6 +33,8 @@ async function upsertPage(zodu_id, branch_id, rows) {
       rows.map((r) => String(r.employee_name ?? '').slice(0, 100) || 'Employee'),
       rows.map((r) => r.is_active !== false),
       rows.map((r) => r.updated_at ?? null),
+      rows.map((r) => (UUID.test(String(r.reporting_manager_id ?? '')) ? r.reporting_manager_id : null)),
+      rows.map((r) => (r.employee_code ? String(r.employee_code).slice(0, 50) : null)),
     ],
   );
 }

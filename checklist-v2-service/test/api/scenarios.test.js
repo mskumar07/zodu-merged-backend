@@ -95,8 +95,8 @@ describe('S1 · a manager creates a daily checklist', () => {
 
   test('422: unknown category, inactive or another company\'s employee as assignee or reviewer', async () => {
     expect((await api.create(manager, await checklist({ category_id: '00000000-0000-4000-8000-000000000000' }))).body.code).toBe('CATEGORY_NOT_FOUND');
-    expect((await api.create(manager, await checklist({ assignee_employee_ids: [EMP.gone.employee_id] }))).body.code).toBe('EMPLOYEE_NOT_FOUND');
-    expect((await api.create(manager, await checklist({ assignee_employee_ids: [OTHER.employee_id] }))).body.code).toBe('EMPLOYEE_NOT_FOUND');
+    expect((await api.create(owner, await checklist({ assignee_employee_ids: [EMP.gone.employee_id] }))).body.code).toBe('EMPLOYEE_NOT_FOUND');
+    expect((await api.create(owner, await checklist({ assignee_employee_ids: [OTHER.employee_id] }))).body.code).toBe('EMPLOYEE_NOT_FOUND');
     expect((await api.create(manager, await checklist({ reviewer_employee_id: EMP.gone.employee_id }))).body.code).toBe('EMPLOYEE_NOT_FOUND');
   });
 
@@ -218,14 +218,14 @@ describe('S3 · the manager edits the checklist', () => {
 
   test('switching All employees ↔ specific people, applied now, never leaves two runs for one slot', async () => {
     const today = await localToday();
-    const c = (await api.create(manager, await checklist({ assign_mode: 'ALL', assignee_employee_ids: [] }))).body.data;
+    const c = (await api.create(owner, await checklist({ assign_mode: 'ALL', assignee_employee_ids: [] }))).body.data;
     expect((await runsOf(c.id)).filter((l) => l.startsWith(today))).toEqual([`${today} 23:59 TODO All employees`]);
 
-    let r = await api.edit(manager, c.id, { ...(await checklist()), row_version: 1, apply_from: 'NOW' });
+    let r = await api.edit(owner, c.id, { ...(await checklist()), row_version: 1, apply_from: 'NOW' });
     expect(r.status).toBe(200);
     expect((await runsOf(c.id)).filter((l) => l.startsWith(today))).toEqual([`${today} 23:59 TODO ${EMP.cashier.name}`]);
 
-    r = await api.edit(manager, c.id, { ...(await checklist({ assign_mode: 'ALL', assignee_employee_ids: [] })), row_version: 2, apply_from: 'NOW' });
+    r = await api.edit(owner, c.id, { ...(await checklist({ assign_mode: 'ALL', assignee_employee_ids: [] })), row_version: 2, apply_from: 'NOW' });
     expect((await runsOf(c.id)).filter((l) => l.startsWith(today))).toEqual([`${today} 23:59 TODO All employees`]);
   });
 
@@ -343,10 +343,52 @@ describe('S5 · recurring schedules land on the right dates', () => {
   });
 });
 
+// ── S9 · Reporting line: the Admin sees everyone; a manager only their team ──
+describe('S9 · a manager works with their own team', () => {
+  const people = (who) => request(app).get('/api/checklists/people').set(who);
+  const teamBoard = async (who, date) => (await request(app).get('/api/runs').query({ view: 'team', date, limit: 100 }).set(who)).body.data;
+
+  test('people: the Admin gets everyone ("all"); a manager their reports and themselves ("team")', async () => {
+    const all = await people(owner);
+    expect(all.status).toBe(200);
+    expect(all.body.scope).toBe('all');
+    expect(all.body.data.map((p) => p.name)).toEqual(
+      [EMP.owner, EMP.manager, EMP.cashier, EMP.nologin].map((e) => e.name).sort());
+    const team = await people(manager);
+    expect(team.body.scope).toBe('team');
+    expect(team.body.data.map((p) => p.name)).toEqual([EMP.cashier, EMP.manager, EMP.nologin].map((e) => e.name).sort());
+    expect((await people(cashier)).status).toBe(403);
+  });
+
+  test('a manager cannot assign All employees or someone outside their team', async () => {
+    expect((await api.create(manager, await checklist({ assign_mode: 'ALL', assignee_employee_ids: [] }))).body.code).toBe('ASSIGN_ALL_ADMIN_ONLY');
+    expect((await api.create(manager, await checklist({ assignee_employee_ids: [EMP.owner.employee_id] }))).body.code).toBe('NOT_YOUR_TEAM');
+    expect((await api.create(manager, await checklist({ assignee_employee_ids: [EMP.cashier.employee_id, EMP.manager.employee_id] }))).status).toBe(201);
+  });
+
+  test('Team view: the manager sees their team\'s runs, not another team\'s; the Admin sees both', async () => {
+    const today = await localToday();
+    const ours = (await api.create(owner, await checklist({ name: 'Ours', assignee_employee_ids: [EMP.cashier.employee_id] }))).body.data;
+    const theirs = (await api.create(owner, await checklist({ name: 'Theirs', assignee_employee_ids: [EMP.owner.employee_id] }))).body.data;
+    const mgr = (await teamBoard(manager, today)).map((r) => r.checklist_id);
+    expect(mgr).toContain(ours.id);
+    expect(mgr).not.toContain(theirs.id);
+    const adm = (await teamBoard(owner, today)).map((r) => r.checklist_id);
+    expect(adm).toEqual(expect.arrayContaining([ours.id, theirs.id]));
+    // another team's run: no detail, and their checklist can't be paused (or edited, or deleted)
+    const [run] = (await teamBoard(owner, today)).filter((r) => r.checklist_id === theirs.id);
+    expect((await api.run(manager, run.id)).status).toBe(403);
+    const pause = (id) => request(app).patch(`/api/checklists/${id}/status`).set(manager).send({ status: 'PAUSED' });
+    expect((await pause(theirs.id)).body.code).toBe('NOT_YOUR_TEAM');
+    // their own team's checklist: they may
+    expect((await pause(ours.id)).status).toBe(200);
+  });
+});
+
 // ── S6 · Shared "All employees" run ──────────────────────────────────────────
 describe('S6 · assigned to all employees', () => {
   test('one shared run on everyone\'s board; whoever finishes it is recorded; it disappears as done for all', async () => {
-    const c = (await api.create(manager, await checklist({ assign_mode: 'ALL', assignee_employee_ids: [] }))).body.data;
+    const c = (await api.create(owner, await checklist({ assign_mode: 'ALL', assignee_employee_ids: [] }))).body.data;
     const today = await localToday();
     const [a] = await mine(cashier, today, c.id);
     const [b] = await mine(manager, today, c.id);

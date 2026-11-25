@@ -1,4 +1,5 @@
 const express = require('express');
+const multer  = require('multer');
 const router  = express.Router();
 const service  = require('../services/attendance-service');
 const dashboardService = require('../services/dashboard-service');
@@ -7,6 +8,8 @@ const schema  = require('../schema/attendance-schema');
 const security    = require('../security');
 const { tenantOf, callerOf } = require('../security/request');
 const employeeRepo = require('../repository/employee-repo');
+const { isHttpError } = require('../utils/http-error');
+const { logger } = require('../utils/logger');
 
 security.protectParams(router);
 
@@ -181,6 +184,64 @@ const punch = (action) => async (req, res) => {
 };
 router.post('/check-in', punch('checkIn'));
 router.post('/check-out', punch('checkOut'));
+
+// ── FACE CHECK-IN / CHECK-OUT ─────────────────────────────────────────────────
+// The photo stays in memory: it goes to employee-service to say who is in it, and is never stored.
+const faceUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024, files: 1 },
+  fileFilter: (req, file, cb) => cb(null, ['image/jpeg', 'image/png'].includes(file.mimetype)),
+});
+
+const faceFail = (res, err) => {
+  if (err instanceof multer.MulterError) {
+    const tooBig = err.code === 'LIMIT_FILE_SIZE';
+    return res.status(tooBig ? 413 : 400).json({ success: false, error: tooBig ? 'The photo is larger than 8 MB' : err.message });
+  }
+  if (err instanceof service.PunchError || isHttpError(err) || err?.status === 503) {
+    return res.status(err.status).json({ success: false, error: err.message });
+  }
+  logger.error({ err }, '[attendance] face punch failed');
+  return res.status(500).json({ success: false, error: 'Something went wrong. Please try again.' });
+};
+
+// POST /api/attendance/face/self    multipart: image (JPG / PNG) + { expect: 'in' | 'out' }
+// The signed-in employee checks themselves in or out; the photo must match their own face.
+router.post('/face/self', faceUpload.single('image'), security.tenantBody, async (req, res) => {
+  try {
+    // eslint-disable-next-line no-unused-vars
+    const { employee_id: _ignored, ...body } = req.body || {};
+    const { errors, input } = await RequestValidator(schema.attendance_face_self, { ...body, ...tenantOf(req) });
+    if (errors) return res.status(400).json({ success: false, errors });
+    if (!req.file) return res.status(400).json({ success: false, error: 'A JPG or PNG photo is required' });
+
+    const employee = await employeeRepo.findByUser(req.auth.userId, input);
+    if (!employee) return res.status(404).json({ success: false, error: 'No employee record for this user' });
+    if (employee.status && employee.status !== 'active') {
+      return res.status(403).json({ success: false, error: 'Your employee record is inactive' });
+    }
+
+    return res.status(200).json(await service.faceSelf({ ...input, employee, file: req.file }));
+  } catch (err) {
+    return faceFail(res, err);
+  }
+});
+
+// POST /api/attendance/face         multipart: image (JPG / PNG)
+// Branch kiosk (attendance:create): checks in whoever is in the photo, or out if already in.
+// The manager running it is recorded as marked_by, from the token, not the body.
+router.post('/face', faceUpload.single('image'), security.tenantBody, async (req, res) => {
+  try {
+    const { errors, input } = await RequestValidator(schema.attendance_face, { ...tenantOf(req) });
+    if (errors) return res.status(400).json({ success: false, errors });
+    if (!req.file) return res.status(400).json({ success: false, error: 'A JPG or PNG photo is required' });
+
+    const marker = await employeeRepo.findByUser(req.auth.userId, input);
+    return res.status(200).json(await service.faceKiosk({ ...input, marker, file: req.file }));
+  } catch (err) {
+    return faceFail(res, err);
+  }
+});
 
 // ── ONE EMPLOYEE'S DAY  PUT /api/attendance/employee/:employee_id ─────────────
 // Saves the "Edit Attendance" dialog: { attendance_date, status, check_in_time, check_out_time, remarks },

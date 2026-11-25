@@ -1,5 +1,6 @@
 const db   = require('../database/connection');
 const repo = require('../repository/attendance-repo');
+const faceClient = require('../clients/face-identify');
 
 // ── MARK ATTENDANCE  (bulk — one save covers all employees for a date) ────────
 // Body: { zodu_id, branch_id, attendance_date, marked_by, marked_by_name,
@@ -216,6 +217,80 @@ exports.checkOut = async ({ employee }) => {
   const today = await repo.findToday({ employee_id: employee.employee_id });
   if (!today || !today.check_in_time) throw new PunchError(400, 'You have not checked in today');
   throw new PunchError(409, 'You have already checked out today');
+};
+
+// ── FACE CHECK-IN / CHECK-OUT ─────────────────────────────────────────────────
+// employee-service says who is in the photo (it keeps the faces); the punch is the
+// same check-in / check-out as the buttons above, in this service's database, so
+// the dashboard, My Attendance and the team views all see it.
+
+// Two kiosk scans this close together are the same punch, not check-in then out.
+const MIN_PUNCH_GAP_S = 60;
+
+const timeIst = (iso) => {
+  const [h, m] = String(iso).slice(11, 16).split(':').map(Number);
+  return `${String(h % 12 || 12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+};
+
+/** The face-punch answer the app reads: who, which punch, and today's times (IST ISO). */
+const facePunchResult = async (type, match) => {
+  const now = await repo.findTodayPunch({ employee_id: match.employee_id });
+  return {
+    success: true,
+    message: type === 'in' ? 'Checked in successfully' : 'Checked out successfully',
+    data: {
+      type,
+      employee_id:     match.employee_id,
+      employee_name:   match.employee_name,
+      employee_code:   match.employee_code,
+      attendance_date: istToday(),
+      check_in_time:   now?.check_in_iso || null,
+      check_out_time:  now?.check_out_iso || null,
+      similarity:      match.similarity,
+    },
+  };
+};
+
+/**
+ * Self check-in ([expect] 'in') or check-out ('out') by face: the photo must match the
+ * caller's own registered face. Refused, like the buttons, when it isn't the right moment.
+ */
+exports.faceSelf = async ({ zodu_id, branch_id, employee, expect, file }) => {
+  const match = await faceClient.identifyFace({ zodu_id, branch_id, employee_id: employee.employee_id, file });
+  if (expect === 'in') await exports.checkIn({ zodu_id, branch_id, employee });
+  else await exports.checkOut({ employee });
+  return facePunchResult(expect, { ...match, employee_name: match.employee_name || employee.name });
+};
+
+/**
+ * Branch kiosk: identifies whoever is in the photo among the branch's registered staff and
+ * checks them in, or out if they are already in. [marker] is the manager running the kiosk.
+ */
+exports.faceKiosk = async ({ zodu_id, branch_id, marker, file }) => {
+  const match = await faceClient.identifyFace({ zodu_id, branch_id, file });
+  const name = match.employee_name;
+  const today = await repo.findTodayPunch({ employee_id: match.employee_id });
+  const checkedIn = !!(today && today.check_in_iso && today.status === 'Present');
+
+  if (!checkedIn) {
+    const row = await repo.checkIn({
+      zodu_id, branch_id,
+      employee_id: match.employee_id,
+      employee_name: name,
+      marked_by: marker?.employee_id,
+      marked_by_name: marker?.name,
+    });
+    // Lost a race with another scan / tap: it is already in.
+    if (!row) throw new PunchError(409, `${name} has already checked in today.`);
+    return facePunchResult('in', match);
+  }
+  if (today.check_out_iso) throw new PunchError(409, `${name} has already checked in and out today.`);
+  if (today.seconds_since_in < MIN_PUNCH_GAP_S) {
+    throw new PunchError(409, `${name} already checked in at ${timeIst(today.check_in_iso)}.`);
+  }
+  const row = await repo.checkOut({ employee_id: match.employee_id });
+  if (!row) throw new PunchError(409, `${name} has already checked out today.`);
+  return facePunchResult('out', match);
 };
 
 // ── ONE EMPLOYEE'S DAY  (save from the "Edit Attendance" dialog) ───────────────

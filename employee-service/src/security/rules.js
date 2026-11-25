@@ -7,9 +7,11 @@ const { crud } = require('@zodu/security');
 module.exports = [
   // Own attendance: any signed-in user; another employee's needs attendance:read (handler).
   { method: 'GET', path: '/api/attendance/my', authenticated: true },
-  { method: 'POST', path: '/api/attendance/face', perm: 'attendance:create' },
   ...crud('/api/attendance', 'attendance'),
 
+  // Own face: any signed-in employee may see whether it is registered and enrol it once;
+  // replacing it needs employee:edit (handler + the rule below).
+  { method: ['GET', 'POST'], path: /^\/api\/employees\/me\/face$/, authenticated: true },
   // Documents and the attendance face belong to the employee record: editing it.
   { method: ['POST', 'DELETE'], path: /^\/api\/employees\/[^/]+\/(documents|face)(\/[^/]+)?$/, perm: 'employee:edit' },
   // Assigning a role is also checked in the handler (role:edit).

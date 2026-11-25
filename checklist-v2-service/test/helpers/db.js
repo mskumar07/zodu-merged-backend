@@ -10,8 +10,8 @@ const T2 = { zodu_id: 'Z002', branch_id: 'B1' };
 const EMP = {
   owner: { employee_id: 'e0000000-0000-4000-8000-000000000001', user_id: USERS.owner.userId, name: 'Owner One' },
   manager: { employee_id: 'e0000000-0000-4000-8000-000000000002', user_id: USERS.manager.userId, name: 'Meena Manager' },
-  cashier: { employee_id: 'e0000000-0000-4000-8000-000000000003', user_id: USERS.cashier.userId, name: 'Karthik Cashier' },
-  nologin: { employee_id: 'e0000000-0000-4000-8000-000000000004', user_id: null, name: 'Ravi NoLogin' },
+  cashier: { employee_id: 'e0000000-0000-4000-8000-000000000003', user_id: USERS.cashier.userId, name: 'Karthik Cashier', manager: 'e0000000-0000-4000-8000-000000000002' },
+  nologin: { employee_id: 'e0000000-0000-4000-8000-000000000004', user_id: null, name: 'Ravi NoLogin', manager: 'e0000000-0000-4000-8000-000000000002' },
   gone: { employee_id: 'e0000000-0000-4000-8000-000000000005', user_id: null, name: 'Left Already', active: false },
 };
 const OTHER = { employee_id: 'e0000000-0000-4000-8000-000000000099', user_id: USERS.other.userId, name: 'Other Co' };
@@ -30,10 +30,11 @@ async function reset() {
 async function seedDirectory(tenant = T1, people = Object.values(EMP)) {
   for (const p of people) {
     await pool.query(
-      `INSERT INTO ckl.employee_directory (zodu_id, branch_id, employee_id, user_id, employee_name, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (zodu_id, branch_id, employee_id) DO UPDATE SET is_active = EXCLUDED.is_active`,
-      [tenant.zodu_id, tenant.branch_id, p.employee_id, p.user_id, p.name, p.active !== false],
+      `INSERT INTO ckl.employee_directory (zodu_id, branch_id, employee_id, user_id, employee_name, is_active, reporting_manager_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (zodu_id, branch_id, employee_id) DO UPDATE
+         SET is_active = EXCLUDED.is_active, reporting_manager_id = EXCLUDED.reporting_manager_id`,
+      [tenant.zodu_id, tenant.branch_id, p.employee_id, p.user_id, p.name, p.active !== false, p.manager ?? null],
     );
   }
   await pool.query(

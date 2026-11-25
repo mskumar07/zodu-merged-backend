@@ -24,6 +24,28 @@ const upload = multer({
   },
 });
 
+// ── OWN FACE  /api/employees/me/face ──────────────────────────────────────────
+// Before the /:id routes, which would read "me" as an id.
+// GET  → { registered, updated_at } for the signed-in employee
+// POST multipart: face (photo) + { zodu_id, branch_id } — first enrolment only
+router.get('/me/face', async (req, res) => {
+  try {
+    return res.status(200).json(await faceService.getMyFaceStatus({ ...tenantOf(req), user_id: req.auth.userId }));
+  } catch (err) {
+    return faceUpload.sendError(res, err);
+  }
+});
+
+router.post('/me/face', faceUpload('face'), security.tenantBody, async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: 'face photo is required' });
+    const result = await faceService.registerMyFace({ ...tenantOf(req), user_id: req.auth.userId, file: req.file });
+    return res.status(201).json(result);
+  } catch (err) {
+    return faceUpload.sendError(res, err);
+  }
+});
+
 // ── CREATE  POST /api/employees ───────────────────────────────────────────────
 // Body: { zodu_id, branch_id, name, phone, email, ... }
 router.post('/', async (req, res) => {

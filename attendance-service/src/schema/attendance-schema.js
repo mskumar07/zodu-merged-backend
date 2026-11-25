@@ -99,6 +99,16 @@ exports.attendance_team_dashboard = Joi.object({
 
 exports.attendance_punch = Joi.object({ ...zodu_branch });
 
+// ── FACE  POST /api/attendance/face/self · POST /api/attendance/face (multipart fields) ──
+// Self: no employee_id, the employee always comes from the token; [expect] is the punch the
+// employee tapped, so a scan never does the other one. Kiosk: whoever is in the photo.
+exports.attendance_face_self = Joi.object({
+  ...zodu_branch,
+  expect: Joi.string().valid('in', 'out').required(),
+});
+
+exports.attendance_face = Joi.object({ ...zodu_branch });
+
 // ── ONE EMPLOYEE'S DAY  PUT /api/attendance/employee/:employee_id ─────────────
 // The "Edit Attendance" dialog's save. Times are "HH:mm" (24h, IST), the form's own values.
 

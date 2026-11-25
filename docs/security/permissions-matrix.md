@@ -61,12 +61,12 @@ How to read it:
 | Method | Path | Who |
 |---|---|---|
 | GET | `/api/attendance/my` | any signed-in user |
-| POST | `/api/attendance/face` | `attendance:create` |
 | GET | `/api/attendance` | `attendance:read` |
 | POST | `/api/attendance` | `attendance:create` |
 | PUT | `/api/attendance` | `attendance:edit` |
 | PATCH | `/api/attendance` | `attendance:edit` |
 | DELETE | `/api/attendance` | `attendance:delete` |
+| GET, POST | `^\/api\/employees\/me\/face$` (regex) | any signed-in user |
 | POST, DELETE | `^\/api\/employees\/[^/]+\/(documents\|face)(\/[^/]+)?$` (regex) | `employee:edit` |
 | PUT | `^\/api\/employees\/[^/]+\/login-details$` (regex) | `employee:edit` |
 | GET | `/api/employees` | `employee:read` |

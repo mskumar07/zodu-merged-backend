@@ -1,6 +1,6 @@
 const express = require('express');
 const security = require('../security');
-const { tenantOf, callerOf } = require('../security/request');
+const { tenantOf, callerOf, scopeOf } = require('../security/request');
 const service = require('../services/checklists');
 const schema = require('../schema');
 const files = require('../clients/file-client');
@@ -15,6 +15,9 @@ security.protectParams(router);
 
 const ok = (res, data, status = 200) => res.status(status).json({ success: true, data });
 
+// The caller and their team (who they may assign and manage).
+const actorOf = async (req) => ({ ...callerOf(req), scope: await scopeOf(req) });
+
 router.get('/', ah(async (req, res) => {
   const q = schema.validate(schema.listChecklists, req.query, { label: 'filters' });
   const out = await service.list(tenantOf(req), q);
@@ -25,8 +28,14 @@ router.post('/', ah(async (req, res) => {
   const body = schema.validate(schema.createChecklist, req.body, { label: 'checklist' });
   await idempotent(req, res, async () => ({
     status: 201,
-    body: { success: true, data: await service.create(tenantOf(req), callerOf(req), body) },
+    body: { success: true, data: await service.create(tenantOf(req), await actorOf(req), body) },
   }));
+}));
+
+// Who the caller may assign: everyone (Admin) or their team. Before '/:id'.
+router.get('/people', ah(async (req, res) => {
+  const out = await service.people(tenantOf(req), await scopeOf(req));
+  res.json({ success: true, scope: out.scope, data: out.data });
 }));
 
 router.post('/schedule-preview', ah(async (req, res) => {
@@ -45,23 +54,23 @@ router.get('/:id', ah(async (req, res) => ok(res, await service.getDefinition(te
 
 router.put('/:id', ah(async (req, res) => {
   const body = schema.validate(schema.updateChecklist, req.body, { label: 'checklist' });
-  ok(res, await service.update(tenantOf(req), callerOf(req), req.params.id, body));
+  ok(res, await service.update(tenantOf(req), await actorOf(req), req.params.id, body));
 }));
 
 router.patch('/:id/status', ah(async (req, res) => {
   const { status } = schema.validate(schema.checklistStatus, req.body, { label: 'status' });
-  ok(res, await service.setStatus(tenantOf(req), callerOf(req), req.params.id, status));
+  ok(res, await service.setStatus(tenantOf(req), await actorOf(req), req.params.id, status));
 }));
 
 router.post('/:id/duplicate', ah(async (req, res) => {
   await idempotent(req, res, async () => ({
     status: 201,
-    body: { success: true, data: await service.duplicate(tenantOf(req), callerOf(req), req.params.id) },
+    body: { success: true, data: await service.duplicate(tenantOf(req), await actorOf(req), req.params.id) },
   }));
 }));
 
 router.delete('/:id', ah(async (req, res) => {
-  await service.remove(tenantOf(req), callerOf(req), req.params.id);
+  await service.remove(tenantOf(req), await actorOf(req), req.params.id);
   res.status(204).end();
 }));
 

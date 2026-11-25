@@ -12,6 +12,8 @@ jest.mock('../src/services/attendance-service', () => ({
   getMyAttendance: jest.fn(async () => ({ success: true })),
   checkIn: jest.fn(async () => ({ success: true, data: {} })),
   checkOut: jest.fn(async () => ({ success: true, data: {} })),
+  faceSelf: jest.fn(async () => ({ success: true, data: { type: 'in' } })),
+  faceKiosk: jest.fn(async () => ({ success: true, data: { type: 'in' } })),
   PunchError: class PunchError extends Error {
     constructor(status, message) { super(message); this.status = status; }
   },
@@ -118,6 +120,57 @@ describe('permissions', () => {
 
   test('marking attendance needs attendance:create', async () => {
     expect((await request(app).post('/api/attendance').set(bearer(USERS.cashier)).send({})).status).toBe(403);
+  });
+});
+
+describe('face check-in / check-out', () => {
+  const photo = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
+  const JPG = { filename: 'face.jpg', contentType: 'image/jpeg' };
+
+  test('self: any signed-in employee, always for themselves (an employee_id field is ignored)', async () => {
+    const res = await request(app).post('/api/attendance/face/self').set(bearer(USERS.cashier))
+      .field('expect', 'in').field('employee_id', 'E-someone-else').attach('image', photo, JPG);
+    expect(res.status).toBe(200);
+    expect(attendance.faceSelf).toHaveBeenCalledWith(expect.objectContaining({
+      expect: 'in', zodu_id: 'Z001', branch_id: 'B1', employee: expect.objectContaining({ employee_id: 'E-own' }),
+    }));
+    expect((await request(app).post('/api/attendance/face/self').field('expect', 'in').attach('image', photo, JPG)).status).toBe(401);
+  });
+
+  test('self: needs expect=in|out and a JPG / PNG photo', async () => {
+    const h = bearer(USERS.cashier);
+    expect((await request(app).post('/api/attendance/face/self').set(h).attach('image', photo, JPG)).status).toBe(400);
+    expect((await request(app).post('/api/attendance/face/self').set(h).field('expect', 'sideways').attach('image', photo, JPG)).status).toBe(400);
+    expect((await request(app).post('/api/attendance/face/self').set(h).field('expect', 'in')).status).toBe(400);
+    expect((await request(app).post('/api/attendance/face/self').set(h).field('expect', 'in')
+      .attach('image', Buffer.from('GIF89a'), { filename: 'a.gif', contentType: 'image/gif' })).status).toBe(400);
+    expect(attendance.faceSelf).not.toHaveBeenCalled();
+  });
+
+  test('self: a refused punch or an unmatched face keeps its status and message', async () => {
+    const h = bearer(USERS.cashier);
+    attendance.faceSelf.mockRejectedValueOnce(new attendance.PunchError(409, 'You have already checked in today'));
+    const dup = await request(app).post('/api/attendance/face/self').set(h).field('expect', 'in').attach('image', photo, JPG);
+    expect(dup.status).toBe(409);
+    expect(dup.body.error).toMatch(/already checked in/);
+
+    attendance.faceSelf.mockRejectedValueOnce(Object.assign(new Error('Face does not match.'), { status: 422 }));
+    const miss = await request(app).post('/api/attendance/face/self').set(h).field('expect', 'in').attach('image', photo, JPG);
+    expect(miss.status).toBe(422);
+    expect(miss.body.error).toBe('Face does not match.');
+
+    attendance.faceSelf.mockRejectedValueOnce(Object.assign(new Error('Face recognition is unavailable right now.'), { status: 503 }));
+    expect((await request(app).post('/api/attendance/face/self').set(h).field('expect', 'out').attach('image', photo, JPG)).status).toBe(503);
+  });
+
+  test('kiosk: needs attendance:create; the manager running it is recorded from the token', async () => {
+    expect((await request(app).post('/api/attendance/face').set(bearer(USERS.cashier)).attach('image', photo, JPG)).status).toBe(403);
+    const res = await request(app).post('/api/attendance/face').set(bearer(USERS.manager))
+      .field('marked_by', 'forged').attach('image', photo, JPG);
+    expect(res.status).toBe(200);
+    expect(attendance.faceKiosk).toHaveBeenCalledWith(expect.objectContaining({
+      zodu_id: 'Z001', branch_id: 'B1', marker: expect.objectContaining({ employee_id: 'E-own' }),
+    }));
   });
 });
 

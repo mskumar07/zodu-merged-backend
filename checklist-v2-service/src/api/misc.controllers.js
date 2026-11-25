@@ -2,7 +2,7 @@
 const express = require('express');
 const pool = require('../database/pool');
 const { withTransaction } = require('../database/tx');
-const { tenantOf, callerOf, myEmployeeId } = require('../security/request');
+const { tenantOf, callerOf, myEmployeeId, scopeOf } = require('../security/request');
 const { uuidParams } = require('./params');
 const dashboard = require('../services/dashboard');
 const settingsService = require('../services/settings');
@@ -163,7 +163,7 @@ dashboards.get('/my', ah(async (req, res) => {
 
 dashboards.get('/team', ah(async (req, res) => {
   const q = schema.validate(schema.dashboardRange, req.query, { label: 'range' });
-  res.json({ success: true, data: await dashboard.team(tenantOf(req), q) });
+  res.json({ success: true, data: await dashboard.team(tenantOf(req), q, await scopeOf(req)) });
 }));
 
 module.exports = { categories, dashboards, settings, taskStatuses };
