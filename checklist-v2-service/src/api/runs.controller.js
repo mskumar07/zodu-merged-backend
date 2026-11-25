@@ -1,6 +1,6 @@
 const express = require('express');
 const security = require('../security');
-const { tenantOf, callerOf, myEmployeeId } = require('../security/request');
+const { tenantOf, callerOf, myEmployeeId, scopeOf } = require('../security/request');
 const service = require('../services/runs');
 const schema = require('../schema');
 const files = require('../clients/file-client');
@@ -22,6 +22,7 @@ async function ctxOf(req) {
     me: await myEmployeeId(req),
     canRead: caller.can('checklist:read'),
     canEdit: caller.can('checklist:edit'),
+    scope: await scopeOf(req),
   };
 }
 

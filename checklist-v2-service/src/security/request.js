@@ -46,4 +46,30 @@ async function myEmployeeId(req) {
   return value;
 }
 
-module.exports = { tenantOf, callerOf, myEmployeeId, UUID };
+// Whose checklists the caller works with. The company Admin: everyone (all: true).
+// Anyone else: their team, i.e. themselves and the employees they are the reporting
+// manager of (direct reports, as attendance and leave do). No employee record: nobody.
+// -> { all, team: employee_id[] | null, me, userId }
+async function scopeOf(req) {
+  if (req.teamScope) return req.teamScope;
+  const { isOwner, userId } = callerOf(req);
+  const me = await myEmployeeId(req);
+  if (isOwner) {
+    req.teamScope = { all: true, team: null, me, userId };
+    return req.teamScope;
+  }
+  let team = [];
+  if (me) {
+    const { zodu_id, branch_id } = tenantOf(req);
+    const { rows } = await pool.query(
+      `SELECT employee_id FROM ckl.employee_directory
+        WHERE zodu_id = $1 AND branch_id = $2 AND is_active AND reporting_manager_id = $3`,
+      [zodu_id, branch_id, me],
+    );
+    team = [me, ...rows.map((r) => r.employee_id)];
+  }
+  req.teamScope = { all: false, team, me, userId };
+  return req.teamScope;
+}
+
+module.exports = { tenantOf, callerOf, myEmployeeId, scopeOf, UUID };

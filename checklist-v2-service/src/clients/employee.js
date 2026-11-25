@@ -33,7 +33,7 @@ async function byUser({ userId, zoduId, branchId }) {
   return body?.data?.employee_id ?? null;
 }
 
-// One page → { data: [{ employee_id, user_id, employee_name, is_active, updated_at }], next_cursor }
+// One page → { data: [{ employee_id, user_id, employee_name, employee_code, reporting_manager_id, is_active, updated_at }], next_cursor }
 async function directoryPage({ zoduId, branchId, updatedSince, cursor, limit = 500, timeoutMs }) {
   const q = new URLSearchParams({
     zodu_id: zoduId, branch_id: branchId, limit: String(limit),

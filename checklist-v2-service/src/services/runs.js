@@ -15,12 +15,13 @@ const OPEN = ['TODO', 'IN_PROGRESS'];
 
 // ── reading ────────────────────────────────────────────────────────────────
 // view=team needs checklist:read; otherwise the board is forced to the caller's own runs.
-function scopeFilters(f, { canRead, me }) {
+function scopeFilters(f, { canRead, me, scope }) {
   if (f.from && daysBetween(f.from, f.to) > 31) throw badRequest('"from".."to" may span at most 31 days');
   if (f.from && f.to < f.from) throw badRequest('"to" must not be before "from"');
   if (!f.date && !f.from) throw badRequest('"date" or "from" + "to" is required');
   const team = f.view === 'team' && canRead;
-  return { ...f, assignee: team ? f.employee_id : me };
+  const limited = team && scope && !scope.all;
+  return { ...f, assignee: team ? f.employee_id : me, ...(limited && { team: scope.team, creator: scope.userId }) };
 }
 
 async function list(tenant, f, ctx) {
@@ -55,12 +56,21 @@ const isAssignee = (run, me) => Boolean(me) && (
   me === run.assignee_employee_id
   || (run.assignee_employee_id === null && (!run.pool_employee_ids || run.pool_employee_ids.includes(me))));
 
-// Run + items + photos + events: the assignee (anyone, on a shared run), the reviewer, or checklist:read.
+// The run is for the caller's team (see scopeOf): the Admin's is everyone; a manager's is
+// a run for one of their people (shared: its pool includes one, or "All employees"), or
+// any run of a checklist they created.
+const inScope = (run, scope) => !scope || scope.all
+  || run.creator_user_id === scope.userId
+  || scope.team.includes(run.assignee_employee_id)
+  || (run.assignee_employee_id === null && (!run.pool_employee_ids || run.pool_employee_ids.some((e) => scope.team.includes(e))));
+
+// Run + items + photos + events: the assignee (anyone, on a shared run), the reviewer, or
+// checklist:read for a run of the caller's team.
 async function detail(tenant, id, ctx) {
   const r = await repo.findRun(tenant, id);
   if (!r) throw notFound('Run not found');
   const mine = isAssignee(r, ctx.me) || (ctx.me && ctx.me === r.reviewer_employee_id);
-  if (!mine && !ctx.canRead) throw forbidden();
+  if (!mine && !(ctx.canRead && inScope(r, ctx.scope))) throw forbidden();
   const [items, events] = await Promise.all([repo.items(id), repo.events(id)]);
   return {
     ...repo.runOut(r),
@@ -413,6 +423,10 @@ async function reassign(tenant, id, body, ctx) {
       checkVersion(run, body.row_version);
       if (!OPEN.includes(run.status)) throw unprocessable('Only open checklists can be reassigned', 'RUN_CLOSED');
       if (run.assignee_employee_id === body.employee_id) throw badRequest('Already assigned to this employee', 'SAME_ASSIGNEE');
+      // A manager reassigns their team's runs, and only to someone in their team.
+      if (ctx.scope && !ctx.scope.all && (!inScope(run, ctx.scope) || !ctx.scope.team.includes(body.employee_id))) {
+        throw forbidden('You can only assign checklists to your own team', 'NOT_YOUR_TEAM');
+      }
       const { rows: [emp] } = await db.query(
         `SELECT employee_name FROM ckl.employee_directory
           WHERE zodu_id = $1 AND branch_id = $2 AND employee_id = $3 AND is_active`,

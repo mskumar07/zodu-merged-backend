@@ -1,4 +1,4 @@
-const { SHARED_WITH } = require('../repository/runs');
+const { SHARED_WITH, IN_TEAM } = require('../repository/runs');
 // Dashboards. Ranges are local calendar days (run_date); default: the last 30 days.
 // Cancelled runs never count. "Due" runs are those whose due time has passed or
 // that are closed: future open runs are not yet anyone's failure.
@@ -64,11 +64,16 @@ async function my(tenant, me, q) {
   };
 }
 
-async function team(tenant, q) {
+// scope (see scopeOf): the Admin's covers the branch; a manager's only their team's runs.
+async function team(tenant, q, scope) {
   const { from, to } = await range(q);
   const params = [tenant.zodu_id, tenant.branch_id, from, to];
+  const limited = scope && !scope.all;
+  if (limited) params.push(scope.team, scope.userId);
   const base = `FROM ckl.runs r WHERE r.zodu_id = $1 AND r.branch_id = $2
-                  AND r.run_date BETWEEN $3 AND $4 AND r.status <> 'CANCELLED'`;
+                  AND r.run_date BETWEEN $3 AND $4 AND r.status <> 'CANCELLED'
+                  ${limited ? `AND (${IN_TEAM('$5::uuid[]')}
+                       OR r.checklist_id IN (SELECT id FROM ckl.checklists WHERE created_by_user_id = $6::uuid))` : ''}`;
   const [{ rows: [t] }, { rows: people }, { rows: missedTop }] = await Promise.all([
     pool.query(`SELECT ${COUNTS} ${base}`, params),
     pool.query(

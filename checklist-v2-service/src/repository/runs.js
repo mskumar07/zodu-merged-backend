@@ -30,6 +30,8 @@ const SELECT_RUN = `
 // Board filters → WHERE. f.assignee: forced to the caller for view=my. A shared run
 // (assignee NULL) matches everyone in its pool, or anyone when it has none ("All employees").
 const SHARED_WITH = (p) => `(r.assignee_employee_id IS NULL AND (r.pool_employee_ids IS NULL OR ${p} = ANY (r.pool_employee_ids)))`;
+const IN_TEAM = (p1, p2 = p1) => `(r.assignee_employee_id = ANY (${p1})
+  OR (r.assignee_employee_id IS NULL AND (r.pool_employee_ids IS NULL OR r.pool_employee_ids && ${p2})))`;
 function filterSql(tenant, f, { withStatus = true } = {}) {
   const params = [tenant.zodu_id, tenant.branch_id];
   const where = ['r.zodu_id = $1', 'r.branch_id = $2', "r.status <> 'CANCELLED'"];
@@ -41,6 +43,9 @@ function filterSql(tenant, f, { withStatus = true } = {}) {
   if (f.date) add('r.run_date = ?', f.date);
   if (f.from) add('r.run_date BETWEEN ? AND ?', f.from, f.to);
   if (f.assignee) add(`(r.assignee_employee_id = ? OR ${SHARED_WITH('?::uuid')})`, f.assignee, f.assignee);
+  // A manager's Team view: runs for someone in their team (a shared run when its pool
+  // includes one of them, or "All employees"), and every run of a checklist they created.
+  if (f.team) add(`(${IN_TEAM('?::uuid[]', '?::uuid[]')} OR c.created_by_user_id = ?::uuid)`, f.team, f.team, f.creator);
   if (f.priority) add('r.priority = ?', f.priority);
   if (f.category_id) add('r.category_id = ?', f.category_id);
   if (f.checklist_id) add('r.checklist_id = ?', f.checklist_id);
@@ -215,4 +220,4 @@ const itemOut = (i, tenant) => ({
   })),
 });
 
-module.exports = { SHARED_WITH, list, summary, reviewQueue, findRun, lockRun, items, events, runOut, itemOut, BOARD_SQL };
+module.exports = { SHARED_WITH, IN_TEAM, list, summary, reviewQueue, findRun, lockRun, items, events, runOut, itemOut, BOARD_SQL };

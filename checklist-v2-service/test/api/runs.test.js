@@ -269,7 +269,9 @@ describe('run actions', () => {
       .send({ employee_id: other.employee_id, row_version: run.row_version });
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('ALREADY_HAS_RUN');
-    expect((await request(app).post(`/api/runs/${run.id}/reassign`).set(manager).send({ employee_id: EMP.gone.employee_id, row_version: run.row_version })).body.code).toBe('EMPLOYEE_NOT_FOUND');
+    expect((await request(app).post(`/api/runs/${run.id}/reassign`).set(owner).send({ employee_id: EMP.gone.employee_id, row_version: run.row_version })).body.code).toBe('EMPLOYEE_NOT_FOUND');
+    // a manager hands runs only to their own team (the owner is not in it)
+    expect((await request(app).post(`/api/runs/${run.id}/reassign`).set(manager).send({ employee_id: EMP.owner.employee_id, row_version: run.row_version })).body.code).toBe('NOT_YOUR_TEAM');
     expect((await request(app).post(`/api/runs/${run.id}/reassign`).set(cashier).send({ employee_id: EMP.gone.employee_id, row_version: run.row_version })).status).toBe(403);
 
     const solo = await createChecklist({ assignees: [EMP.nologin.employee_id], schedule: { trigger_time: '23:58' } });

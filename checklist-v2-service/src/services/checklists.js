@@ -9,7 +9,7 @@ const files = require('../clients/file-client');
 const config = require('../config');
 const schema = require('../schema');
 const companySettings = require('./settings');
-const { badRequest, conflict, notFound, unprocessable } = require('../utils/errors');
+const { badRequest, conflict, forbidden, notFound, unprocessable } = require('../utils/errors');
 const { encodeCursor, decodeCursor } = require('../utils/pagination');
 const { isValidTimezone, todayIn, addDays } = require('../utils/time');
 
@@ -117,7 +117,53 @@ async function getDefinition(tenant, id) {
   return out;
 }
 
+// ── the caller's team (see scopeOf in security/request) ─────────────────────
+// The Admin assigns anyone, or everyone. A manager assigns only people in their team,
+// never "All employees" (that is the whole branch, not their team).
+function checkAssignees(body, scope) {
+  if (!scope || scope.all) return;
+  if (body.assign_mode === 'ALL') {
+    throw forbidden('Only the Admin can assign a checklist to all employees. Pick people from your team', 'ASSIGN_ALL_ADMIN_ONLY');
+  }
+  const outside = (body.assignee_employee_ids || []).filter((e) => !scope.team.includes(e));
+  if (outside.length) throw forbidden('You can only assign checklists to your own team', 'NOT_YOUR_TEAM');
+}
+
+// A manager edits, pauses, copies or deletes a checklist they created, or one given only
+// to people in their team. The Admin: any.
+async function checkManage(tenant, id, scope, db = pool) {
+  if (!scope || scope.all) return;
+  const { rows: [c] } = await db.query(
+    `SELECT c.created_by_user_id AS creator, c.assign_mode,
+            ARRAY(SELECT a.employee_id FROM ckl.checklist_assignees a WHERE a.checklist_id = c.id) AS assignees
+       FROM ckl.checklists c
+      WHERE c.id = $1 AND c.zodu_id = $2 AND c.branch_id = $3 AND c.deleted_at IS NULL`,
+    [id, tenant.zodu_id, tenant.branch_id],
+  );
+  if (!c) throw notFound('Checklist not found');
+  if (c.creator === scope.userId) return;
+  if (c.assign_mode !== 'ALL' && c.assignees.length && c.assignees.every((e) => scope.team.includes(e))) return;
+  throw forbidden('This checklist belongs to another team', 'NOT_YOUR_TEAM');
+}
+
+// The people the caller may assign: the Admin, the branch's active employees; anyone
+// else, their team. -> { scope: 'all' | 'team', data: [{ employee_id, name, employee_code }] }
+async function people(tenant, scope) {
+  await directory.ensureSynced(tenant);
+  const all = !scope || scope.all;
+  const { rows } = await pool.query(
+    `SELECT employee_id, employee_name AS name, employee_code
+       FROM ckl.employee_directory
+      WHERE zodu_id = $1 AND branch_id = $2 AND is_active
+        AND ($3::boolean OR employee_id = ANY ($4::uuid[]))
+      ORDER BY employee_name, employee_id`,
+    [tenant.zodu_id, tenant.branch_id, all, all ? [] : scope.team],
+  );
+  return { scope: all ? 'all' : 'team', data: rows };
+}
+
 async function create(tenant, actor, body) {
+  checkAssignees(body, actor.scope);
   const { schedule, rules, timezone } = await prepare(tenant, body);
   const name = await actorName(tenant, actor.userId);
   const id = await withTransaction(async (db) => {
@@ -161,6 +207,8 @@ const sameValue = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? nu
 async function update(tenant, actor, id, body) {
   const current = await repo.findDefinition(tenant, id);
   if (!current) throw notFound('Checklist not found');
+  await checkManage(tenant, id, actor.scope);
+  checkAssignees(body, actor.scope);
   const { schedule, rules, timezone } = await prepare(tenant, body, { existingStartDate: current.s.start_date });
   const name = await actorName(tenant, actor.userId);
 
@@ -219,6 +267,7 @@ async function stopFutureRuns(db, id) {
 }
 
 async function setStatus(tenant, actor, id, status) {
+  await checkManage(tenant, id, actor.scope);
   const name = await actorName(tenant, actor.userId);
   const changed = await withTransaction(async (db) => {
     const { rows: [c] } = await db.query(
@@ -244,6 +293,7 @@ async function setStatus(tenant, actor, id, status) {
 }
 
 async function remove(tenant, actor, id) {
+  await checkManage(tenant, id, actor.scope);
   const name = await actorName(tenant, actor.userId);
   await withTransaction(async (db) => {
     const { rowCount } = await db.query(
@@ -270,6 +320,7 @@ async function remove(tenant, actor, id) {
 async function duplicate(tenant, actor, id) {
   const src = await repo.findDefinition(tenant, id);
   if (!src) throw notFound('Checklist not found');
+  await checkManage(tenant, id, actor.scope);
   const name = await actorName(tenant, actor.userId);
   const newId = await withTransaction(async (db) => {
     const { rows: [{ code }] } = await db.query('SELECT ckl.fn_next_checklist_code($1, $2) AS code', [tenant.zodu_id, tenant.branch_id]);
@@ -383,6 +434,6 @@ async function schedulePreview(tenant, body) {
 }
 
 module.exports = {
-  create, update, setStatus, remove, duplicate, list, getDefinition, addImages, removeImage, addTaskFiles, schedulePreview,
+  create, update, setStatus, remove, duplicate, people, list, getDefinition, addImages, removeImage, addTaskFiles, schedulePreview,
   generate, previewOccurrences, actorName, FILE_MODULE,
 };
